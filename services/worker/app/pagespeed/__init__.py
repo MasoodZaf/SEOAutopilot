@@ -1,0 +1,1 @@
+"""Bounded PageSpeed Insights ingestion."""

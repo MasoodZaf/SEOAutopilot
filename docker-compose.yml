@@ -1,0 +1,77 @@
+name: seo-autopilot
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: seo_autopilot
+      POSTGRES_USER: seo_autopilot
+      POSTGRES_PASSWORD: seo_autopilot
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seo_autopilot -d seo_autopilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: {context: ., dockerfile: services/api/Dockerfile}
+    env_file: [.env.local]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      REDIS_URL: redis://redis:6379/0
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  worker:
+    build: {context: ., dockerfile: services/worker/Dockerfile}
+    env_file: [.env.local]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  crawler:
+    build: {context: ., dockerfile: services/crawler/Dockerfile}
+    environment:
+      DATABASE_URL: postgresql://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      REDIS_URL: redis://redis:6379/0
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 256
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+
+  web:
+    build: {context: ., dockerfile: apps/web/Dockerfile}
+    env_file:
+      - path: infra/local/web.env
+        required: false
+    environment:
+      API_BASE_URL: http://api:8000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports: ["127.0.0.1:3001:3000"]
+    depends_on: [api]
+
+volumes:
+  postgres-data:
+  redis-data:

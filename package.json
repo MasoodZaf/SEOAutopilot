@@ -1,0 +1,16 @@
+{
+  "name": "seo-autopilot",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "engines": {"node": ">=22.14.0"},
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {"turbo": "^2.5.6", "typescript": "^5.9.2"}
+}

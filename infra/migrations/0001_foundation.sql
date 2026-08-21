@@ -1,0 +1,14 @@
+BEGIN;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE tenant(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),slug text NOT NULL UNIQUE,name text NOT NULL,status text NOT NULL DEFAULT 'active' CHECK(status IN('active','suspended','purging')),created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE site(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id uuid NOT NULL REFERENCES tenant(id),name text NOT NULL,canonical_origin text NOT NULL,normalized_host text NOT NULL,mode text NOT NULL DEFAULT 'observe' CHECK(mode IN('observe','recommend','autopilot')),status text NOT NULL DEFAULT 'pending_verification',verified_at timestamptz,version integer NOT NULL DEFAULT 1,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),UNIQUE(tenant_id,normalized_host));
+CREATE INDEX site_tenant_idx ON site(tenant_id,status);
+CREATE TABLE audit_event(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id uuid NOT NULL REFERENCES tenant(id),occurred_at timestamptz NOT NULL DEFAULT now(),actor_type text NOT NULL,actor_id text,action text NOT NULL,resource_type text NOT NULL,resource_id text NOT NULL,trace_id text NOT NULL,metadata jsonb NOT NULL DEFAULT '{}'::jsonb,previous_event_hash text,event_hash text NOT NULL);
+CREATE INDEX audit_event_tenant_time_idx ON audit_event(tenant_id,occurred_at DESC);
+CREATE TABLE outbox_event(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),tenant_id uuid NOT NULL REFERENCES tenant(id),event_type text NOT NULL,event_version integer NOT NULL,aggregate_type text NOT NULL,aggregate_id uuid NOT NULL,payload jsonb NOT NULL,occurred_at timestamptz NOT NULL DEFAULT now(),published_at timestamptz,attempts integer NOT NULL DEFAULT 0);
+CREATE INDEX outbox_unpublished_idx ON outbox_event(occurred_at) WHERE published_at IS NULL;
+ALTER TABLE site ENABLE ROW LEVEL SECURITY;ALTER TABLE audit_event ENABLE ROW LEVEL SECURITY;ALTER TABLE outbox_event ENABLE ROW LEVEL SECURITY;
+CREATE POLICY site_tenant_isolation ON site USING(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid) WITH CHECK(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
+CREATE POLICY audit_tenant_isolation ON audit_event USING(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid) WITH CHECK(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
+CREATE POLICY outbox_tenant_isolation ON outbox_event USING(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid) WITH CHECK(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
+COMMIT;

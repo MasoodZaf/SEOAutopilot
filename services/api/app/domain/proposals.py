@@ -1,0 +1,151 @@
+import difflib
+import hashlib
+import json
+from dataclasses import asdict, dataclass
+from typing import Any
+from uuid import UUID
+
+
+def compute_content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def generate_unified_diff(before: str, after: str, filepath: str = "target") -> str:
+    """Generates a clean unified diff between before and after contents."""
+    before_lines = before.splitlines(keepends=True)
+    after_lines = after.splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        before_lines,
+        after_lines,
+        fromfile=f"a/{filepath}",
+        tofile=f"b/{filepath}",
+        lineterm="\n",
+    )
+    return "".join(diff)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationCheck:
+    name: str
+    passed: bool
+    message: str
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+PROHIBITED_CLAIM_PATTERNS = [
+    "guaranteed #1 ranking",
+    "guaranteed ranking",
+    "bypass robots",
+    "hack search algorithms",
+    "manipulate google",
+]
+
+
+def validate_proposal_content(
+    target_type: str,
+    target_path: str,
+    before_content: str,
+    after_content: str,
+) -> list[ValidationCheck]:
+    """Validates proposal contents against syntax, structural, and claim safety rules."""
+    checks: list[ValidationCheck] = []
+
+    if before_content.strip() == after_content.strip():
+        checks.append(ValidationCheck("non_empty_diff", False, "Proposed content is identical to base content."))
+    else:
+        checks.append(ValidationCheck("non_empty_diff", True, "Proposed changes contain actionable diff."))
+
+    if target_type == "json_ld_schema":
+        try:
+            parsed = json.loads(after_content)
+            if not isinstance(parsed, dict) or "@context" not in parsed:
+                checks.append(ValidationCheck("json_ld_syntax", False, "JSON-LD schema must be a valid JSON object containing @context."))
+            else:
+                checks.append(ValidationCheck("json_ld_syntax", True, "JSON-LD structured data syntax is valid."))
+        except json.JSONDecodeError as err:
+            checks.append(ValidationCheck("json_ld_syntax", False, f"Invalid JSON syntax in schema proposal: {err}"))
+    else:
+        checks.append(ValidationCheck("syntax_check", True, "Target content format is valid."))
+
+    lower_after = after_content.lower()
+    found_prohibited = [pat for pat in PROHIBITED_CLAIM_PATTERNS if pat in lower_after]
+    if found_prohibited:
+        checks.append(
+            ValidationCheck(
+                "prohibited_claim_safety",
+                False,
+                f"Proposal contains disallowed deceptive/ranking claim: {found_prohibited[0]}.",
+            )
+        )
+    else:
+        checks.append(ValidationCheck("prohibited_claim_safety", True, "No prohibited ranking claims detected."))
+
+    if not target_path or ".." in target_path or target_path.startswith("//"):
+        checks.append(ValidationCheck("target_path_safety", False, "Target path contains unsafe traversal or malformed format."))
+    else:
+        checks.append(ValidationCheck("target_path_safety", True, "Target path is safe and well-formed."))
+
+    return checks
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyDecision:
+    risk: str
+    requires_approval: bool
+    required_approver_count: int
+    allowed_roles: list[str]
+    separation_of_duties_enforced: bool
+    can_auto_deploy: bool
+    rejection_reasons: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def evaluate_proposal_policy(
+    target_type: str,
+    target_path: str,
+    before_content: str,
+    after_content: str,
+    validations: list[ValidationCheck],
+    author_id: UUID | None = None,
+    tenant_mode: str = "recommend",
+) -> PolicyDecision:
+    """Evaluates risk classification, approver rules, and deployment eligibility."""
+    rejection_reasons: list[str] = []
+
+    for val in validations:
+        if not val.passed:
+            rejection_reasons.append(f"Validation failed: {val.name} ({val.message})")
+
+    if any(val.name == "prohibited_claim_safety" and not val.passed for val in validations):
+        risk = "prohibited"
+    elif "robots.txt" in target_path.lower() or "sitemap" in target_path.lower():
+        risk = "high"
+    elif target_type in {"html_meta", "json_ld_schema", "link_insertion"}:
+        risk = "low"
+    elif target_type in {"content_edit", "github_file"}:
+        risk = "medium" if abs(len(after_content) - len(before_content)) < 300 else "high"
+    else:
+        risk = "medium"
+
+    if risk == "prohibited":
+        rejection_reasons.append("Prohibited change class cannot be deployed.")
+
+    requires_approval = True
+    required_approver_count = 2 if risk in {"medium", "high"} else 1
+    allowed_roles = ["owner", "admin", "seo_manager", "editor"] if risk == "low" else ["owner", "admin", "seo_manager"]
+    separation_of_duties_enforced = True
+    can_auto_deploy = tenant_mode == "autopilot" and risk == "low" and not rejection_reasons
+
+    return PolicyDecision(
+        risk=risk,
+        requires_approval=requires_approval,
+        required_approver_count=required_approver_count,
+        allowed_roles=allowed_roles,
+        separation_of_duties_enforced=separation_of_duties_enforced,
+        can_auto_deploy=can_auto_deploy,
+        rejection_reasons=rejection_reasons,
+    )
