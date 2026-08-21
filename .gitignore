@@ -18,6 +18,7 @@ __pycache__/
 .mypy_cache/
 *.pyc
 *.log
+*.tsbuildinfo
 .DS_Store
 artifacts/
 data/
