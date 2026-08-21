@@ -17,7 +17,7 @@ infra-down:
 	docker compose down
 
 migrate:
-	psql "$${DATABASE_URL}" -v ON_ERROR_STOP=1 -f infra/migrations/0001_foundation.sql
+	for f in infra/migrations/*.sql; do psql "$${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$$f" || exit 1; done
 
 check:
 	pnpm check
