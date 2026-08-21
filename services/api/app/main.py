@@ -5,6 +5,7 @@ from app.api.routes.connectors import router as connectors_router
 from app.api.routes.governance import router as governance_router
 from app.api.routes.local_pilot import router as local_pilot_router
 from app.api.routes.measurements import router as measurements_router
+from app.api.routes.metrics import router as metrics_router
 from app.api.routes.opportunities import calibration_router
 from app.api.routes.opportunities import router as opportunities_router
 from app.api.routes.pages import router as pages_router
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "If-Match"],
 )
 app.include_router(system_router)
+app.include_router(metrics_router)
 if settings.app_env == "development":
     app.include_router(local_pilot_router)
 app.include_router(connectors_router)
@@ -35,3 +37,4 @@ app.include_router(calibration_router)
 app.include_router(proposals_router)
 app.include_router(measurements_router)
 app.include_router(governance_router)
+

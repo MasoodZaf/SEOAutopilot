@@ -16,6 +16,7 @@ import {
   toggleEmergencyFreezeAction,
   verifyCodearcDns,
 } from "./actions";
+import {SerpPreview} from "./components/serp-preview";
 import {challengeCookie, type CalibrationRun, type Crawl, type Site} from "./model";
 
 type Connector = {id: string; status: string; external_account_ref: string | null};
@@ -413,6 +414,16 @@ export default async function PilotPage({searchParams}: PageProps) {
                     </div>
                     <p className="mt-1 text-xs text-zinc-400">{prop.rationale}</p>
                     
+                    {/* Visual SERP Preview */}
+                    <div className="mt-3">
+                      <SerpPreview
+                        title={prop.title}
+                        url={`https://codearc.net/${prop.target_path.replace(/^\//, "")}`}
+                        description={prop.rationale}
+                        isModified={true}
+                      />
+                    </div>
+
                     {/* Unified Diff View */}
                     {prop.diff_unified && (
                       <div className="mt-3 rounded border border-zinc-800 bg-black/60 p-3 font-mono text-xs text-zinc-300 overflow-x-auto">
