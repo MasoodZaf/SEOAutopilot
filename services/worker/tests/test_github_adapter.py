@@ -2,15 +2,15 @@ from uuid import uuid4
 
 import pytest
 from app.deployments.base import (
+    DeploymentBlockedError,
     DeploymentManifest,
     DeploymentRequest,
-    DriftDetectedError,
 )
 from app.deployments.github_adapter import GitHubDeploymentAdapter, format_pr_body
 
 
 @pytest.mark.asyncio
-async def test_github_adapter_creates_pr_and_detects_drift() -> None:
+async def test_github_adapter_formats_manifest_but_fails_closed_until_wired() -> None:
     manifest = DeploymentManifest(
         tenant_id=str(uuid4()),
         site_id=str(uuid4()),
@@ -43,24 +43,5 @@ async def test_github_adapter_creates_pr_and_detects_drift() -> None:
         current_live_content=None,  # No drift
     )
 
-    result = await adapter.deploy(request_ok)
-    assert result.status == "applied"
-    assert "https://github.com/test-org/test-repo/pull/" in result.external_ref
-    assert result.connector_type == "github"
-
-    # Drift error
-    request_drift = DeploymentRequest(
-        tenant_id=uuid4(),
-        site_id=uuid4(),
-        proposal_id=uuid4(),
-        target_type="github_file",
-        target_path="src/app/page.tsx",
-        diff_unified="diff",
-        base_hash=manifest.base_hash,
-        after_content="new",
-        idempotency_key="idemp-12345",
-        manifest=manifest,
-        current_live_content="modified live content differing from base",
-    )
-    with pytest.raises(DriftDetectedError):
-        await adapter.deploy(request_drift)
+    with pytest.raises(DeploymentBlockedError, match="github_connector_not_implemented"):
+        await adapter.deploy(request_ok)

@@ -8,7 +8,11 @@ from sqlalchemy.dialects import postgresql
 from app.api.schemas import OpportunitySuppress
 from app.core.context import Role, TenantContext
 from app.db.models import Opportunity
-from app.services.opportunities import OpportunityService, build_diverse_top_query
+from app.services.opportunities import (
+    OpportunityService,
+    build_diverse_top_query,
+    build_page_url_query,
+)
 
 
 def test_diverse_top_query_is_deterministic_and_tenant_scoped() -> None:
@@ -31,6 +35,20 @@ def test_diverse_top_query_is_deterministic_and_tenant_scoped() -> None:
     assert "opportunity.type =" in sql
     assert "opportunity.score >=" in sql
     assert "ORDER BY anon_1.diversity_rank" in sql
+
+
+def test_page_url_query_is_tenant_and_site_scoped() -> None:
+    statement = build_page_url_query(
+        tenant_id=uuid4(),
+        site_id=uuid4(),
+        page_ids=[uuid4(), uuid4()],
+    )
+
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "page.tenant_id =" in sql
+    assert "page.site_id =" in sql
+    assert "page.id IN" in sql
 
 
 @pytest.mark.asyncio

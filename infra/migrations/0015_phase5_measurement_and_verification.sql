@@ -20,7 +20,8 @@ CREATE TABLE post_deploy_verification (
   UNIQUE(id, tenant_id)
 );
 
-CREATE INDEX verification_tenant_site_idx ON post_deploy_verification(tenant_id, site_id, status);
+CREATE INDEX post_deploy_verification_tenant_site_idx
+  ON post_deploy_verification(tenant_id, site_id, status);
 
 CREATE TABLE measurement_series (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

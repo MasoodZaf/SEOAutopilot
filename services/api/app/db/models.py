@@ -238,7 +238,7 @@ class Opportunity(Base):
     fingerprint: Mapped[str] = mapped_column(String(64))
     suppressed_reason: Mapped[str | None] = mapped_column(Text)
     suppressed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    suppressed_by: Mapped[UUID | None] = mapped_column(ForeignKey("tenant_user.id"))
+    suppressed_by: Mapped[UUID | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -323,6 +323,7 @@ class Connector(Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
     site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
     type: Mapped[str] = mapped_column(String(48))
+    provider_key: Mapped[str | None] = mapped_column(String(48))
     status: Mapped[str] = mapped_column(String(32), default="pending_authorization")
     external_account_ref: Mapped[str | None] = mapped_column(Text)
     secret_ref: Mapped[str | None] = mapped_column(Text)
@@ -528,7 +529,7 @@ class Proposal(Base):
     site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
     opportunity_id: Mapped[UUID] = mapped_column(ForeignKey("opportunity.id"), nullable=False)
     page_id: Mapped[UUID] = mapped_column(ForeignKey("page.id"), nullable=False)
-    author_id: Mapped[UUID] = mapped_column(ForeignKey("tenant_user.id"), nullable=False)
+    author_id: Mapped[UUID]
     title: Mapped[str] = mapped_column(String(240))
     rationale: Mapped[str] = mapped_column(Text)
     target_type: Mapped[str] = mapped_column(String(40))
@@ -559,7 +560,7 @@ class ProposalApproval(Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
     proposal_id: Mapped[UUID] = mapped_column(ForeignKey("proposal.id"), nullable=False)
     proposal_version: Mapped[int] = mapped_column(Integer)
-    approver_id: Mapped[UUID] = mapped_column(ForeignKey("tenant_user.id"), nullable=False)
+    approver_id: Mapped[UUID]
     decision: Mapped[str] = mapped_column(String(16))
     notes: Mapped[str] = mapped_column(Text, default="")
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -664,5 +665,3 @@ class RollbackReceipt(Base):
     status: Mapped[str] = mapped_column(String(24), default="applied")
     rolled_back_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     notes: Mapped[str] = mapped_column(Text, default="")
-
-

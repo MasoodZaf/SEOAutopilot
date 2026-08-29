@@ -15,15 +15,37 @@ from app.api.schemas import (
     ConnectorSyncCreate,
     ConnectorSyncEnvelope,
     ConnectorSyncRead,
+    DnsProviderConnectorCreate,
+    DnsProviderVerificationCreate,
+    DnsProviderVerificationEnvelope,
+    DnsProviderVerificationRead,
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
 from app.db.session import SystemSession, TenantSession
+from app.services.cloudflare_dns import CloudflareDnsHttpClient
 from app.services.connector_secrets import DatabaseEnvelopeSecretStore, decode_encryption_key
 from app.services.connectors import ConnectorOAuthCallbackService, ConnectorService
 from app.services.google_oauth import GoogleOAuthHttpClient
 
 router = APIRouter(prefix="/v1", tags=["connectors"])
+
+
+def local_dns_provider_secret_store(settings, session: TenantSession) -> DatabaseEnvelopeSecretStore:
+    if (
+        not settings.dns_provider_connectors_enabled
+        or settings.connector_secret_backend != "database_envelope"
+        or not settings.connector_secret_encryption_key
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="dns_provider_connector_not_configured",
+        )
+    return DatabaseEnvelopeSecretStore(
+        session,
+        decode_encryption_key(settings.connector_secret_encryption_key.get_secret_value()),
+        settings.connector_secret_key_version,
+    )
 
 
 @router.get("/sites/{site_id}/connectors", response_model=ConnectorCollection)
@@ -59,6 +81,68 @@ async def authorize_gsc(
             authorization_url=authorization_url,
             expires_at=expires_at,
         ),
+        meta={"trace_id": context.trace_id},
+    )
+
+
+def dns_provider_client(provider_key: str, http_client: httpx.AsyncClient) -> CloudflareDnsHttpClient:
+    if provider_key != "cloudflare":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="dns_provider_not_supported"
+        )
+    return CloudflareDnsHttpClient(http_client)
+
+
+@router.post(
+    "/sites/{site_id}/dns-connectors/{provider_key}",
+    response_model=ConnectorRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def connect_dns_provider(
+    site_id: UUID,
+    provider_key: str,
+    command: DnsProviderConnectorCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> ConnectorRead:
+    settings = get_settings()
+    secret_store = local_dns_provider_secret_store(settings, session)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as http_client:
+        connector = await ConnectorService(session, context).connect_dns_provider(
+            site_id,
+            provider_key,
+            command.zone_id,
+            command.api_token.get_secret_value(),
+            dns_provider_client(provider_key, http_client),
+            secret_store,
+        )
+    return ConnectorRead.model_validate(connector)
+
+
+@router.post(
+    "/sites/{site_id}/dns-connectors/{provider_key}/verification",
+    response_model=DnsProviderVerificationEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_dns_provider_verification(
+    site_id: UUID,
+    provider_key: str,
+    command: DnsProviderVerificationCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> DnsProviderVerificationEnvelope:
+    settings = get_settings()
+    secret_store = local_dns_provider_secret_store(settings, session)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as http_client:
+        record_id, record_name = await ConnectorService(session, context).publish_dns_provider_challenge(
+            site_id,
+            provider_key,
+            command.token.get_secret_value(),
+            dns_provider_client(provider_key, http_client),
+            secret_store,
+        )
+    return DnsProviderVerificationEnvelope(
+        data=DnsProviderVerificationRead(record_id=record_id, record_name=record_name),
         meta={"trace_id": context.trace_id},
     )
 

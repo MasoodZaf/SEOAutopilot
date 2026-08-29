@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.api.schemas import (
     DeploymentCreate,
@@ -16,6 +16,7 @@ from app.api.schemas import (
     ProposalRead,
 )
 from app.core.auth import TenantContextDependency
+from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
 from app.domain.deployments import MockDeploymentAdapter
 from app.services.proposals import ProposalService
@@ -112,9 +113,19 @@ async def deploy_proposal(
     context: TenantContextDependency,
     session: TenantSession,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=200)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> DeploymentReceiptEnvelope:
-    adapter = MockDeploymentAdapter(connector_type=command.connector_type, enforce_drift=True)
-    receipt = await ProposalService(session, context).deploy_proposal(
+    if command.connector_type != "mock" or settings.app_env not in {"development", "test"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="deployment_connector_not_configured",
+        )
+    adapter = MockDeploymentAdapter(connector_type="mock", enforce_drift=True)
+    receipt = await ProposalService(
+        session,
+        context,
+        deployments_enabled=settings.deployments_enabled,
+    ).deploy_proposal(
         proposal_id=proposal_id,
         command=command,
         idempotency_key=idempotency_key,

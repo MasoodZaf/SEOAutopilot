@@ -136,7 +136,8 @@ async def list_opportunities(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_limit")
     if opportunity_status not in {"open", "shortlisted", "proposing", "proposed", "suppressed"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_status")
-    opportunities = await OpportunityService(session, context).list_top(
+    opportunity_service = OpportunityService(session, context)
+    opportunities = await opportunity_service.list_top(
         site_id,
         limit,
         opportunity_status,
@@ -145,8 +146,14 @@ async def list_opportunities(
     )
     if opportunities is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+    page_urls = await opportunity_service.page_urls(site_id, opportunities)
     return OpportunityCollection(
-        data=[OpportunityRead.model_validate(item) for item in opportunities],
+        data=[
+            OpportunityRead.model_validate(item).model_copy(
+                update={"page_url": page_urls.get(item.page_id)}
+            )
+            for item in opportunities
+        ],
         meta={"trace_id": context.trace_id, "count": len(opportunities)},
     )
 

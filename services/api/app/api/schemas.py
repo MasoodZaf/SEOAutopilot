@@ -3,7 +3,7 @@ from enum import StrEnum
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class ProductMode(StrEnum):
@@ -246,6 +246,7 @@ class OpportunityRead(BaseModel):
     id: UUID
     site_id: UUID
     page_id: UUID
+    page_url: str | None = None
     type: str
     title: str
     status: str
@@ -265,7 +266,9 @@ class OpportunityRead(BaseModel):
 
 
 class OpportunitySuppress(BaseModel):
-    reason: str = Field(pattern="^(duplicate|intentional_design|out_of_scope|external_fix|false_positive|other)$")
+    reason: str = Field(
+        pattern="^(duplicate|intentional_design|out_of_scope|external_fix|false_positive|other)$"
+    )
     notes: str = Field(default="", max_length=1000)
 
     @field_validator("notes")
@@ -367,6 +370,7 @@ class ConnectorRead(BaseModel):
     id: UUID
     site_id: UUID
     type: str
+    provider_key: str | None
     status: str
     external_account_ref: str | None
     granted_scopes: list[str]
@@ -394,6 +398,27 @@ class ConnectorAuthorizationCreate(BaseModel):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("credentials, query, and fragment are not allowed")
         return candidate
+
+
+class DnsProviderConnectorCreate(BaseModel):
+    """One provider-scoped credential supplied over TLS and never returned by this API."""
+
+    zone_id: str = Field(pattern="^[a-f0-9]{32}$")
+    api_token: SecretStr = Field(min_length=20, max_length=4096)
+
+
+class DnsProviderVerificationCreate(BaseModel):
+    token: SecretStr = Field(min_length=20, max_length=512)
+
+
+class DnsProviderVerificationRead(BaseModel):
+    record_id: str
+    record_name: str
+
+
+class DnsProviderVerificationEnvelope(BaseModel):
+    data: DnsProviderVerificationRead
+    meta: dict[str, str]
 
 
 class ConnectorCollection(BaseModel):
@@ -448,7 +473,9 @@ class ProposalCreate(BaseModel):
     page_id: UUID
     title: str = Field(min_length=3, max_length=240)
     rationale: str = Field(min_length=3)
-    target_type: str = Field(pattern="^(html_meta|json_ld_schema|link_insertion|content_edit|github_file)$")
+    target_type: str = Field(
+        pattern="^(html_meta|json_ld_schema|link_insertion|content_edit|github_file)$"
+    )
     target_path: str = Field(min_length=1, max_length=1024)
     before_content: str
     after_content: str
@@ -647,5 +674,3 @@ class RollbackReceiptRead(BaseModel):
 class RollbackReceiptEnvelope(BaseModel):
     data: RollbackReceiptRead
     meta: dict[str, str]
-
-

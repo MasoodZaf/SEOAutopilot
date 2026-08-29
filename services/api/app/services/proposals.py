@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import DeploymentCreate, ProposalApprovalCreate, ProposalCreate
@@ -35,6 +35,7 @@ from app.domain.proposals import (
 
 ALLOWED_PROPOSAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR, Role.DEVELOPER}
 ALLOWED_APPROVAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
+ALLOWED_DEPLOYMENT_ROLES = {Role.OWNER, Role.ADMIN, Role.DEVELOPER}
 
 
 def stable_hash(payload: dict[str, Any]) -> str:
@@ -44,9 +45,16 @@ def stable_hash(payload: dict[str, Any]) -> str:
 
 
 class ProposalService:
-    def __init__(self, session: AsyncSession, context: TenantContext) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        context: TenantContext,
+        *,
+        deployments_enabled: bool = False,
+    ) -> None:
         self.session = session
         self.context = context
+        self.deployments_enabled = deployments_enabled
 
     async def create_proposal(self, site_id: UUID, command: ProposalCreate) -> Proposal:
         if self.context.role not in ALLOWED_PROPOSAL_ROLES:
@@ -315,6 +323,16 @@ class ProposalService:
         idempotency_key: str,
         adapter: DeploymentAdapter,
     ) -> DeploymentReceipt:
+        if self.context.role not in ALLOWED_DEPLOYMENT_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_deploy_proposal",
+            )
+        if not self.deployments_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="deployments_disabled",
+            )
         proposal = await self.get_proposal(proposal_id)
         if proposal is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="proposal_not_found")
@@ -339,6 +357,43 @@ class ProposalService:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="proposal_must_be_approved_before_deployment",
+            )
+
+        site = await self.session.scalar(
+            select(Site).where(
+                Site.id == proposal.site_id,
+                Site.tenant_id == self.context.tenant_id,
+            )
+        )
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+        if site.mode not in {"recommend", "autopilot"}:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="site_mode_blocks_deployment")
+        if site.emergency_freeze:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="emergency_freeze_active")
+        if (
+            site.freeze_window_start is not None
+            and site.freeze_window_end is not None
+            and site.freeze_window_start <= now <= site.freeze_window_end
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="scheduled_freeze_window_active",
+            )
+        start_of_day = datetime(now.year, now.month, now.day, tzinfo=UTC)
+        deployment_count = await self.session.scalar(
+            select(func.count())
+            .select_from(DeploymentReceipt)
+            .where(
+                DeploymentReceipt.tenant_id == self.context.tenant_id,
+                DeploymentReceipt.site_id == proposal.site_id,
+                DeploymentReceipt.deployed_at >= start_of_day,
+            )
+        )
+        if int(deployment_count or 0) >= site.daily_change_budget:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="daily_change_budget_exhausted",
             )
 
         # Gather approved approver IDs

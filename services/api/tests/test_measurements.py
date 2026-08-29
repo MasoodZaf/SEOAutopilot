@@ -3,10 +3,12 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.core.context import Role, TenantContext
 from app.db.models import (
     DeploymentReceipt,
+    PostDeployVerification,
     Proposal,
     SearchMetric,
 )
@@ -116,6 +118,34 @@ async def test_verify_deployment_service_flow() -> None:
 
 
 @pytest.mark.asyncio
+async def test_verification_rejects_missing_live_evidence() -> None:
+    context = make_context()
+    proposal = Proposal(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=uuid4(), opportunity_id=uuid4(),
+        page_id=uuid4(), author_id=uuid4(), title="Title", rationale="Verify",
+        target_type="html_meta", target_path="/page", before_content="old",
+        after_content="new", diff_unified="diff", base_hash="a" * 64,
+        proposal_hash="b" * 64, risk="low", status="deployed",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    receipt = DeploymentReceipt(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=proposal.site_id,
+        proposal_id=proposal.id, connector_type="mock", idempotency_key="verify-no-live",
+        external_ref="mock://receipt", manifest_json={}, status="applied",
+        deployed_at=datetime.now(UTC),
+    )
+    session = AsyncMock()
+    session.scalar.side_effect = [proposal, receipt]
+
+    with pytest.raises(HTTPException) as exc:
+        await MeasurementService(session, context).verify_deployment(proposal.id)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "live_verification_evidence_required"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_calculate_measurement_series_service_flow() -> None:
     context = make_context()
     proposal_id = uuid4()
@@ -158,8 +188,13 @@ async def test_calculate_measurement_series_service_flow() -> None:
     )
 
     session = AsyncMock()
-    # 1: proposal, 2: receipt, 3: existing measurement (None)
-    session.scalar.side_effect = [mock_proposal, mock_receipt, None]
+    verification = PostDeployVerification(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=site_id,
+        proposal_id=proposal_id, deployment_receipt_id=mock_receipt.id,
+        page_id=page_id, status="verified", expected_pattern="New",
+    )
+    # 1: proposal, 2: receipt, 3: existing measurement, 4: verification
+    session.scalar.side_effect = [mock_proposal, mock_receipt, None, verification]
 
     # Baseline search metrics
     b_metrics = [
@@ -199,3 +234,64 @@ async def test_calculate_measurement_series_service_flow() -> None:
     assert series.delta_metrics["position_delta"] == 3.8
     assert session.add.call_count == 3  # MeasurementSeries, AuditEvent, OutboxEvent
     assert session.commit.called
+
+
+@pytest.mark.asyncio
+async def test_measurement_requires_verified_deployment() -> None:
+    context = make_context()
+    proposal = Proposal(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=uuid4(), opportunity_id=uuid4(),
+        page_id=uuid4(), author_id=uuid4(), title="Title", rationale="Measure",
+        target_type="html_meta", target_path="/page", before_content="old",
+        after_content="new", diff_unified="diff", base_hash="a" * 64,
+        proposal_hash="b" * 64, risk="low", status="deployed",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    receipt = DeploymentReceipt(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=proposal.site_id,
+        proposal_id=proposal.id, connector_type="mock", idempotency_key="measure-unverified",
+        external_ref="mock://receipt", manifest_json={}, status="applied",
+        deployed_at=datetime.now(UTC) - timedelta(days=30),
+    )
+    session = AsyncMock()
+    session.scalar.side_effect = [proposal, receipt, None, None]
+
+    with pytest.raises(HTTPException) as exc:
+        await MeasurementService(session, context).calculate_or_get_measurement(proposal.id)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "deployment_not_verified"
+    session.scalars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_measurement_requires_complete_followup_window() -> None:
+    context = make_context()
+    proposal = Proposal(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=uuid4(), opportunity_id=uuid4(),
+        page_id=uuid4(), author_id=uuid4(), title="Title", rationale="Measure",
+        target_type="html_meta", target_path="/page", before_content="old",
+        after_content="new", diff_unified="diff", base_hash="a" * 64,
+        proposal_hash="b" * 64, risk="low", status="deployed",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    receipt = DeploymentReceipt(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=proposal.site_id,
+        proposal_id=proposal.id, connector_type="mock", idempotency_key="measure-early",
+        external_ref="mock://receipt", manifest_json={}, status="applied",
+        deployed_at=datetime.now(UTC) - timedelta(days=3),
+    )
+    verification = PostDeployVerification(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=proposal.site_id,
+        proposal_id=proposal.id, deployment_receipt_id=receipt.id,
+        page_id=proposal.page_id, status="verified", expected_pattern="new",
+    )
+    session = AsyncMock()
+    session.scalar.side_effect = [proposal, receipt, None, verification]
+
+    with pytest.raises(HTTPException) as exc:
+        await MeasurementService(session, context).calculate_or_get_measurement(proposal.id)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "measurement_window_incomplete"
+    session.scalars.assert_not_awaited()

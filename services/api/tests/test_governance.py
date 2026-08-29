@@ -179,7 +179,7 @@ async def test_emergency_freeze_and_unfreeze_service_flow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rollback_deployment_service_flow() -> None:
+async def test_rollback_fails_closed_until_connector_is_configured() -> None:
     context = make_context(role=Role.ADMIN)
     proposal_id = uuid4()
     site_id = uuid4()
@@ -224,14 +224,25 @@ async def test_rollback_deployment_service_flow() -> None:
     session.add = MagicMock()
 
     service = GovernanceService(session, context)
-    rollback = await service.rollback_deployment(proposal_id, notes="Rollback drill")
+    with pytest.raises(HTTPException) as exc:
+        await service.rollback_deployment(proposal_id, notes="Rollback drill")
 
-    assert rollback.status == "applied"
-    assert rollback.restored_hash == base_hash
-    assert mock_receipt.status == "rolled_back"
-    assert mock_proposal.status == "failed"
-    assert session.add.call_count == 3  # RollbackReceipt, AuditEvent, OutboxEvent
-    assert session.commit.called
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "rollback_connector_not_configured"
+    assert mock_receipt.status == "applied"
+    assert mock_proposal.status == "deployed"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_request_rollback() -> None:
+    service = GovernanceService(AsyncMock(), make_context(role=Role.VIEWER))
+
+    with pytest.raises(HTTPException) as exc:
+        await service.rollback_deployment(uuid4())
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "insufficient_permissions_to_rollback_deployment"
 
 
 @pytest.mark.asyncio

@@ -101,7 +101,7 @@ async def test_author_cannot_approve_own_proposal_separation_of_duties() -> None
 
 @pytest.mark.asyncio
 async def test_deploy_proposal_detects_drift_and_blocks() -> None:
-    context = make_context()
+    context = make_context(role=Role.DEVELOPER)
     proposal_id = uuid4()
     base_hash = "a" * 64
 
@@ -128,9 +128,16 @@ async def test_deploy_proposal_detects_drift_and_blocks() -> None:
         version=1,
     )
 
+    mock_site = Site(
+        id=mock_proposal.site_id,
+        tenant_id=context.tenant_id,
+        mode="recommend",
+        emergency_freeze=False,
+        daily_change_budget=5,
+    )
     session = AsyncMock()
-    session.scalar.return_value = None  # No existing receipt
-    service = ProposalService(session, context)
+    session.scalar.side_effect = [None, mock_site, 0]
+    service = ProposalService(session, context, deployments_enabled=True)
     service.get_proposal = AsyncMock(return_value=mock_proposal)  # type: ignore[method-assign]
 
     adapter = MockDeploymentAdapter(connector_type="github", enforce_drift=True)
@@ -146,7 +153,7 @@ async def test_deploy_proposal_detects_drift_and_blocks() -> None:
 
 @pytest.mark.asyncio
 async def test_deploy_proposal_happy_path_with_manifest_and_receipt() -> None:
-    context = make_context()
+    context = make_context(role=Role.DEVELOPER)
     proposal_id = uuid4()
     before = "Old Base Content"
     from app.domain.proposals import compute_content_hash
@@ -176,12 +183,19 @@ async def test_deploy_proposal_happy_path_with_manifest_and_receipt() -> None:
         version=1,
     )
 
+    mock_site = Site(
+        id=mock_proposal.site_id,
+        tenant_id=context.tenant_id,
+        mode="recommend",
+        emergency_freeze=False,
+        daily_change_budget=5,
+    )
     session = AsyncMock()
-    session.scalar.return_value = None
+    session.scalar.side_effect = [None, mock_site, 0]
     session.scalars.return_value = [uuid4()]  # 1 approver
     session.add = MagicMock()
 
-    service = ProposalService(session, context)
+    service = ProposalService(session, context, deployments_enabled=True)
     service.get_proposal = AsyncMock(return_value=mock_proposal)  # type: ignore[method-assign]
 
     adapter = MockDeploymentAdapter(connector_type="github", enforce_drift=True)
@@ -194,6 +208,75 @@ async def test_deploy_proposal_happy_path_with_manifest_and_receipt() -> None:
     assert receipt.manifest_json["proposal_id"] == str(proposal_id)
     assert mock_proposal.status == "deployed"
     assert session.add.call_count == 3  # Receipt, AuditEvent, OutboxEvent
+
+
+@pytest.mark.asyncio
+async def test_deployment_defaults_closed_before_adapter_execution() -> None:
+    context = make_context(role=Role.DEVELOPER)
+    service = ProposalService(AsyncMock(), context)
+    adapter = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await service.deploy_proposal(
+            uuid4(),
+            DeploymentCreate(connector_type="mock", current_live_content="base"),
+            "idemp-key-closed",
+            adapter,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "deployments_disabled"
+    adapter.deploy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_deploy_even_when_feature_flag_is_enabled() -> None:
+    context = make_context(role=Role.VIEWER)
+    service = ProposalService(AsyncMock(), context, deployments_enabled=True)
+
+    with pytest.raises(HTTPException) as exc:
+        await service.deploy_proposal(
+            uuid4(),
+            DeploymentCreate(connector_type="mock", current_live_content="base"),
+            "idemp-key-viewer",
+            AsyncMock(),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "insufficient_permissions_to_deploy_proposal"
+
+
+@pytest.mark.asyncio
+async def test_emergency_freeze_blocks_deployment() -> None:
+    context = make_context(role=Role.DEVELOPER)
+    proposal = Proposal(
+        id=uuid4(), tenant_id=context.tenant_id, site_id=uuid4(), opportunity_id=uuid4(),
+        page_id=uuid4(), author_id=uuid4(), title="Frozen", rationale="Frozen",
+        target_type="html_meta", target_path="/page", before_content="old",
+        after_content="new", diff_unified="diff", base_hash="a" * 64,
+        proposal_hash="b" * 64, risk="low", status="approved",
+        policy_evaluation_json={"required_approver_count": 1}, expires_at=datetime_future(), version=1,
+    )
+    site = Site(
+        id=proposal.site_id, tenant_id=context.tenant_id, mode="recommend",
+        emergency_freeze=True, daily_change_budget=5,
+    )
+    session = AsyncMock()
+    session.scalar.side_effect = [None, site]
+    service = ProposalService(session, context, deployments_enabled=True)
+    service.get_proposal = AsyncMock(return_value=proposal)  # type: ignore[method-assign]
+    adapter = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc:
+        await service.deploy_proposal(
+            proposal.id,
+            DeploymentCreate(connector_type="mock", current_live_content="old"),
+            "idemp-key-freeze",
+            adapter,
+        )
+
+    assert exc.value.detail == "emergency_freeze_active"
+    adapter.deploy.assert_not_awaited()
 
 
 def datetime_future() -> object:

@@ -18,12 +18,15 @@ from app.db.models import (
     ConnectorSync,
     OutboxEvent,
     Site,
+    SiteVerificationChallenge,
 )
-from app.services.connector_secrets import ConnectorSecretStore
+from app.services.connector_secrets import ConnectorSecretReader, ConnectorSecretStore
+from app.services.dns_provider import DnsProvider, DnsProviderError
 from app.services.google_oauth import GoogleOAuthError, GoogleOAuthProvider
 from app.services.sites import SiteService, stable_hash
 
 GSC_CONNECTOR = "google_search_console"
+DNS_PROVIDER_CONNECTOR = "dns_provider"
 GSC_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 MAX_BACKFILL_DAYS = 490
 GSC_PERMITTED_LEVELS = frozenset({"siteOwner", "siteFullUser", "siteRestrictedUser"})
@@ -67,7 +70,7 @@ class ConnectorService:
             )
         if not property_matches_site(property_ref, site.normalized_host):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="property_site_mismatch",
             )
         connector = await self.session.scalar(
@@ -139,9 +142,13 @@ class ConnectorService:
         if connector.status != "active" or not connector.secret_ref:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="connector_not_active")
         if command.range_start > command.range_end:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_range")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_range"
+            )
         if (command.range_end - command.range_start).days + 1 > MAX_BACKFILL_DAYS:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="range_too_large")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="range_too_large"
+            )
         existing = await self.session.scalar(
             select(ConnectorSync).where(
                 ConnectorSync.tenant_id == self.context.tenant_id,
@@ -171,6 +178,159 @@ class ConnectorService:
             {"connector_id": str(connector.id), "site_id": str(connector.site_id)},
         )
         return sync
+
+    async def connect_dns_provider(
+        self,
+        site_id: UUID,
+        provider_key: str,
+        zone_id: str,
+        api_token: str,
+        provider: DnsProvider,
+        secret_store: ConnectorSecretStore,
+    ) -> Connector:
+        self.context.require(Role.OWNER, Role.ADMIN)
+        site = await self._unverified_or_verified_site(site_id)
+        if provider.provider_key != provider_key:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="dns_provider_not_supported",
+            )
+        try:
+            zone = await provider.get_zone(zone_id, api_token)
+        except DnsProviderError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        if zone.id != zone_id or zone.name != site.normalized_host:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="dns_provider_zone_site_mismatch",
+            )
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == self.context.tenant_id,
+                Connector.site_id == site.id,
+                Connector.type == DNS_PROVIDER_CONNECTOR,
+            )
+        )
+        if connector is None:
+            connector = Connector(
+                tenant_id=self.context.tenant_id,
+                site_id=site.id,
+                type=DNS_PROVIDER_CONNECTOR,
+                provider_key=provider_key,
+                status="pending_authorization",
+            )
+            self.session.add(connector)
+            await self.session.flush()
+        secret_ref = await secret_store.store(
+            self.context.tenant_id, connector.id, f"dns_provider:{provider_key}", {"api_token": api_token}
+        )
+        now = datetime.now(UTC)
+        connector.status = "active"
+        connector.provider_key = provider_key
+        connector.external_account_ref = zone.id
+        connector.secret_ref = secret_ref
+        connector.granted_scopes = ["zone:read", "dns:write"]
+        connector.consented_by = self.context.actor_id
+        connector.consented_at = now
+        connector.version = (connector.version or 0) + 1
+        self.site_service._stage_event(
+            "connector.authorized",
+            "connector",
+            connector.id,
+            {
+                "site_id": str(site.id),
+                "connector_type": DNS_PROVIDER_CONNECTOR,
+                "provider_key": provider_key,
+                "zone_id": zone.id,
+                "scopes": connector.granted_scopes,
+            },
+        )
+        return connector
+
+    async def publish_dns_provider_challenge(
+        self,
+        site_id: UUID,
+        provider_key: str,
+        token: str,
+        provider: DnsProvider,
+        secret_store: ConnectorSecretReader,
+    ) -> tuple[str, str]:
+        self.context.require(Role.OWNER, Role.ADMIN)
+        site = await self._unverified_or_verified_site(site_id)
+        if provider.provider_key != provider_key:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="dns_provider_not_supported",
+            )
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        challenge = await self.session.scalar(
+            select(SiteVerificationChallenge).where(
+                SiteVerificationChallenge.tenant_id == self.context.tenant_id,
+                SiteVerificationChallenge.site_id == site.id,
+                SiteVerificationChallenge.token_hash == token_hash,
+                SiteVerificationChallenge.status == "pending",
+                SiteVerificationChallenge.expires_at > datetime.now(UTC),
+            )
+        )
+        if challenge is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="verification_challenge_invalid"
+            )
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == self.context.tenant_id,
+                Connector.site_id == site.id,
+                Connector.type == DNS_PROVIDER_CONNECTOR,
+                Connector.provider_key == provider_key,
+                Connector.status == "active",
+            )
+        )
+        if connector is None or not connector.secret_ref or not connector.external_account_ref:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="dns_provider_connector_not_active"
+            )
+        payload = await secret_store.load(
+            self.context.tenant_id, connector.id, connector.secret_ref
+        )
+        api_token = payload.get("api_token")
+        if not isinstance(api_token, str) or not api_token:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="dns_provider_connector_secret_invalid"
+            )
+        record_name = f"_seo-autopilot.{site.normalized_host}"
+        try:
+            record = await provider.find_txt_record(
+                connector.external_account_ref, record_name, token, api_token
+            )
+            if record is None:
+                record = await provider.create_txt_record(
+                    connector.external_account_ref, record_name, token, api_token
+                )
+        except DnsProviderError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        self.site_service._stage_event(
+            "site.verification_record_created",
+            "verification_challenge",
+            challenge.id,
+            {
+                "site_id": str(site.id),
+                "connector_type": DNS_PROVIDER_CONNECTOR,
+                "provider_key": provider_key,
+                "record_id": record.id,
+                "record_name": record.name,
+            },
+        )
+        return record.id, record.name
+
+    async def _unverified_or_verified_site(self, site_id: UUID) -> Site:
+        site = await self.site_service.get_site(site_id)
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+        return site
 
     async def _verified_site(self, site_id: UUID) -> Site:
         site = await self.site_service.get_site(site_id)
@@ -207,9 +367,7 @@ class ConnectorOAuthCallbackService:
             or oauth_state.requested_scopes != [GSC_READONLY_SCOPE]
             or not oauth_state.requested_property_ref
         ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="oauth_state_invalid"
-            )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_state_invalid")
         connector = await self.session.scalar(
             select(Connector).where(
                 Connector.id == oauth_state.connector_id,
@@ -223,9 +381,13 @@ class ConnectorOAuthCallbackService:
             )
         )
         if connector is None or site is None or site.verified_at is None or site.status != "active":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_binding_invalid")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="oauth_binding_invalid"
+            )
         if not property_matches_site(oauth_state.requested_property_ref, site.normalized_host):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_binding_invalid")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="oauth_binding_invalid"
+            )
         try:
             grant = await self.provider.exchange_code(code)
             if grant.scopes != frozenset({GSC_READONLY_SCOPE}):

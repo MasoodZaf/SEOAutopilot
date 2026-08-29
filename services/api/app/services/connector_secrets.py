@@ -22,6 +22,12 @@ class ConnectorSecretStore(Protocol):
     ) -> str: ...
 
 
+class ConnectorSecretReader(Protocol):
+    async def load(
+        self, tenant_id: UUID, connector_id: UUID, secret_ref: str
+    ) -> dict[str, object]: ...
+
+
 def decode_encryption_key(encoded: str) -> bytes:
     try:
         key = base64.urlsafe_b64decode(encoded.encode("ascii"))
@@ -76,9 +82,7 @@ class DatabaseEnvelopeSecretStore:
         await self.session.flush()
         return f"db-envelope://{secret.id}"
 
-    async def load(
-        self, tenant_id: UUID, connector_id: UUID, secret_ref: str
-    ) -> dict[str, object]:
+    async def load(self, tenant_id: UUID, connector_id: UUID, secret_ref: str) -> dict[str, object]:
         prefix = "db-envelope://"
         if not secret_ref.startswith(prefix):
             raise ValueError("unsupported_secret_ref")

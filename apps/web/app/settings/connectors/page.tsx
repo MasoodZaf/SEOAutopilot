@@ -1,9 +1,15 @@
 import Link from "next/link";
+import type {Metadata} from "next";
 
 import type {Site} from "@/app/pilot/model";
 import {apiJson} from "@/lib/server-api";
 
 type PageProps = {searchParams: Promise<{google?: string}>};
+
+export const metadata: Metadata = {
+  title: "Connector Status",
+  robots: {index: false, follow: false},
+};
 
 export default async function ConnectorsPage({searchParams}: PageProps) {
   const query = await searchParams;

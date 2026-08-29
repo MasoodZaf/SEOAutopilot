@@ -17,6 +17,16 @@ def test_google_connector_remains_closed_without_credentials() -> None:
     assert settings.google_connectors_enabled is False
 
 
+def test_dns_provider_connector_requires_a_secret_backend_when_enabled() -> None:
+    with pytest.raises(ValidationError, match="connector secret backend"):
+        Settings(
+            _env_file=None,  # pyright: ignore[reportCallIssue]
+            app_env="test",
+            cursor_signing_key="c" * 32,
+            dns_provider_connectors_enabled=True,
+        )
+
+
 def test_enabling_google_requires_credentials_and_separate_hash_key() -> None:
     with pytest.raises(ValidationError, match="Google connector credentials"):
         Settings(
