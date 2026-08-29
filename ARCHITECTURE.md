@@ -42,6 +42,8 @@ flowchart LR
 - Identity & tenancy
 - Site inventory & verification
 - Connectors & consent
+- DNS-provider adapter registry: universal manual TXT verification plus optional provider-specific
+  adapters behind the same exact-zone, two-consent, audit, and secret-store contract.
 - Crawl & observations
 - Findings, scoring & opportunities
 - Agent runs & evidence

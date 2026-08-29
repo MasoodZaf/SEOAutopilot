@@ -47,6 +47,8 @@ Create site request:
 
 - `GET /v1/sites/{site_id}/connectors`
 - `POST /v1/sites/{site_id}/connectors/{type}/authorize`
+- `POST /v1/sites/{site_id}/dns-connectors/{provider_key}`
+- `POST /v1/sites/{site_id}/dns-connectors/{provider_key}/verification`
 - `GET /v1/connectors/oauth/callback` (state-bound, short-lived flow)
 - `POST /v1/connectors/{connector_id}/syncs`
 - `DELETE /v1/connectors/{connector_id}`
@@ -65,6 +67,15 @@ redirect, granted scope, or `secret_ref`, or receive token material.
 The `database_envelope` callback is rejected in staging/production. The managed secret adapter,
 refresh-token worker path, revocation operation, provider quota evidence, and live-account acceptance
 remain release gates.
+
+DNS verification is provider-neutral. The universal path is the displayed TXT record, which works
+with any authoritative DNS provider and requires no connector. Optional adapters use the two-consent,
+owner/admin-only `/dns-connectors/{provider_key}` flow: the first request accepts provider-specific
+zone credentials, verifies its returned zone exactly matches the site, and stores the credential only
+through the connector secret store. It does not create a record. The second request can create only
+the current server-derived `_seo-autopilot.{verified_host}` TXT record. It is idempotent for the same
+name/content pair and audits only provider, zone, record ID, and record name—not credential or TXT
+content. Unsupported adapters fail closed; Cloudflare is merely the first registered adapter.
 
 ### Crawls, pages, and scores
 
@@ -107,7 +118,7 @@ Response: `202` with `{ "data": { "id": "...", "status": "queued" } }`.
 - `POST /v1/opportunities/{opportunity_id}/dismiss`
 - `POST /v1/opportunities/{opportunity_id}/proposals`
 
-Opportunity responses include score factors, risk, confidence rubric, evidence references, affected pages, scoring version, and data cutoff.
+Opportunity responses include score factors, risk, confidence rubric, evidence references, affected pages, scoring version, and data cutoff. List responses add the tenant- and site-scoped `page_url` so review surfaces can identify the affected page without a per-item lookup; this field is display evidence, never a client-authorized crawl or deployment target.
 
 The implemented top-opportunity query defaults to 20 and uses deterministic rule-diversity rounds,
 then `(score DESC, fingerprint ASC, id ASC)`. This prevents one repeated page-level rule from
@@ -130,6 +141,7 @@ the flag is a caution, not a statistical sufficiency guarantee.
 
 - `POST /v1/sites/{site_id}/performance-runs` with `Idempotency-Key`
 - `GET /v1/sites/{site_id}/performance-runs/latest`
+- `GET /v1/sites/{site_id}/performance-summary`
 
 The implemented MVP command returns `202` and queues one mobile Lighthouse lab run. The client cannot
 supply a URL: the server freezes a successful page from the latest terminal crawl, preferring the
@@ -157,35 +169,43 @@ any selected opportunity still points to an older crawl, preventing stale eviden
 
 ### Proposals and approvals
 
+- `POST /v1/sites/{site_id}/proposals`
+- `GET /v1/sites/{site_id}/proposals`
 - `GET /v1/proposals/{proposal_id}`
-- `PATCH /v1/proposals/{proposal_id}`
-- `POST /v1/proposals/{proposal_id}/validations`
-- `POST /v1/proposals/{proposal_id}/submit`
-- `POST /v1/proposals/{proposal_id}/decisions`
-- `POST /v1/proposals/{proposal_id}/deployments`
-- `POST /v1/deployments/{deployment_id}/rollback`
+- `POST /v1/proposals/{proposal_id}/approvals`
+- `POST /v1/proposals/{proposal_id}/deploy` with `Idempotency-Key`
+- `POST /v1/proposals/{proposal_id}/rollback`
 
 Decision request:
 
 ```json
-{"decision":"approve","reason":"Validated metadata-only change for product template."}
+{"decision":"approved","notes":"Validated metadata-only change for product template."}
 ```
 
 Deployment request:
 
 ```json
-{"environment_id":"...","connector_id":"...","strategy":"github_pr"}
+{"connector_type":"mock","current_live_content":"<title>Current title</title>"}
 ```
 
-The API returns `409 policy_precondition_failed` if the proposal revision, validation, approval set, source revision, mode, freeze window, budget, or kill switch no longer permits deployment.
+Deployment is a development/test-only mock path and is disabled by default. It requires an
+Owner/Admin/Developer, an approved proposal, Recommend or Autopilot mode, no emergency or scheduled
+freeze, remaining daily budget, and matching drift evidence. GitHub and CMS connectors return
+`409 deployment_connector_not_configured`. Rollback returns
+`409 rollback_connector_not_configured` after authorization and tenant checks; it does not mutate a
+receipt or claim an external rollback.
 
 ### Audit and measurement
 
-- `GET /v1/audit-events`
-- `POST /v1/audit-exports`
-- `GET /v1/deployments/{deployment_id}`
-- `GET /v1/deployments/{deployment_id}/measurements`
-- `GET /v1/sites/{site_id}/dashboard`
+- `POST /v1/proposals/{proposal_id}/verify`
+- `GET /v1/proposals/{proposal_id}/verification`
+- `POST /v1/proposals/{proposal_id}/measurement`
+- `GET /v1/sites/{site_id}/measurements`
+
+Live verification currently returns `409 live_verification_connector_not_configured`; it cannot use
+proposal output as its own proof. Measurement creation is a command because it persists a series. It
+requires an independently verified deployment and a completed 28-day follow-up window. The stored
+comparison is an empirical association, not causal attribution.
 
 ## Minimal resource examples
 
@@ -194,6 +214,7 @@ The API returns `409 policy_precondition_failed` if the proposal revision, valid
   "id": "019c...",
   "type": "metadata_ctr_gap",
   "title": "Improve title for /pricing",
+  "page_url": "https://example.com/pricing",
   "score": 82.4,
   "factors": {"impact":0.91,"confidence":0.84,"urgency":0.75,"effort":0.15},
   "risk": "low",

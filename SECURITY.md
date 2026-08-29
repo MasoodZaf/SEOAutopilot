@@ -92,6 +92,10 @@ Failure is closed: no partial “best effort” publication. Batch changes use c
 - Separate keys by environment and, where available, region; rotate and test revocation.
 - Local `.env.local` is ignored and for development only. Production secrets are injected at runtime.
 - Signed webhook secrets and deploy credentials never enter the LLM or crawler environment.
+- DNS-provider verification uses a separate connector consent followed by a separate record-creation
+  consent. Manual TXT verification works for every provider; optional adapters accept only an exact
+  site/zone binding and can create only the active server-derived TXT challenge. They cannot list,
+  edit, or delete arbitrary records through the product workflow.
 
 ## Calibration review safety
 
@@ -136,3 +140,19 @@ Incident runbooks cover credential exposure, cross-tenant access, unauthorized p
 - External penetration test before Autopilot GA.
 - No open critical/high findings at release; medium findings require owner and dated remediation.
 - Connector scope/terms and customer authorization are verified; local integration success is not provider approval.
+
+## Current release-gate status (2026-08-28)
+
+- External deployment is disabled by default. The API accepts only the development/test mock adapter,
+  and still requires an allowed role, Recommend/Autopilot mode, no emergency or scheduled freeze, and
+  remaining daily budget.
+- GitHub, Shopify, WordPress, live post-deploy verification, and external rollback are fail-closed
+  contracts, not working provider integrations. The control plane does not offer those actions.
+- Outcome calculation requires a verified deployment record and a completed 28-day follow-up window.
+  It reports empirical association and must not be described as causal evidence.
+- Tenant tables have RLS policies, but the local Compose application role is also the table-owning
+  PostgreSQL role and migrations do not use `FORCE ROW LEVEL SECURITY`. A least-privileged non-owner
+  runtime role plus live cross-tenant denial proof is mandatory before staging or production.
+- Proposal and suppression actor IDs are server-derived audit UUIDs, but there is no durable
+  tenant-membership table or database foreign key yet. Production OIDC plus membership resolution
+  and referential proof remain an identity release gate.

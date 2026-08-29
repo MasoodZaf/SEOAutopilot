@@ -11,6 +11,11 @@
 - Monorepo, CI, environments, identity/tenant context, RBAC skeleton.
 - PostgreSQL migrations/RLS, Redis job/outbox pattern, audit events.
 - Site CRUD, verification challenge, connector credential boundary.
+- Provider-neutral DNS ownership framework: universal manual TXT verification plus Owner/Admin
+  two-consent adapters, exact zone binding, scoped-credential storage, and one server-derived TXT
+  record only. Cloudflare is the first adapter; Route 53, GoDaddy, Namecheap, and other adapters can
+  be added without changing the site-verification lifecycle. Local/test uses the encrypted envelope;
+  managed-secret certification remains required before staging/production.
 - Observability, feature flags, usage budgets, kill-switch controls.
 
 **Exit:** isolation and authorization test matrix passes; restore and migration rehearsal documented.
@@ -93,6 +98,30 @@ evidence also remain open; therefore the overall Phase 2 exit gate has not passe
 ## Competitive milestones
 
 Against the SerpApi Awesome SEO Tools catalog, breadth is tracked as coverage but does not drive launch. Quarterly benchmark dimensions are: connected evidence sources, issue classes detected, end-to-end tasks completed without tool switching, explainability completeness, safe deployment coverage, rollback reliability, and measured-outcome coverage. “Better” requires benchmark evidence on these dimensions, not a marketing claim or a larger catalog.
+
+## Safety correction checkpoint (2026-08-28)
+
+- Deployment now fails closed unless the global flag, actor role, site mode, freeze state/window, and
+  daily budget all permit it. Only a development/test mock adapter is reachable.
+- Placeholder GitHub/CMS adapters, live verification, and rollback no longer fabricate successful
+  provider effects; their certification work remains in Phases 4-6.
+- Measurement now requires independent verification and the complete follow-up window, and product
+  copy labels it as association rather than causal inference.
+- Production RLS effectiveness remains blocked on a least-privileged non-owner database runtime role
+  and live cross-tenant denial evidence.
+
+## Three-site design-partner checkpoint (2026-08-28)
+
+- The standalone control plane now has an explicit allowlist for `codearc.net`, `thecalchive.com`,
+  and `wordkitapp.com`; arbitrary client-supplied hosts fail closed to the primary pilot.
+- CodeArc remains active in Observe mode. TheCalcHive and WordKit are locally onboarded as
+  `pending_verification`; no crawl or connector action is allowed until site-specific DNS proof passes.
+- The live workbench shows a deterministic top-20 advisory queue with affected URL, suggested
+  correction, required validation, score, confidence, and risk. It exposes zero automatic-change
+  controls and requires human calibration before Recommend mode.
+- Private pilot release still requires three-site crawl/calibration evidence. Public Recommend
+  release additionally requires production identity/membership, effective RLS, certified GitHub or
+  CMS staging plus rollback, browser E2E/accessibility evidence, operations runbooks, and G3 approval.
 
 ## Delivery principles
 

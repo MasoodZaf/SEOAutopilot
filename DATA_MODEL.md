@@ -56,6 +56,13 @@ requested GSC property binding. Its ciphertext is authenticated with tenant, con
 and key-version context. Staging/production configuration rejects this database backend and requires
 a managed secret adapter.
 
+`dns_provider` is a provider-neutral connector type with `provider_key` (for example `cloudflare`).
+It binds an Owner/Admin-consented credential to one exact provider zone ID after the adapter returns
+the zone name and it matches `site.normalized_host`. The credential is stored only at `secret_ref`;
+audit events retain no credential or TXT value. DNS record creation is a second explicit consent event
+bound to an unexpired `site_verification_challenge`. Manual TXT verification remains available for
+every DNS host and does not depend on a connector.
+
 ### Crawl and page inventory
 
 - `crawl_job(id, tenant_id, site_id, kind, status, requested_by, config_snapshot_json, robots_snapshot_hash, lease_until, started_at, finished_at, error_code, result_summary)`

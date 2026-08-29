@@ -37,6 +37,18 @@ Testing follows the risk chain: evidence correctness -> prioritization -> propos
 13. Fail canary verification; halt batch, roll back where supported, and generate incident/audit records.
 14. Create baseline/follow-up measurement windows without presenting association as guaranteed causation.
 
+### DNS provider verification gates
+
+- Manual TXT verification works without any provider connector for arbitrary authoritative DNS hosts.
+- Each assisted adapter must reject an unsupported provider key, a zone returned for a different site,
+  an expired challenge, or a connector/secret from another tenant.
+- Connection and TXT-record creation are separate Owner/Admin actions. The connection action has no
+  DNS side effect; the record action can create only the current server-derived TXT name/content pair.
+- Credentials and TXT values are absent from API responses, audit events, outbox events, logs, LLM
+  payloads, and crawler inputs. Adapter fakes prove idempotency and safe provider-error handling.
+- Cloudflare is tested as the first adapter; every additional provider must pass the same contract
+  suite and managed-secret/certification gate before it can be enabled.
+
 ### Google Search Console connector gates
 
 - Authorization starts only for an already verified tenant site and an owner/admin actor.
@@ -92,6 +104,31 @@ restricted local key, keyed run `09dc4976-5da1-498a-80dd-af9c50996437` completed
 stored Lighthouse 13.4.1 metrics: performance 42, LCP 11,058 ms, CLS 0.017078, TTFB 2 ms, and null
 lab INP. This proves one local provider round trip and normalized persistence, not field performance,
 trend reliability, production secret management, quota sufficiency, or ranking effect.
+
+### Fail-closed change-lifecycle checkpoint — 2026-08-28
+
+- Deployment tests prove the global flag defaults closed, viewers cannot deploy, and an emergency
+  freeze prevents adapter invocation. The service also checks site mode, freeze windows, and daily
+  budget before an adapter can run.
+- GitHub, Shopify, and WordPress adapter tests require an explicit not-implemented failure; placeholder
+  code cannot fabricate a provider receipt.
+- Rollback tests prove non-admin actors are denied and authorized requests still fail closed without
+  a real external rollback connector. No receipt status is changed and no rollback receipt is created.
+- Verification tests reject missing independently fetched live evidence. The public verify endpoint
+  remains blocked until a live connector is configured.
+- Measurement tests reject unverified deployments and incomplete 28-day follow-up windows.
+- `make check` passed locally after the three-site advisory slice: 86 API, 38 worker, 18 crawler,
+  6 contract, and 6 web tests (154 total), plus TypeScript/Python lint and type checks. Web tests cover
+  the exact portfolio allowlist, unknown-host fallback, and bounded advisory guidance. Automated
+  browser end-to-end coverage remains a release gap. One upstream Starlette deprecation warning remains.
+
+This checkpoint proves local fail-closed behavior only. It does not prove provider effects, production
+RLS enforcement, browser accessibility, deployment/rollback reliability, or launch readiness.
+
+Fresh-schema proof on 2026-08-28 applied migrations `0001` through `0017` in filename order to a
+disposable empty PostgreSQL database and produced 32 public tables. The temporary database was then
+deleted. This caught and corrected a dangling `tenant_user` foreign key and a duplicate global index
+name before the proof passed.
 
 ## Test matrix by mode
 
