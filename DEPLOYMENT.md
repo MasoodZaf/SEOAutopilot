@@ -208,6 +208,13 @@ questions no longer start work, a repeated request answers `blocked` instead of
 crawler, `sites=3 pages=545 opportunities=2541` unchanged, no errors in any
 service log, and `/pilot` and `/pilot/workspace` still 401 behind the gate.
 
+The frozen-site path was then exercised on the live system, against WordKit,
+and the freeze lifted immediately afterwards. Both halves hold: while frozen
+the agent answered `blocked / site_frozen` and `POST /v1/routines/{id}/runs`
+returned 409, and a run queued *before* the freeze — the race the worker fix
+exists for — was recorded `skipped / site_frozen` instead of being stranded.
+Afterwards: no site frozen, no run left in `queued`, counts unchanged.
+
 ## 7. Audit findings (2026-08-29)
 
 Full report: https://claude.ai/code/artifact/2e4f154d-700c-4754-a997-aea9ebb83b17
