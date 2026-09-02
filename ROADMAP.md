@@ -11,6 +11,11 @@
 - Monorepo, CI, environments, identity/tenant context, RBAC skeleton.
 - PostgreSQL migrations/RLS, Redis job/outbox pattern, audit events.
 - Site CRUD, verification challenge, connector credential boundary.
+- Provider-neutral DNS ownership framework: universal manual TXT verification plus Owner/Admin
+  two-consent adapters, exact zone binding, scoped-credential storage, and one server-derived TXT
+  record only. Cloudflare is the first adapter; Route 53, GoDaddy, Namecheap, and other adapters can
+  be added without changing the site-verification lifecycle. Local/test uses the encrypted envelope;
+  managed-secret certification remains required before staging/production.
 - Observability, feature flags, usage budgets, kill-switch controls.
 
 **Exit:** isolation and authorization test matrix passes; restore and migration rehearsal documented.
@@ -93,6 +98,83 @@ evidence also remain open; therefore the overall Phase 2 exit gate has not passe
 ## Competitive milestones
 
 Against the SerpApi Awesome SEO Tools catalog, breadth is tracked as coverage but does not drive launch. Quarterly benchmark dimensions are: connected evidence sources, issue classes detected, end-to-end tasks completed without tool switching, explainability completeness, safe deployment coverage, rollback reliability, and measured-outcome coverage. “Better” requires benchmark evidence on these dimensions, not a marketing claim or a larger catalog.
+
+## Safety correction checkpoint (2026-08-28)
+
+- Deployment now fails closed unless the global flag, actor role, site mode, freeze state/window, and
+  daily budget all permit it. Only a development/test mock adapter is reachable.
+- Placeholder GitHub/CMS adapters, live verification, and rollback no longer fabricate successful
+  provider effects; their certification work remains in Phases 4-6.
+- Measurement now requires independent verification and the complete follow-up window, and product
+  copy labels it as association rather than causal inference.
+- Production RLS effectiveness remains blocked on a least-privileged non-owner database runtime role
+  and live cross-tenant denial evidence.
+
+## Three-site design-partner checkpoint (2026-08-28)
+
+- The standalone control plane now has an explicit allowlist for `codearc.net`, `thecalchive.com`,
+  and `wordkitapp.com`; arbitrary client-supplied hosts fail closed to the primary pilot.
+- CodeArc remains active in Observe mode. TheCalcHive and WordKit are locally onboarded as
+  `pending_verification`; no crawl or connector action is allowed until site-specific DNS proof passes.
+- The live workbench shows a deterministic top-20 advisory queue with affected URL, suggested
+  correction, required validation, score, confidence, and risk. It exposes zero automatic-change
+  controls and requires human calibration before Recommend mode.
+- Private pilot release still requires three-site crawl/calibration evidence. Public Recommend
+  release additionally requires production identity/membership, effective RLS, certified GitHub or
+  CMS staging plus rollback, browser E2E/accessibility evidence, operations runbooks, and G3 approval.
+
+## Always-on workflow checkpoint (2026-09-02)
+
+Feature parity work against hosted always-on SEO agents began with the scheduling substrate, since
+every other recurring capability depends on it.
+
+- Delivered: `routine`/`routine_run` scheduling with deterministic daily, weekly, and monthly slots;
+  idempotent claiming across worker replicas; collapsed catch-up after downtime; `site_audit` and
+  `weekly_report` execution; deterministic `report` payloads hashed for reproducibility; AES-256-GCM
+  notification channels with https-only, public-address-checked delivery.
+- Fails closed: a routine requires an active DNS-verified site, skips while a site is frozen, skips
+  when a crawl is already active, and parks after five consecutive failures. A frozen site publishes
+  no work at all.
+- Recorded honestly: `keyword_refresh`, `sitemap_coverage`, `competitor_scan`, and
+  `ai_visibility_scan` are accepted as routine kinds but record `skipped` with
+  `routine_kind_not_implemented` until their phases land. They do not report success.
+- Keyword workspace: GSC query terms are now sealed per site in an AES-256-GCM envelope alongside
+  the existing HMAC, which unlocked deterministic token-overlap clustering, rule-based intent,
+  question-share AEO candidacy, striking-distance and cannibalisation signals, and a bounded
+  opportunity score. Raw terms are readable only through one role-gated, audited endpoint.
+- Sitemap coverage: the crawler now records which sitemaps it considered, how it found each one,
+  and every in-scope URL declared, so declared-versus-crawled-versus-indexable is measured rather
+  than inferred.
+- Content briefs and the refresh queue: each cluster above the demand threshold produces a
+  deterministic brief naming every gap it found in the target page's stored evidence, with a
+  priority that rises with gap count. Briefs are advisory artifacts with no deployment authority.
+- Keyword clustering now stems tokens before comparing them, so "percentage calculator", "how to
+  calculate percentage", and "what is a percentage calculator" form one cluster. Labels are built
+  from the original words, so a stem never reaches the reader.
+- Competitor tracking: competitors and their pages are entered by a human and fetched with no
+  discovery, under a shared egress policy, the competitor's robots.txt, and manual redirect
+  revalidation. Only structure is stored, never body text.
+- Answer-engine readiness: measured from first-party crawl and search evidence, with weights
+  renormalised over the factors actually measured. It never claims to observe citations, and the
+  snapshot column admits no citation source but `none`.
+- Still open: observed answer-engine citations and SERP rank tracking still need a certified
+  provider decision on terms and economics. Nothing in the product reports them today.
+
+## Agent workspace checkpoint (2026-09-02)
+
+- The control plane now has a Chat / Tasks / Skills / Reports workspace over twelve skills.
+- Routing is deterministic scored token overlap against a code-defined registry, not a model call.
+  A message cannot name a capability that is not in the registry, a role cannot reach a skill it is
+  not allowed, and an unclear request starts nothing and offers choices instead.
+- Read skills answer from stored records and return the references used. No skill can deploy,
+  approve, or write site content.
+- Scheduling skills cover all seven routine kinds, so any recurring workflow can be set up from
+  chat. They require a word asking for the work to happen, not merely the topic, and honour a named
+  cadence ("every day", "every Monday", "every month"). Without a cadence they queue one run and
+  leave the routine parked.
+- An LLM classifier remains a possible future addition behind the existing adapter's schema, cost,
+  and evidence-validation controls. It is not required and is not wired in: the deterministic
+  router is the shipped behaviour.
 
 ## Delivery principles
 

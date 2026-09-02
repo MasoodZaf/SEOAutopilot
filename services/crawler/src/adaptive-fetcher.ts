@@ -58,9 +58,19 @@ export function createAdaptiveFetcher(
         await route.continue();
       });
       const response = await page.goto(resource.finalUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 15_000,
+        waitUntil: "load",
+        timeout: 20_000,
       });
+      // "load" fires once subresources have arrived, but a client-rendered app
+      // mounts after that. Without this wait we snapshot an empty root div plus
+      // the <noscript> fallback, which reads as a uniformly thin, link-free page.
+      await page
+        .waitForFunction(
+          () => (document.body?.innerText ?? "").replace(/\s+/g, " ").trim().length > 200,
+          undefined,
+          {timeout: 8_000},
+        )
+        .catch(() => undefined);
       const finalUrl = (await assertSafeUrl(page.url(), allowedHosts)).toString();
       const body = await page.content();
       if (Buffer.byteLength(body, "utf8") > MAX_RENDERED_BYTES) {

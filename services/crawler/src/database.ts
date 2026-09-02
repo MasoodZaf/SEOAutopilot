@@ -93,11 +93,35 @@ export async function persistObservation(pool: Pool, crawl: ClaimedCrawl, observ
   });
 }
 
+/** Sitemap inventory for this crawl, so coverage can be answered later. */
+async function persistSitemaps(client: PoolClient, crawl: ClaimedCrawl, result: CrawlResult): Promise<void> {
+  for (const sitemap of result.sitemaps) {
+    const source = await client.query<{id:string}>(
+      `INSERT INTO sitemap_source(tenant_id,site_id,crawl_job_id,sitemap_url,discovered_via,status,declared_url_count,in_scope_url_count,truncated)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT(tenant_id,crawl_job_id,sitemap_url) DO UPDATE SET status=excluded.status,declared_url_count=excluded.declared_url_count,in_scope_url_count=excluded.in_scope_url_count,truncated=excluded.truncated,fetched_at=now()
+       RETURNING id`,
+      [crawl.tenantId,crawl.siteId,crawl.id,sitemap.sitemapUrl,sitemap.discoveredVia,sitemap.status,sitemap.declaredUrlCount,sitemap.inScopeUrls.length,sitemap.truncated],
+    );
+    const sourceId = source.rows[0]?.id;
+    if (!sourceId) continue;
+    for (const url of sitemap.inScopeUrls) {
+      const urlHash = createHash("sha256").update(url).digest("hex");
+      await client.query(
+        `INSERT INTO sitemap_url(tenant_id,crawl_job_id,url_hash,site_id,sitemap_source_id,normalized_url)
+         VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(tenant_id,crawl_job_id,url_hash) DO NOTHING`,
+        [crawl.tenantId,crawl.id,urlHash,crawl.siteId,sourceId,url],
+      );
+    }
+  }
+}
+
 export async function completeCrawl(pool: Pool, crawl: ClaimedCrawl, result: CrawlResult): Promise<void> {
   await tenantTransaction(pool,crawl.tenantId,async client=>{
+    await persistSitemaps(client,crawl,result);
     const partial=result.observations.length>=crawl.maxPages||result.discoveryTruncated||result.fetchErrors>0;
     const finalStatus=partial?"partial":"completed";
-    const summary={pages_observed:result.observations.length,skipped_by_robots:result.skippedByRobots,fetch_errors:result.fetchErrors,discovery_truncated:result.discoveryTruncated,truncated_link_pages:result.observations.filter(item=>item.linksTruncated).length,max_pages:crawl.maxPages,max_depth:crawl.maxDepth};
+    const summary={pages_observed:result.observations.length,skipped_by_robots:result.skippedByRobots,fetch_errors:result.fetchErrors,discovery_truncated:result.discoveryTruncated,truncated_link_pages:result.observations.filter(item=>item.linksTruncated).length,max_pages:crawl.maxPages,max_depth:crawl.maxDepth,sitemaps_found:result.sitemaps.length,sitemap_urls_declared:result.sitemaps.reduce((total,item)=>total+item.inScopeUrls.length,0)};
     await client.query("UPDATE crawl_job SET status=$3,finished_at=now(),lease_until=null,error_code=null,result_summary=$4::jsonb WHERE id=$1 AND tenant_id=$2",[crawl.id,crawl.tenantId,finalStatus,JSON.stringify(summary)]);
     await client.query(`INSERT INTO outbox_event(tenant_id,event_type,event_version,aggregate_type,aggregate_id,payload)
       VALUES($1,'crawl.completed',1,'crawl_job',$2,$3::jsonb)`,[crawl.tenantId,crawl.id,JSON.stringify({crawl_id:crawl.id,site_id:crawl.siteId,status:finalStatus,summary})]);

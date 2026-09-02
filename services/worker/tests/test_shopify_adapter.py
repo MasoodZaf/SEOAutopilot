@@ -2,9 +2,9 @@ from uuid import uuid4
 
 import pytest
 from app.deployments.base import (
+    DeploymentBlockedError,
     DeploymentManifest,
     DeploymentRequest,
-    DriftDetectedError,
 )
 from app.deployments.shopify_adapter import (
     ShopifyDeploymentAdapter,
@@ -13,7 +13,7 @@ from app.deployments.shopify_adapter import (
 
 
 @pytest.mark.asyncio
-async def test_shopify_and_wordpress_adapters() -> None:
+async def test_shopify_and_wordpress_adapters_fail_closed_until_wired() -> None:
     manifest = DeploymentManifest(
         tenant_id=str(uuid4()),
         site_id=str(uuid4()),
@@ -41,30 +41,8 @@ async def test_shopify_and_wordpress_adapters() -> None:
         current_live_content=None,
     )
 
-    shopify_res = await shopify.deploy(request)
-    assert shopify_res.status == "applied"
-    assert shopify_res.connector_type == "shopify"
-    assert "gid://shopify/OnlineStorePage/" in shopify_res.external_ref
-
     wp = WordPressDeploymentAdapter()
-    wp_res = await wp.deploy(request)
-    assert wp_res.status == "applied"
-    assert wp_res.connector_type == "wordpress"
-    assert "wp-json/wp/v2/pages/" in wp_res.external_ref
-
-    # Drift error test
-    request_drift = DeploymentRequest(
-        tenant_id=uuid4(),
-        site_id=uuid4(),
-        proposal_id=uuid4(),
-        target_type="shopify_page",
-        target_path="products/cloud-hosting",
-        diff_unified="diff",
-        base_hash=manifest.base_hash,
-        after_content="new",
-        idempotency_key="idemp-shopify-2",
-        manifest=manifest,
-        current_live_content="different live content",
-    )
-    with pytest.raises(DriftDetectedError):
-        await shopify.deploy(request_drift)
+    with pytest.raises(DeploymentBlockedError, match="shopify_connector_not_implemented"):
+        await shopify.deploy(request)
+    with pytest.raises(DeploymentBlockedError, match="wordpress_connector_not_implemented"):
+        await wp.deploy(request)

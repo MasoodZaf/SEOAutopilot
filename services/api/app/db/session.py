@@ -17,6 +17,16 @@ session_factory = async_sessionmaker(engine, expire_on_commit=False)
 async def get_tenant_session(
     context: Annotated[TenantContext, Depends(require_tenant_context)],
 ) -> AsyncIterator[AsyncSession]:
+    """One transaction per request, with the tenant GUC scoped to it.
+
+    `set_config(..., true)` is transaction-local, which is what keeps a pooled
+    connection from carrying one tenant's scope into another request. It also
+    means a service must never commit mid-request: committing would end the
+    transaction and drop the GUC, leaving every later statement unscoped and
+    blocked by row-level security. Services stage writes with `flush()` and this
+    context manager commits once, on a clean exit, or rolls the whole request
+    back.
+    """
     async with session_factory() as session, session.begin():
         await session.execute(
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),

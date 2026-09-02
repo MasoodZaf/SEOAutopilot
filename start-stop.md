@@ -555,7 +555,7 @@ docker compose ps
 Check the API readiness endpoint:
 
 ```bash
-curl http://localhost:8000/v1/system/readiness
+curl http://localhost:8001/v1/system/readiness
 ```
 
 Run the complete quality gate:
@@ -597,3 +597,159 @@ attempt 1 with Lighthouse 13.4.1: performance 42/100, LCP 11,058 ms, CLS 0.01707
 lab INP. This single lab observation is diagnostic evidence, not field Core Web Vitals, a trend, or
 ranking-impact proof. Preserve Observe mode and all verification, OAuth, tenant, crawler, evidence,
 provider-quota, and secret boundaries.
+
+## 20. Safety and product-truth correction — 2026-08-28
+
+The near-complete UI and change lifecycle were reviewed against the repository's production and
+enterprise claims. Several placeholder paths could previously report deployment, rollback, or
+verification success without an external provider effect. Those paths are now fail closed:
+
+- deployment defaults disabled and checks actor role, site mode, emergency freeze, scheduled freeze,
+  and daily change budget before invoking an adapter;
+- only the mock adapter can be selected, and only in development/test;
+- GitHub, Shopify, and WordPress adapters raise explicit not-implemented errors;
+- rollback requires Owner/Admin and then returns `rollback_connector_not_configured` without changing
+  deployment state;
+- live verification cannot reuse proposed content as proof and its public command remains blocked;
+- measurement requires an independently verified deployment and a complete 28-day follow-up window.
+
+The control plane and landing page now label the product `Internal Alpha`, distinguish Lighthouse lab
+samples from field Core Web Vitals, remove external deploy/rollback controls, show connector
+certification gates, and describe outcome deltas as association rather than causation. Protected
+control-plane pages are `noindex`, and status/error messages have live-region semantics.
+
+Documentation now records the remaining high-priority boundary: local PostgreSQL uses the table-owning
+application role. RLS policies exist, but a least-privileged non-owner runtime role and live
+cross-tenant denial proof are still mandatory before staging or production.
+
+Verification result: `make check` passed with 85 API, 38 worker, 18 crawler, and 6 contract tests
+(147 total), plus lint and type checks. The web package still has zero automated tests and one upstream
+Starlette deprecation warning remains. A production Next.js build and live local smoke check are the
+next verification steps. No credential file was read or printed; `.env.local` and
+`infra/local/web.env` remain ignored, and `.env.local` remains mode 0600.
+
+## 21. Live recovery and schema proof — 2026-08-28
+
+The corrected images now run as six healthy local services. Codex's local helper already occupied
+host port 8000, so Compose maps the SEO Autopilot API to `127.0.0.1:8001`; the web app remains at
+`http://localhost:3001`. API readiness returned 200 with `deployments_enabled=false` and
+`autopilot_enabled=false`.
+
+The preserved CodeArc database contained all prior crawl, Search Console, and PageSpeed evidence but
+was missing migrations 0014-0016. Applying them exposed two repository schema defects that were fixed:
+
+- proposal actor columns referenced a nonexistent `tenant_user` table, while authentication currently
+  supplies server-derived actor UUIDs and durable membership is still a release gate;
+- post-deploy verification reused an index name already created for site verification.
+
+Migration 0017 aligns opportunity actor timestamp/UUID columns with the ORM. A disposable clean
+database then applied all migrations 0001-0017 in order and produced 32 public tables; only that
+temporary database was deleted afterward.
+
+The live pilot was browser-verified after migration and rebuild. It shows CodeArc active in Observe
+mode, Autopilot off, 0/5 changes used, the last crawl `partial`, 0 clicks / 9 impressions, and mobile
+Lighthouse readiness at 1/3 samples (`insufficient_samples`). It shows zero proposals and zero outcome
+series, and no external deploy or rollback control. The final contrast and layout were visually
+checked on the dark pilot surface; the landing page visibly reports `Internal alpha` and `2 / 6
+Proven` with deployment as a certification gate.
+
+## 22. Three-site advisory workbench — 2026-08-28
+
+The local control plane now treats the product as one standalone application serving a bounded
+portfolio, rather than code embedded in any target website:
+
+- `codearc.net` — active and locked to Observe mode;
+- `thecalchive.com` — locally onboarded as `pending_verification`;
+- `wordkitapp.com` — locally onboarded as `pending_verification`.
+
+Only these three explicit hosts are selectable. Unknown or malformed host input fails closed to the
+primary CodeArc pilot. Selecting or onboarding a site does not grant crawl, connector, proposal,
+approval, or publication authority. The two new sites have site-specific verification challenges,
+but no DNS record was changed and no crawl was started in this slice.
+
+The live CodeArc screen now shows an Auto-correction Advisory Queue with the deterministic top 20.
+Each row includes the affected URL, score, confidence, risk, a concrete suggested correction, and a
+required validation. The guidance is advisory only: the screen reports `0 automatic changes`, every
+item says `Human review required`, and there is no correction or deployment action. H1,
+meta-description, and thin-content guidance is bounded; thin-content guidance explicitly forbids
+word-count padding and requires an intent-based consolidate/noindex/improve decision.
+
+The opportunities API attaches `page_url` using one tenant- and site-scoped batch query rather than
+twenty per-item reads. The URL is display evidence, never client authority for crawling or deployment.
+The API remains additive under `/v1`.
+
+Verification result:
+
+- `make check` passed with 86 API, 38 worker, 18 crawler, 6 contract, and 6 web tests: 154 total;
+- TypeScript/Python lint and type checks passed, including Pyright with zero errors/warnings;
+- the Next.js production build passed;
+- the live rebuilt UI was DOM- and visually checked at `http://localhost:3001/pilot` with no
+  horizontal overflow at the active 919 px viewport;
+- one upstream Starlette TestClient/httpx deprecation warning remains.
+
+Deployment model and gates:
+
+- ship SEO Autopilot as a standalone hosted web application;
+- connect verified sites to read-only evidence sources;
+- after explicit human approval, use a certified connector to open a GitHub PR or stage a CMS
+  revision; do not embed the control plane into customer sites;
+- private three-site pilot readiness requires DNS verification, bounded crawls, human calibration,
+  and usefulness benchmarks for all three sites;
+- public Recommend readiness additionally requires production OIDC/membership, an effective
+  non-owner RLS role, certified connector/rollback, browser E2E and accessibility evidence, and
+  operational/security approval;
+- rankings, traffic, or revenue cannot be guaranteed. Consent enforcement, audit history,
+  reversibility, and measurement discipline are the guaranteeable product controls.
+
+## 23. Provider-neutral DNS ownership workflow — 2026-08-29
+
+The product is not restricted to Cloudflare. Manual DNS TXT verification is the universal workflow
+for every authoritative DNS host. Optional provider adapters use the same Owner/Admin two-consent
+workflow, with Cloudflare registered only as the first adapter:
+
+1. connect a provider credential restricted to the exact site zone;
+2. separately approve creation of only the current server-derived
+   `_seo-autopilot.{verified_host}` TXT verification record.
+
+The first action verifies the provider-returned zone name against the tenant site and stores the
+credential only through the connector secret boundary. The second action is idempotent for the
+current name/content pair and records an audit event containing provider, zone, record ID, and record
+name. Neither the credential nor the TXT content is returned, logged, sent to an LLM, or exposed to
+the crawler. It cannot list, edit, or delete arbitrary DNS records through the product workflow.
+
+The feature is disabled by default. The local/test encrypted-envelope backend can support it after
+explicit configuration; staging and production remain fail-closed until a managed secret adapter,
+least-privileged runtime role, provider acceptance, and connector certification have passed. This
+does not authorize any website-content change, deployment, or ranking claim.
+
+Verification result: focused DNS-provider/GSC connector tests passed (14 tests), then the full
+repository gate passed with 90 API, 38 worker, 18 crawler, 6 contract, and 6 web tests. A current
+Starlette deprecation warning remains outside this feature.
+
+Runtime follow-through: migrations `0018_cloudflare_dns_connector.sql` and
+`0019_dns_provider_connector.sql` were applied to the local PostgreSQL development database. The
+API, web, worker, and crawler services were rebuilt and recreated successfully; the local stack
+health check returned `ok`. The previously approved bounded Observe-mode crawls for
+`thecalchive.com` and `wordkitapp.com` subsequently completed; this records observations only and
+did not publish content or create any new DNS record.
+
+## 24. Daily staging watch and Google connector boundary — 2026-08-29
+
+A daily, Observe-only staging watcher was created for this task. It checks the deployment when it
+exists: service health, scheduled jobs, crawl/evidence quality, connector health, and regressions
+for CodeArc, The Calc Hive, and WordKit. It has no authority to change content, DNS, connector
+scope, or deployment configuration. Until a Hetzner VPS address and SSH deployment authority are
+provided, its single prerequisite is staging deployment.
+
+Crawler execution is intentionally independent of Google. The crawl request path verifies the site
+and queues only a bounded crawl; it does not initiate an OAuth redirect or query Google. Search
+Console sync is a separate background job that uses an already-authorized encrypted connector
+secret. A missing, expired, or revoked Google authorization must leave crawl completion intact and
+surface the connector as requiring reauthorization. It must never cause repeated interactive SSO
+during a crawl.
+
+At this point, the implemented Google connector is Search Console only. GA4 must be introduced as
+a separate, read-only connector with one-time OAuth setup, offline refresh-token handling through
+the production secret manager, explicit property selection, isolated background syncs, connector
+health states, and reauthorization alerts. It must not be coupled to the crawler or used as a
+publication authority.

@@ -9,14 +9,14 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://seoautopilot.dev";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "SEO Autopilot — Auditable Multi-Tenant Autonomous SEO Operations",
+    default: "SEO Autopilot — Auditable Multi-Tenant SEO Operations",
     template: "%s | SEO Autopilot",
   },
   description:
-    "Auditable, multi-tenant SEO operations system connecting crawl evidence, GSC search metrics, and Core Web Vitals to safely deploy and measure ranking improvements.",
+    "Auditable, multi-tenant SEO operations connecting crawl evidence, Search Console metrics, reviewable proposals, and outcome tracking.",
   keywords: [
     "SEO Autopilot",
-    "Autonomous SEO",
+    "Governed SEO",
     "Multi-Tenant SEO Platform",
     "Technical SEO Crawler",
     "Automated SEO Operations",
@@ -45,16 +45,16 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     url: siteUrl,
-    title: "SEO Autopilot — Auditable Autonomous SEO Operations",
+    title: "SEO Autopilot — Auditable SEO Operations",
     description:
-      "Connect crawl, Search Console, analytics, and delivery data to prioritize, approve, deploy, and measure SEO improvements with zero hallucinations.",
+      "Connect crawl and Search Console evidence to prioritize opportunities, review proposed changes, and track outcomes under governance.",
     siteName: "SEO Autopilot",
   },
   twitter: {
     card: "summary_large_image",
-    title: "SEO Autopilot — Auditable Autonomous SEO Operations",
+    title: "SEO Autopilot — Auditable SEO Operations",
     description:
-      "Enterprise SEO operations with separation of duties, fail-closed policy, and 28-day causal measurement.",
+      "SEO operations with separation of duties, fail-closed deployment policy, and clearly labeled outcome tracking.",
     creator: "@seoautopilot",
   },
 };

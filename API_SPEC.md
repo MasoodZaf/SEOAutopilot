@@ -47,6 +47,8 @@ Create site request:
 
 - `GET /v1/sites/{site_id}/connectors`
 - `POST /v1/sites/{site_id}/connectors/{type}/authorize`
+- `POST /v1/sites/{site_id}/dns-connectors/{provider_key}`
+- `POST /v1/sites/{site_id}/dns-connectors/{provider_key}/verification`
 - `GET /v1/connectors/oauth/callback` (state-bound, short-lived flow)
 - `POST /v1/connectors/{connector_id}/syncs`
 - `DELETE /v1/connectors/{connector_id}`
@@ -65,6 +67,15 @@ redirect, granted scope, or `secret_ref`, or receive token material.
 The `database_envelope` callback is rejected in staging/production. The managed secret adapter,
 refresh-token worker path, revocation operation, provider quota evidence, and live-account acceptance
 remain release gates.
+
+DNS verification is provider-neutral. The universal path is the displayed TXT record, which works
+with any authoritative DNS provider and requires no connector. Optional adapters use the two-consent,
+owner/admin-only `/dns-connectors/{provider_key}` flow: the first request accepts provider-specific
+zone credentials, verifies its returned zone exactly matches the site, and stores the credential only
+through the connector secret store. It does not create a record. The second request can create only
+the current server-derived `_seo-autopilot.{verified_host}` TXT record. It is idempotent for the same
+name/content pair and audits only provider, zone, record ID, and record name—not credential or TXT
+content. Unsupported adapters fail closed; Cloudflare is merely the first registered adapter.
 
 ### Crawls, pages, and scores
 
@@ -107,7 +118,7 @@ Response: `202` with `{ "data": { "id": "...", "status": "queued" } }`.
 - `POST /v1/opportunities/{opportunity_id}/dismiss`
 - `POST /v1/opportunities/{opportunity_id}/proposals`
 
-Opportunity responses include score factors, risk, confidence rubric, evidence references, affected pages, scoring version, and data cutoff.
+Opportunity responses include score factors, risk, confidence rubric, evidence references, affected pages, scoring version, and data cutoff. List responses add the tenant- and site-scoped `page_url` so review surfaces can identify the affected page without a per-item lookup; this field is display evidence, never a client-authorized crawl or deployment target.
 
 The implemented top-opportunity query defaults to 20 and uses deterministic rule-diversity rounds,
 then `(score DESC, fingerprint ASC, id ASC)`. This prevents one repeated page-level rule from
@@ -130,6 +141,7 @@ the flag is a caution, not a statistical sufficiency guarantee.
 
 - `POST /v1/sites/{site_id}/performance-runs` with `Idempotency-Key`
 - `GET /v1/sites/{site_id}/performance-runs/latest`
+- `GET /v1/sites/{site_id}/performance-summary`
 
 The implemented MVP command returns `202` and queues one mobile Lighthouse lab run. The client cannot
 supply a URL: the server freezes a successful page from the latest terminal crawl, preferring the
@@ -157,35 +169,167 @@ any selected opportunity still points to an older crawl, preventing stale eviden
 
 ### Proposals and approvals
 
+- `POST /v1/sites/{site_id}/proposals`
+- `GET /v1/sites/{site_id}/proposals`
 - `GET /v1/proposals/{proposal_id}`
-- `PATCH /v1/proposals/{proposal_id}`
-- `POST /v1/proposals/{proposal_id}/validations`
-- `POST /v1/proposals/{proposal_id}/submit`
-- `POST /v1/proposals/{proposal_id}/decisions`
-- `POST /v1/proposals/{proposal_id}/deployments`
-- `POST /v1/deployments/{deployment_id}/rollback`
+- `POST /v1/proposals/{proposal_id}/approvals`
+- `POST /v1/proposals/{proposal_id}/deploy` with `Idempotency-Key`
+- `POST /v1/proposals/{proposal_id}/rollback`
 
 Decision request:
 
 ```json
-{"decision":"approve","reason":"Validated metadata-only change for product template."}
+{"decision":"approved","notes":"Validated metadata-only change for product template."}
 ```
 
 Deployment request:
 
 ```json
-{"environment_id":"...","connector_id":"...","strategy":"github_pr"}
+{"connector_type":"mock","current_live_content":"<title>Current title</title>"}
 ```
 
-The API returns `409 policy_precondition_failed` if the proposal revision, validation, approval set, source revision, mode, freeze window, budget, or kill switch no longer permits deployment.
+Deployment is a development/test-only mock path and is disabled by default. It requires an
+Owner/Admin/Developer, an approved proposal, Recommend or Autopilot mode, no emergency or scheduled
+freeze, remaining daily budget, and matching drift evidence. GitHub and CMS connectors return
+`409 deployment_connector_not_configured`. Rollback returns
+`409 rollback_connector_not_configured` after authorization and tenant checks; it does not mutate a
+receipt or claim an external rollback.
 
 ### Audit and measurement
 
-- `GET /v1/audit-events`
-- `POST /v1/audit-exports`
-- `GET /v1/deployments/{deployment_id}`
-- `GET /v1/deployments/{deployment_id}/measurements`
-- `GET /v1/sites/{site_id}/dashboard`
+- `POST /v1/proposals/{proposal_id}/verify`
+- `GET /v1/proposals/{proposal_id}/verification`
+- `POST /v1/proposals/{proposal_id}/measurement`
+- `GET /v1/sites/{site_id}/measurements`
+
+Live verification currently returns `409 live_verification_connector_not_configured`; it cannot use
+proposal output as its own proof. Measurement creation is a command because it persists a series. It
+requires an independently verified deployment and a completed 28-day follow-up window. The stored
+comparison is an empirical association, not causal attribution.
+
+### Scheduled routines, reports, and notifications
+
+- `GET /v1/sites/{site_id}/routines`
+- `PUT /v1/sites/{site_id}/routines`
+- `POST /v1/routines/{routine_id}/runs`
+- `GET /v1/sites/{site_id}/routine-runs`
+- `GET /v1/sites/{site_id}/reports`
+- `GET /v1/reports/{report_id}`
+- `GET /v1/notification-channels`
+- `POST /v1/notification-channels`
+- `POST /v1/notification-channels/{channel_id}/revoke`
+
+Routine endpoints return `503 routines_not_enabled` unless `ROUTINES_ENABLED` is set. A routine
+gathers evidence and produces reports; it never deploys, approves, or suppresses. Creating one
+requires an active, DNS-verified site, so a schedule cannot become a path around verification.
+`PUT` is an upsert keyed on `(site_id, kind)`; editing a schedule re-anchors `next_run_at` to the
+present so an edit never replays a passed slot. A manual run is deduplicated to the minute through
+the `(routine_id, scheduled_for)` uniqueness constraint.
+
+Report kinds are `weekly_digest`, `audit_summary`, `competitor_digest`, `ai_visibility_digest`, and
+`sitemap_coverage`. A sitemap coverage report is a point-in-time snapshot of one crawl: it reports
+declared-in-scope, declared-and-crawled, declared-and-indexable, declared-not-crawled, and indexable
+pages missing from the sitemap, with bounded URL samples for each gap. It is skipped rather than
+published when the site has no completed crawl or that crawl recorded no sitemap inventory.
+
+Notification endpoints return `503 notifications_not_configured` unless `NOTIFICATIONS_ENABLED` is
+set with a secret backend. A webhook destination is a secret: it is stored in an AES-256-GCM
+envelope, is never returned by the API, and reads back only as a `destination_hint` (host plus a
+four-character tail). Delivery is https-only to a public address resolved at send time, and the
+message body carries headline counts and a link, never page-level evidence.
+
+### Keyword workspace
+
+- `GET /v1/sites/{site_id}/keyword-clusters` (`intent`, `answer_engine_only`, `limit`)
+- `GET /v1/sites/{site_id}/keyword-analysis/latest`
+- `GET /v1/keyword-clusters/{cluster_id}`
+- `GET /v1/keyword-clusters/{cluster_id}/members`
+
+Clusters are built by the worker from stored Search Console evidence with a deterministic
+token-overlap algorithm; the same window and `algorithm_version` reproduce the same clusters, keys,
+and scores. `answer_engine_candidate` marks a cluster whose members are at least 30% question-form,
+which is the answer-engine signal observable from first-party evidence.
+
+The cluster endpoints are aggregate reads and carry no query term: only a label derived from the
+cluster's shared tokens, its intent, and its metrics. `GET /v1/keyword-clusters/{id}/members` is the
+one path that decrypts stored terms. It requires Owner, Admin, SEO Manager, or Editor, returns
+`403 insufficient_permissions_for_terms` otherwise, and writes a `keyword_terms.read` audit event
+naming the cluster and the number of terms revealed.
+
+### Content briefs and the refresh queue
+
+- `GET /v1/sites/{site_id}/content-briefs` (`status`, `kind`, `answer_engine_only`, `limit`)
+- `GET /v1/content-briefs/{brief_id}`
+- `PATCH /v1/content-briefs/{brief_id}`
+
+A brief is a governed advisory artifact built deterministically from a keyword cluster and the page
+evidence for its target. It contains no diff, carries no deployment authority, and cannot reach an
+adapter; turning a brief into a change still goes through the proposal lifecycle. Each section
+states a finding, a recommendation, and the observation it came from, and the whole brief is
+content-hashed so identical evidence reproduces an identical brief.
+
+`kind` is `refresh` when a page already ranks for the cluster and `new_page` when none does. The
+refresh queue is the collection filtered to `kind=refresh`, ordered by priority. `PATCH` moves a
+brief between `queued`, `in_progress`, `done`, and `dismissed`; a dismissal requires a reason, an
+out-of-order transition returns `409 content_brief_transition_not_allowed`, and every change writes
+a `content_brief.status_changed` audit event. Briefs carry query hashes, never readable terms, so
+listing them does not widen who can read what people searched for.
+
+### Competitors and answer-engine readiness
+
+- `GET /v1/sites/{site_id}/competitors`
+- `POST /v1/sites/{site_id}/competitors`
+- `POST /v1/competitors/{competitor_id}/pause`
+- `GET /v1/competitors/{competitor_id}/pages`
+- `POST /v1/competitors/{competitor_id}/pages`
+- `GET /v1/sites/{site_id}/competitor-scans/latest`
+- `GET /v1/sites/{site_id}/ai-visibility`
+
+A competitor and every tracked page are entered by a human. There is no discovery: a scan requests
+exactly the stored URLs, so adding a competitor never widens what the platform fetches. A page whose
+host does not match its competitor record is rejected with `409 url_host_does_not_match_competitor`.
+Each request passes the shared egress policy (https only, no embedded credentials, every resolved
+address checked public at request time) and the competitor's own robots.txt; a disallowed path is
+recorded as `robots_disallowed` rather than fetched. Redirects are followed manually, at most three
+hops, revalidating each one, and a redirect leaving the competitor's host ends the attempt.
+Observations keep structure only - title, description, headings, word count, internal link count,
+structured-data types - plus a content hash that shows a page changed without retaining what it said.
+
+`GET /v1/sites/{site_id}/ai-visibility` returns answer-engine **readiness** measured from
+first-party crawl and search evidence: crawlable and indexable share, entity markup, question and
+answer markup, and how many question-bearing clusters have an answering page. Weights renormalise
+over measured factors, so a missing input lowers confidence rather than scoring zero. It does not
+observe answer-engine citations; `citation_source` is always `none` and the column admits no other
+value until a provider is certified.
+
+### Agent workspace
+
+- `GET /v1/skills`
+- `GET /v1/sites/{site_id}/agent-sessions`
+- `POST /v1/sites/{site_id}/agent-sessions`
+- `GET /v1/agent-sessions/{session_id}/messages`
+- `POST /v1/agent-sessions/{session_id}/messages`
+- `GET /v1/sites/{site_id}/agent-tasks`
+
+A chat message is untrusted input and never becomes tool authority. Posting one runs a deterministic
+scored router over a fixed, code-defined skill registry; the router can return at most one skill from
+that registry, and the skill re-checks the actor's role before executing. The workspace therefore
+reaches exactly what the same actor could already reach through the API. `GET /v1/skills` returns
+only the skills that actor may invoke, and that list is the whole surface.
+
+Routing is token overlap, not a model call, so the same phrasing always selects the same skill.
+Scheduling a routine is held to a higher score than answering a question, an explicit imperative
+("regenerate", "recrawl", "scan") breaks a tie toward doing the work, and anything else that ties or
+scores low returns no skill and offers the reader a choice rather than guessing. A read skill answers
+from stored records and returns the references it used. No skill can deploy, approve, or write site
+content.
+
+A scheduling skill needs more than a topic: naming a subject is a question, so it also requires a
+word asking for the work to happen ("run", "schedule", "every", "recrawl", "regenerate"). Without a
+cadence it queues a single run and leaves the routine parked, so asking for one run never starts a
+recurring schedule. When the request names a cadence — "every day", "every Monday", "every month" —
+the routine is enabled on that schedule and the reply states the next run. Each of the seven routine
+kinds has a scheduling skill, so any recurring workflow can be set up from chat.
 
 ## Minimal resource examples
 
@@ -194,6 +338,7 @@ The API returns `409 policy_precondition_failed` if the proposal revision, valid
   "id": "019c...",
   "type": "metadata_ctr_gap",
   "title": "Improve title for /pricing",
+  "page_url": "https://example.com/pricing",
   "score": 82.4,
   "factors": {"impact":0.91,"confidence":0.84,"urgency":0.75,"effort":0.15},
   "risk": "low",
@@ -226,7 +371,7 @@ Outbox/webhook event envelope:
 }
 ```
 
-Initial events: `site.verified.v1`, `crawl.requested.v1`, `crawl.completed.v1`, `performance.requested.v1`, `connector.sync_completed.v1`, `opportunity.created.v1`, `proposal.submitted.v1`, `proposal.approved.v1`, `deployment.requested.v1`, `deployment.completed.v1`, `deployment.verification_failed.v1`.
+Initial events: `site.verified.v1`, `crawl.requested.v1`, `crawl.completed.v1`, `performance.requested.v1`, `connector.sync_completed.v1`, `opportunity.created.v1`, `proposal.submitted.v1`, `proposal.approved.v1`, `deployment.requested.v1`, `deployment.completed.v1`, `deployment.verification_failed.v1`, `routine.run.queued.v1`.
 
 ## Rate limits and safety
 

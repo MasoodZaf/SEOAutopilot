@@ -26,10 +26,9 @@ async def verify_proposal_deployment(
     context: TenantContextDependency,
     session: TenantSession,
 ) -> PostDeployVerificationEnvelope:
-    verification = await MeasurementService(session, context).verify_deployment(proposal_id)
-    return PostDeployVerificationEnvelope(
-        data=PostDeployVerificationRead.model_validate(verification),
-        meta={"trace_id": context.trace_id},
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="live_verification_connector_not_configured",
     )
 
 
@@ -51,7 +50,7 @@ async def get_proposal_verification(
     )
 
 
-@router.get(
+@router.post(
     "/v1/proposals/{proposal_id}/measurement",
     response_model=MeasurementSeriesEnvelope,
 )

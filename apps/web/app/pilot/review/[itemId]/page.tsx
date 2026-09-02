@@ -1,5 +1,6 @@
 import {randomUUID} from "node:crypto";
 import Link from "next/link";
+import type {Metadata} from "next";
 import {notFound} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
@@ -10,6 +11,11 @@ import type {CalibrationItem} from "../../model";
 type PageProps = {
   params: Promise<{itemId: string}>;
   searchParams: Promise<{error?: string}>;
+};
+
+export const metadata: Metadata = {
+  title: "Calibration Review",
+  robots: {index: false, follow: false},
 };
 
 const errorMessages: Record<string, string> = {

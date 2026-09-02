@@ -1,8 +1,17 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
+RUN pnpm install --filter @seo-autopilot/web... --no-frozen-lockfile
 COPY . .
-RUN pnpm install --no-frozen-lockfile && pnpm --filter @seo-autopilot/contracts build && pnpm --filter @seo-autopilot/web build
+# Next.js inlines NEXT_PUBLIC_* at build time; without this the app
+# falls back to the seoautopilot.dev default in robots/sitemap/OG tags.
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+RUN pnpm --filter @seo-autopilot/contracts build \
+    && pnpm --filter @seo-autopilot/web build
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production

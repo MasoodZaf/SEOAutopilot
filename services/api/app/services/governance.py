@@ -115,7 +115,7 @@ class GovernanceService:
                 event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return await self.get_governance_status(site_id)
 
     async def trigger_emergency_freeze(self, site_id: UUID, notes: str = "") -> GovernanceStatusRead:
@@ -156,7 +156,7 @@ class GovernanceService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return await self.get_governance_status(site_id)
 
     async def lift_emergency_freeze(self, site_id: UUID) -> GovernanceStatusRead:
@@ -187,7 +187,7 @@ class GovernanceService:
                 event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return await self.get_governance_status(site_id)
 
     async def run_policy_simulation(self, site_id: UUID) -> PolicySimulationRun:
@@ -246,11 +246,16 @@ class GovernanceService:
                 event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(run)
         return run
 
     async def rollback_deployment(self, proposal_id: UUID, notes: str = "") -> RollbackReceipt:
+        if self.context.role not in ADMIN_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_rollback_deployment",
+            )
         proposal = await self.session.scalar(
             select(Proposal).where(
                 Proposal.id == proposal_id,
@@ -271,51 +276,7 @@ class GovernanceService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="proposal_has_no_deployment_receipt",
             )
-
-        now = datetime.now(UTC)
-        receipt.status = "rolled_back"
-        proposal.status = "failed"
-
-        rollback = RollbackReceipt(
-            tenant_id=self.context.tenant_id,
-            site_id=proposal.site_id,
-            proposal_id=proposal.id,
-            deployment_receipt_id=receipt.id,
-            restored_hash=proposal.base_hash,
-            status="applied",
-            rolled_back_at=now,
-            notes=notes or "Automated rollback applied successfully.",
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="rollback_connector_not_configured",
         )
-        self.session.add(rollback)
-
-        event_payload = {
-            "proposal_id": str(proposal.id),
-            "deployment_receipt_id": str(receipt.id),
-            "restored_hash": proposal.base_hash,
-        }
-        self.session.add(
-            AuditEvent(
-                tenant_id=self.context.tenant_id,
-                actor_type="user",
-                actor_id=str(self.context.actor_id),
-                action="proposal.rolled_back",
-                resource_type="proposal",
-                resource_id=str(proposal.id),
-                trace_id=self.context.trace_id,
-                metadata_json=event_payload,
-                event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
-            )
-        )
-        self.session.add(
-            OutboxEvent(
-                tenant_id=self.context.tenant_id,
-                event_type="proposal.rolled_back.v1",
-                event_version=1,
-                aggregate_type="proposal",
-                aggregate_id=proposal.id,
-                payload=event_payload,
-            )
-        )
-        await self.session.commit()
-        await self.session.refresh(rollback)
-        return rollback

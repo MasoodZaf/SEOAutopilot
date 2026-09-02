@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import OpportunitySuppress
 from app.core.context import Role, TenantContext
-from app.db.models import AuditEvent, Opportunity, OutboxEvent, Site
+from app.db.models import AuditEvent, Opportunity, OutboxEvent, Page, Site
 
 ALLOWED_SUPPRESSION_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
 
@@ -83,6 +83,16 @@ def build_diverse_top_query(
     )
 
 
+def build_page_url_query(
+    *, tenant_id: UUID, site_id: UUID, page_ids: list[UUID]
+) -> Select[tuple[UUID, str]]:
+    return select(Page.id, Page.normalized_url).where(
+        Page.tenant_id == tenant_id,
+        Page.site_id == site_id,
+        Page.id.in_(page_ids),
+    )
+
+
 class OpportunityService:
     def __init__(self, session: AsyncSession, context: TenantContext) -> None:
         self.session = session
@@ -115,6 +125,19 @@ class OpportunityService:
             )
         )
         return list(result)
+
+    async def page_urls(self, site_id: UUID, opportunities: list[Opportunity]) -> dict[UUID, str]:
+        page_ids = list({item.page_id for item in opportunities})
+        if not page_ids:
+            return {}
+        rows = await self.session.execute(
+            build_page_url_query(
+                tenant_id=self.context.tenant_id,
+                site_id=site_id,
+                page_ids=page_ids,
+            )
+        )
+        return {page_id: normalized_url for page_id, normalized_url in rows.all()}
 
     async def get(self, opportunity_id: UUID) -> Opportunity | None:
         return await self.session.scalar(
@@ -181,7 +204,7 @@ class OpportunityService:
                 },
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(opportunity)
         return opportunity
 
@@ -235,6 +258,6 @@ class OpportunityService:
                 },
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(opportunity)
         return opportunity

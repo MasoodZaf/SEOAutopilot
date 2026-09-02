@@ -1,0 +1,50 @@
+# Production overlay. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml <cmd>
+# Secrets come from .env (compose substitution) and .env.local / infra/local/web.env.
+
+services:
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+
+  redis:
+    restart: unless-stopped
+
+  api:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://seo_autopilot:${POSTGRES_PASSWORD}@postgres:5432/seo_autopilot
+
+  worker:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://seo_autopilot:${POSTGRES_PASSWORD}@postgres:5432/seo_autopilot
+
+  crawler:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://seo_autopilot:${POSTGRES_PASSWORD}@postgres:5432/seo_autopilot
+
+  web:
+    restart: unless-stopped
+    build:
+      args:
+        NEXT_PUBLIC_APP_URL: https://${DOMAIN}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    # env_file (not environment:) so the bcrypt hash's $ characters are
+    # passed through literally instead of being read as compose variables.
+    env_file: [infra/local/caddy.env]
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web, api]
+
+volumes:
+  caddy-data:
+  caddy-config:

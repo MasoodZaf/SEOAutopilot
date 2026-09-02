@@ -18,6 +18,8 @@ from redis.exceptions import ResponseError
 
 from app.gsc.client import READONLY_SCOPE, SearchConsoleClient, SearchConsoleError
 from app.gsc.sync import MetricRecord, MetricSink, SyncCursor, sync_search_analytics
+from app.keywords.cluster import is_question, tokenize
+from app.keywords.secrets import MAX_TERM_LENGTH, seal_query
 
 STREAM = "seo-autopilot:events"
 GROUP = "gsc-sync"
@@ -221,12 +223,58 @@ async def load_access_token(
 
 
 class PostgresMetricSink(MetricSink):
-    def __init__(self, pool: asyncpg.Pool, sync: ClaimedSync) -> None:
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        sync: ClaimedSync,
+        *,
+        query_encryption_key: bytes,
+        query_key_version: str,
+    ) -> None:
         self.pool = pool
         self.sync = sync
+        self.query_encryption_key = query_encryption_key
+        self.query_key_version = query_key_version
         self.days_completed = sync.base_days_completed
         self.rows_seen = sync.base_rows_seen
         self.rows_upserted = sync.base_rows_upserted
+
+    async def _upsert_query_term(self, connection: Any, record: MetricRecord) -> None:
+        """Store the readable term once per (site, query) inside an envelope.
+
+        search_metric keeps only the HMAC. Re-sealing on every sighting would
+        churn the ciphertext for no benefit, so an existing row only has its
+        last_seen_at advanced.
+        """
+        term = record.query_text.strip()[:MAX_TERM_LENGTH]
+        if not term:
+            return
+        ciphertext, nonce, aad_hash = seal_query(
+            self.query_encryption_key,
+            record.tenant_id,
+            record.site_id,
+            self.query_key_version,
+            term,
+        )
+        await connection.execute(
+            """
+            INSERT INTO search_query(
+              tenant_id,site_id,query_hash,ciphertext,nonce,aad_hash,key_version,
+              term_length,token_count,is_question
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ON CONFLICT(tenant_id,site_id,query_hash) DO UPDATE SET last_seen_at=now()
+            """,
+            record.tenant_id,
+            record.site_id,
+            record.query_hash,
+            ciphertext,
+            nonce,
+            aad_hash,
+            self.query_key_version,
+            len(term),
+            min(len(tokenize(term)) or 1, 60),
+            is_question(term),
+        )
 
     async def upsert_metrics(self, records: list[MetricRecord]) -> int:
         if not records:
@@ -235,6 +283,7 @@ class PostgresMetricSink(MetricSink):
         async with self.pool.acquire() as connection, connection.transaction():
             await _set_tenant(connection, self.sync.tenant_id)
             for record in records:
+                await self._upsert_query_term(connection, record)
                 result = await connection.fetchval(
                     """
                     INSERT INTO search_metric(
@@ -403,6 +452,7 @@ async def run_gsc_consumer(
     *,
     encryption_key: bytes,
     query_hash_key: bytes,
+    query_key_version: str = "local-v1",
 ) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -442,7 +492,12 @@ async def run_gsc_consumer(
                     continue
                 try:
                     access_token = await load_access_token(pool, sync, encryption_key)
-                    sink = PostgresMetricSink(pool, sync)
+                    sink = PostgresMetricSink(
+                        pool,
+                        sync,
+                        query_encryption_key=encryption_key,
+                        query_key_version=query_key_version,
+                    )
                     provider = SearchConsoleClient()
                     try:
                         await sync_search_analytics(

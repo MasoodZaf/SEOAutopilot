@@ -59,11 +59,15 @@ class MeasurementService:
                 detail="proposal_has_no_deployment_receipt",
             )
 
-        # Determine expected search pattern from proposal after_content
-        expected_pattern = proposal.after_content.strip()
-        body_to_check = live_body if live_body is not None else proposal.after_content
+        if live_body is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="live_verification_evidence_required",
+            )
 
-        ver_result = verify_rendered_content(expected_pattern, body_to_check, live_status)
+        # The caller must supply independently fetched connector/crawler evidence.
+        expected_pattern = proposal.after_content.strip()
+        ver_result = verify_rendered_content(expected_pattern, live_body, live_status)
         now = datetime.now(UTC)
         ver_status = "verified" if ver_result.is_verified else "failed"
 
@@ -126,7 +130,7 @@ class MeasurementService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(verification)
         return verification
 
@@ -175,6 +179,24 @@ class MeasurementService:
         )
         if existing is not None:
             return existing
+
+        verification = await self.session.scalar(
+            select(PostDeployVerification).where(
+                PostDeployVerification.proposal_id == proposal_id,
+                PostDeployVerification.tenant_id == self.context.tenant_id,
+                PostDeployVerification.status == "verified",
+            )
+        )
+        if verification is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="deployment_not_verified",
+            )
+        if datetime.now(UTC) < followup_end:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="measurement_window_incomplete",
+            )
 
         # Query baseline metrics for the page
         baseline_rows = await self.session.scalars(
@@ -272,7 +294,7 @@ class MeasurementService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(series)
         return series
 

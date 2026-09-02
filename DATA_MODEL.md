@@ -56,6 +56,13 @@ requested GSC property binding. Its ciphertext is authenticated with tenant, con
 and key-version context. Staging/production configuration rejects this database backend and requires
 a managed secret adapter.
 
+`dns_provider` is a provider-neutral connector type with `provider_key` (for example `cloudflare`).
+It binds an Owner/Admin-consented credential to one exact provider zone ID after the adapter returns
+the zone name and it matches `site.normalized_host`. The credential is stored only at `secret_ref`;
+audit events retain no credential or TXT value. DNS record creation is a second explicit consent event
+bound to an unexpired `site_verification_challenge`. Manual TXT verification remains available for
+every DNS host and does not depend on a connector.
+
 ### Crawl and page inventory
 
 - `crawl_job(id, tenant_id, site_id, kind, status, requested_by, config_snapshot_json, robots_snapshot_hash, lease_until, started_at, finished_at, error_code, result_summary)`
@@ -142,6 +149,114 @@ retention and audit approval are required before any removal.
 - `outbox_event(id, tenant_id, event_type, event_version, aggregate_type, aggregate_id, payload_json, occurred_at, published_at, attempts)`
 - `idempotency_record(id, tenant_id, scope, key, request_hash, response_ref, status, expires_at)`
 
+### Scheduled routines and reporting
+
+- `routine(id, tenant_id, site_id, kind, cadence, schedule_hour_utc, schedule_minute_utc,
+  schedule_isodow, schedule_dom, enabled, next_run_at, last_run_at, last_status,
+  consecutive_failures, config_json, created_by, version)` — unique on `(tenant_id, site_id, kind)`.
+  `schedule_dom` is capped at 28 so every month contains the slot.
+- `routine_run(id, tenant_id, routine_id, site_id, kind, status, trigger, scheduled_for,
+  started_at, finished_at, lease_until, attempts, skip_reason, error_code, summary_json)` — unique
+  on `(routine_id, scheduled_for)`, which makes the scheduler idempotent across restarts and
+  replicas.
+- `report(id, tenant_id, site_id, routine_run_id, kind, period_start, period_end, generated_at,
+  scoring_version_id, content_hash, payload_json)` — unique on
+  `(tenant_id, site_id, kind, period_start, period_end)`; `content_hash` is the SHA-256 of the
+  canonical payload, so an identical evidence set reproduces an identical report.
+- `notification_channel(id, tenant_id, site_id, kind, name, enabled, destination_hint, ciphertext,
+  nonce, aad_hash, key_version, created_by, revoked_at)` — the webhook URL lives only in the
+  AES-256-GCM envelope; `destination_hint` is the only readable form.
+- `notification_delivery(id, tenant_id, channel_id, report_id, status, attempts, lease_until,
+  delivered_at, error_code)` — unique on `(channel_id, report_id)` so a report is delivered once
+  per channel.
+
+All five tables enable row-level security with the standard `app.tenant_id` policy.
+
+### Keyword workspace
+
+- `search_query(tenant_id, site_id, query_hash, ciphertext, nonce, aad_hash, key_version,
+  term_length, token_count, is_question, first_seen_at, last_seen_at)` — the readable term is held
+  once per `(site, query)` inside an AES-256-GCM envelope whose AAD binds tenant, site, and key
+  version, so a row lifted into another site's context does not open. `search_metric` still stores
+  only the keyed HMAC; `term_length`, `token_count`, and `is_question` are non-reversible shape
+  signals safe to expose.
+- `keyword_analysis_run(id, tenant_id, site_id, routine_run_id, algorithm_version, status,
+  window_start, window_end, queries_considered, clusters_built, content_hash)` — unique on
+  `(tenant_id, site_id, window_start, window_end, algorithm_version)`, so rerunning a window
+  replaces it rather than accumulating.
+- `keyword_cluster(id, tenant_id, site_id, analysis_run_id, label, cluster_key, intent,
+  answer_engine_candidate, member_count, clicks, impressions, ctr, best_position, average_position,
+  striking_distance_count, primary_page_id, competing_page_count, opportunity_score)` — carries no
+  query term; the label is derived from the cluster's shared tokens.
+- `keyword_cluster_member(tenant_id, cluster_id, site_id, query_hash, clicks, impressions, ctr,
+  position, best_page_id)` — joins back to `search_query` for the sealed term.
+
+All four tables enable row-level security with the standard `app.tenant_id` policy.
+
+### Sitemap coverage
+
+- `sitemap_source(id, tenant_id, site_id, crawl_job_id, sitemap_url, discovered_via, status,
+  declared_url_count, in_scope_url_count, truncated, fetched_at)` — one row per sitemap a crawl
+  considered. `discovered_via` is `well_known` or `robots_txt`; `status` records `fetched`,
+  `unreachable`, `malformed`, or `out_of_scope`, so an off-host sitemap is recorded without ever
+  being fetched.
+- `sitemap_url(tenant_id, crawl_job_id, url_hash, site_id, sitemap_source_id, normalized_url)` —
+  every in-scope URL a sitemap declared, whether or not the crawl reached it. This is what makes
+  "declared but never crawled" answerable rather than inferred.
+
+Coverage is always computed within a single `crawl_job_id`; comparing a sitemap from one crawl
+against pages from another would mix a stale declaration with a fresh page set. A page counts as
+indexable when the crawl saw a 200, no `noindex` directive, and a canonical that is absent or
+self-referential. Both tables enable row-level security with the standard `app.tenant_id` policy.
+
+### Content briefs
+
+- `content_brief(id, tenant_id, site_id, keyword_cluster_id, analysis_run_id, routine_run_id, kind,
+  status, target_page_id, cluster_label, intent, answer_engine_candidate, priority_score,
+  sections_json, evidence_json, query_hashes, content_hash, dismissed_reason, dismissed_by,
+  dismissed_at, version)` — unique on `(tenant_id, keyword_cluster_id)`, so regenerating updates a
+  brief in place and bumps its version rather than accumulating duplicates. A check constraint ties
+  `kind='refresh'` to a target page and `kind='new_page'` to none, and another ties `dismissed`
+  status to a stored reason. `query_hashes` references members; no readable term is persisted here.
+  Row-level security uses the standard `app.tenant_id` policy.
+
+### Competitors and answer-engine readiness
+
+- `competitor(id, tenant_id, site_id, normalized_host, label, status, created_by)` — unique on
+  `(tenant_id, site_id, normalized_host)`.
+- `competitor_page(id, tenant_id, competitor_id, site_id, normalized_url, url_hash,
+  keyword_cluster_key, status, created_by)` — the complete set of URLs a scan may request. There is
+  no discovery path that adds rows here.
+- `competitor_scan(id, tenant_id, site_id, routine_run_id, status, started_at, finished_at,
+  pages_requested, pages_observed, pages_blocked, pages_failed, error_code)`.
+- `competitor_observation(id, tenant_id, competitor_scan_id, competitor_page_id, site_id, outcome,
+  http_status, title, meta_description, h1_json, heading_count, word_count, internal_link_count,
+  structured_data_types, content_hash)` — `outcome` records `observed`, `robots_disallowed`,
+  `unreachable`, `not_html`, or `too_large`. Body text is never stored; `content_hash` shows that a
+  page changed without retaining what it said.
+- `ai_visibility_snapshot(id, tenant_id, site_id, routine_run_id, crawl_job_id, captured_on,
+  readiness_score, factors_json, content_hash, citation_source)` — one per site per day.
+  `citation_source` is constrained to `none`, so a later writer cannot imply an observed
+  answer-engine citation the platform never measured.
+
+All five tables enable row-level security with the standard `app.tenant_id` policy.
+
+### Agent workspace
+
+- `agent_session(id, tenant_id, site_id, title, status, message_count, created_by)`.
+- `agent_task(id, tenant_id, session_id, site_id, skill_key, status, routine_run_id, result_json,
+  error_code, requested_by, finished_at)` — one row per skill invocation, whether it answered from
+  evidence or queued work.
+- `agent_message(id, tenant_id, session_id, site_id, sequence, role, body, skill_key,
+  agent_task_id, evidence_json)` — unique on `(session_id, sequence)`. A check constraint keeps
+  `skill_key` and `agent_task_id` off user messages. `evidence_json` holds references to the stored
+  records an answer was built from; an agent message with no evidence is a routing or refusal
+  message, never an assertion.
+
+The skill registry itself lives in code (`services/api/app/domain/skills.py`), versioned with the
+service rather than stored as data, so the set of things the agent can do cannot be widened by a
+database write. All three tables enable row-level security with the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.
@@ -150,6 +265,20 @@ retention and audit approval are required before any removal.
 - Connector: `pending -> connected -> degraded | reauth_required | revoked`.
 
 Invalid transitions return conflict errors and create security/audit signals when suspicious.
+
+### Routine run lifecycle
+
+`queued -> running -> completed | failed | skipped`
+
+A run is `skipped` with a recorded reason when the site is unverified, frozen, the routine is
+parked after repeated failures, a crawl is already active, or the kind is not implemented yet. A
+skip is a first-class outcome, not a silent success.
+
+### Content brief lifecycle
+
+`queued -> in_progress -> done`, with `dismissed` reachable from `queued` or `in_progress` and
+reopenable to `queued`. `done` reopens only to `in_progress`. A brief never enters the deployment
+path: it is advice, and any change it motivates is authored as a proposal.
 
 ## Isolation and retention
 

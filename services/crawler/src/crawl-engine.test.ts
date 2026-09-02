@@ -43,3 +43,29 @@ test("crawl depth prevents traversal beyond the configured boundary",async()=>{
   assert.deepEqual(result.observations.map(page=>page.normalizedUrl),["https://depth.example/","https://depth.example/level-1"]);
   assert.ok(!requested.includes("https://depth.example/level-2"));
 });
+
+test("sitemap inventory records provenance, scope, and unreachable sources",async()=>{
+  const responses=new Map<string,FetchedResource>([
+    ["https://sitemaps.example/robots.txt",resource("https://sitemaps.example/robots.txt","User-agent: *\nSitemap: https://sitemaps.example/sitemap-news.xml\nSitemap: https://cdn.other/sitemap.xml\nSitemap: https://sitemaps.example/missing.xml","text/plain")],
+    ["https://sitemaps.example/sitemap.xml",resource("https://sitemaps.example/sitemap.xml","<urlset><url><loc>https://sitemaps.example/a</loc></url><url><loc>https://elsewhere.example/b</loc></url></urlset>","application/xml")],
+    ["https://sitemaps.example/sitemap-news.xml",resource("https://sitemaps.example/sitemap-news.xml","<urlset><url><loc>https://sitemaps.example/news</loc></url></urlset>","application/xml")],
+    ["https://sitemaps.example/",resource("https://sitemaps.example/","<html><head><title>Home</title></head><body></body></html>","text/html")],
+    ["https://sitemaps.example/a",resource("https://sitemaps.example/a","<html><head><title>A</title></head><body></body></html>","text/html")],
+    ["https://sitemaps.example/news",resource("https://sitemaps.example/news","<html><head><title>News</title></head><body></body></html>","text/html")],
+  ]);
+  const fetcher:FetchResource=async url=>{const found=responses.get(url.toString());if(!found)throw new Error(`unexpected:${url}`);return found};
+  const result=await crawlSite("https://sitemaps.example",10,fetcher);
+  const byUrl=new Map(result.sitemaps.map(item=>[item.sitemapUrl,item]));
+
+  const wellKnown=byUrl.get("https://sitemaps.example/sitemap.xml");
+  assert.equal(wellKnown?.discoveredVia,"well_known");
+  assert.equal(wellKnown?.status,"fetched");
+  assert.equal(wellKnown?.declaredUrlCount,2);
+  // The off-host location is declared but not in scope.
+  assert.deepEqual(wellKnown?.inScopeUrls,["https://sitemaps.example/a"]);
+
+  assert.equal(byUrl.get("https://sitemaps.example/sitemap-news.xml")?.discoveredVia,"robots_txt");
+  // An off-host sitemap is recorded, never fetched.
+  assert.equal(byUrl.get("https://cdn.other/sitemap.xml")?.status,"out_of_scope");
+  assert.equal(byUrl.get("https://sitemaps.example/missing.xml")?.status,"unreachable");
+});

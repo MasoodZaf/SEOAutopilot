@@ -11,11 +11,22 @@ const MAX_LINKS_PER_PAGE = 5_000;
 type RobotsPolicy = {isAllowed(url: string, userAgent?: string): boolean | undefined};
 const parseRobots = robotsParserModule as unknown as (url: string, body: string) => RobotsPolicy;
 
+export type SitemapSource = {
+  sitemapUrl: string;
+  discoveredVia: "well_known" | "robots_txt";
+  status: "fetched" | "unreachable" | "malformed" | "out_of_scope";
+  declaredUrlCount: number;
+  /** Declared URLs that survived same-host normalisation. */
+  inScopeUrls: string[];
+  truncated: boolean;
+};
+
 export type CrawlResult = {
   observations: PageObservation[];
   skippedByRobots: number;
   fetchErrors: number;
   discoveryTruncated: boolean;
+  sitemaps: SitemapSource[];
 };
 
 export function normalizeCandidate(raw: string, base: URL, host: string): string | null {
@@ -92,11 +103,14 @@ export async function crawlSite(
   let robotsText = "";
   try { robotsText = (await fetchResource(robotsUrl)).body; } catch { robotsText = ""; }
   const policy = parseRobots(robotsUrl.toString(), robotsText);
-  const sitemapCandidates = new Set<string>([new URL("/sitemap.xml", root).toString()]);
+  const wellKnownSitemap = new URL("/sitemap.xml", root).toString();
+  const sitemapCandidates = new Map<string, "well_known" | "robots_txt">([
+    [wellKnownSitemap, "well_known"],
+  ]);
   for (const line of robotsText.split(/\r?\n/)) {
     if (sitemapCandidates.size >= 20) break;
     const match = /^sitemap:\s*(\S+)/i.exec(line);
-    if (match?.[1]) sitemapCandidates.add(match[1]);
+    if (match?.[1] && !sitemapCandidates.has(match[1])) sitemapCandidates.set(match[1], "robots_txt");
   }
   type QueueEntry = {url: string; depth: number};
   const queue: QueueEntry[] = [];
@@ -115,19 +129,37 @@ export async function crawlSite(
     return normalized;
   };
   enqueue(root.toString(), root, 0);
-  for (const sitemap of sitemapCandidates) {
+  const sitemaps: SitemapSource[] = [];
+  for (const [sitemap, discoveredVia] of sitemapCandidates) {
     const normalized = normalizeCandidate(sitemap, root, host);
-    if (!normalized) continue;
+    if (!normalized) {
+      // A sitemap pointing off-host is recorded, never fetched.
+      sitemaps.push({sitemapUrl:sitemap.slice(0,8192),discoveredVia,status:"out_of_scope",declaredUrlCount:0,inScopeUrls:[],truncated:false});
+      continue;
+    }
+    let body: string;
     try {
-      const sitemapUrls = extractSitemapUrls(
-        (await fetchResource(new URL(normalized))).body,
-        discoveryBudget,
-      );
-      if (sitemapUrls.length >= discoveryBudget) discoveryTruncated = true;
-      for (const candidate of sitemapUrls) {
-        enqueue(candidate, root, 0);
-      }
-    } catch { /* absent or malformed sitemaps are non-fatal */ }
+      body = (await fetchResource(new URL(normalized))).body;
+    } catch {
+      sitemaps.push({sitemapUrl:normalized,discoveredVia,status:"unreachable",declaredUrlCount:0,inScopeUrls:[],truncated:false});
+      continue;
+    }
+    let declared: string[];
+    try {
+      declared = extractSitemapUrls(body, discoveryBudget);
+    } catch {
+      sitemaps.push({sitemapUrl:normalized,discoveredVia,status:"malformed",declaredUrlCount:0,inScopeUrls:[],truncated:false});
+      continue;
+    }
+    const truncated = declared.length >= discoveryBudget;
+    if (truncated) discoveryTruncated = true;
+    const inScope = new Set<string>();
+    for (const candidate of declared) {
+      const normalizedCandidate = normalizeCandidate(candidate, root, host);
+      if (normalizedCandidate) inScope.add(normalizedCandidate);
+      enqueue(candidate, root, 0);
+    }
+    sitemaps.push({sitemapUrl:normalized,discoveredVia,status:"fetched",declaredUrlCount:declared.length,inScopeUrls:[...inScope],truncated});
   }
   const observations: PageObservation[] = [];
   let skippedByRobots = 0;
@@ -181,5 +213,5 @@ export async function crawlSite(
       linksTruncated: linkElements.length > MAX_LINKS_PER_PAGE,
     });
   }
-  return {observations, skippedByRobots, fetchErrors, discoveryTruncated};
+  return {observations, skippedByRobots, fetchErrors, discoveryTruncated, sitemaps};
 }
