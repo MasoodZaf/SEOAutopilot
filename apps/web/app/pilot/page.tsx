@@ -290,6 +290,12 @@ export default async function PilotPage({searchParams}: PageProps) {
           </div>
           {data.site && data.governance && (
             <div className="flex items-center gap-2">
+              <Link
+                href={`/pilot/workspace?site=${data.target.host}`}
+                className="rounded border border-emerald-800 bg-emerald-950/60 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-900/60"
+              >
+                Agent workspace
+              </Link>
               <form action={runPolicySimulationAction}>
                 <input type="hidden" name="site_host" value={data.target.host} />
                 <button type="submit" className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">

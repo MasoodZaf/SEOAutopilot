@@ -115,7 +115,7 @@ class GovernanceService:
                 event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return await self.get_governance_status(site_id)
 
     async def trigger_emergency_freeze(self, site_id: UUID, notes: str = "") -> GovernanceStatusRead:
@@ -156,7 +156,7 @@ class GovernanceService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return await self.get_governance_status(site_id)
 
     async def lift_emergency_freeze(self, site_id: UUID) -> GovernanceStatusRead:
@@ -187,7 +187,7 @@ class GovernanceService:
                 event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return await self.get_governance_status(site_id)
 
     async def run_policy_simulation(self, site_id: UUID) -> PolicySimulationRun:
@@ -246,7 +246,7 @@ class GovernanceService:
                 event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(run)
         return run
 

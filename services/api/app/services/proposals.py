@@ -182,7 +182,7 @@ class ProposalService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(proposal)
         return proposal
 
@@ -225,7 +225,7 @@ class ProposalService:
         now = datetime.now(UTC)
         if proposal.expires_at < now:
             proposal.status = "expired"
-            await self.session.commit()
+            await self.session.flush()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="proposal_expired")
 
         if proposal.status in {"approved", "rejected", "deployed"}:
@@ -312,7 +312,7 @@ class ProposalService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(approval)
         return approval
 
@@ -350,7 +350,7 @@ class ProposalService:
         now = datetime.now(UTC)
         if proposal.expires_at < now:
             proposal.status = "expired"
-            await self.session.commit()
+            await self.session.flush()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="proposal_expired")
 
         if proposal.status != "approved":
@@ -486,6 +486,6 @@ class ProposalService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(receipt)
         return receipt

@@ -130,7 +130,7 @@ class MeasurementService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(verification)
         return verification
 
@@ -294,7 +294,7 @@ class MeasurementService:
                 payload=event_payload,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(series)
         return series
 

@@ -204,7 +204,7 @@ class OpportunityService:
                 },
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(opportunity)
         return opportunity
 
@@ -258,6 +258,6 @@ class OpportunityService:
                 },
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(opportunity)
         return opportunity

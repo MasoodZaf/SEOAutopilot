@@ -188,5 +188,5 @@ class KeywordService:
                 event_hash=stable_hash({**payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         return members

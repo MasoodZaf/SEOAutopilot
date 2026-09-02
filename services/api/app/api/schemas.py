@@ -1133,3 +1133,95 @@ class AiVisibilityEnvelope(BaseModel):
 class AiVisibilityCollection(BaseModel):
     data: list[AiVisibilityRead]
     meta: dict[str, str | int]
+
+
+class SkillRead(BaseModel):
+    key: str
+    name: str
+    description: str
+    effect: str
+    example: str
+    # True when invoking it queues work rather than reading stored evidence.
+    schedules_work: bool
+
+
+class SkillCollection(BaseModel):
+    data: list[SkillRead]
+    meta: dict[str, str | int]
+
+
+class AgentSessionCreate(BaseModel):
+    title: str = Field(default="New conversation", min_length=1, max_length=200)
+
+
+class AgentSessionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    title: str
+    status: str
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentSessionCollection(BaseModel):
+    data: list[AgentSessionRead]
+    meta: dict[str, str | int]
+
+
+class AgentSessionEnvelope(BaseModel):
+    data: AgentSessionRead
+    meta: dict[str, str]
+
+
+class AgentMessageCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=8000)
+    # Set when the reader picked a skill from the disambiguation list.
+    skill_key: str | None = Field(default=None, max_length=60)
+
+
+class AgentMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    session_id: UUID
+    sequence: int
+    role: str
+    body: str
+    skill_key: str | None
+    agent_task_id: UUID | None
+    evidence_json: list[dict[str, object]]
+    created_at: datetime
+
+
+class AgentMessageCollection(BaseModel):
+    data: list[AgentMessageRead]
+    meta: dict[str, str | int]
+
+
+class AgentTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    session_id: UUID | None
+    site_id: UUID
+    skill_key: str
+    status: str
+    routine_run_id: UUID | None
+    result_json: dict[str, object]
+    error_code: str | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+class AgentTaskCollection(BaseModel):
+    data: list[AgentTaskRead]
+    meta: dict[str, str | int]
+
+
+class AgentTurnEnvelope(BaseModel):
+    """A posted message and the reply it produced, in one round trip."""
+
+    data: AgentMessageRead
+    request: AgentMessageRead
+    task: AgentTaskRead | None
+    meta: dict[str, str]

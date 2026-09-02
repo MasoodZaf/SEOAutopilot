@@ -91,18 +91,18 @@ async def test_suppress_and_unsuppress_opportunity_lifecycle() -> None:
     assert suppressed.suppressed_reason == "intentional_design"
     assert suppressed.suppressed_by == actor_id
     assert session.add.call_count == 2  # AuditEvent and OutboxEvent
-    assert session.commit.called
+    assert session.flush.called
 
     # Unsuppress
     session.add.reset_mock()
-    session.commit.reset_mock()
+    session.flush.reset_mock()
 
     unsuppressed = await service.unsuppress(opp_id)
     assert unsuppressed.status == "open"
     assert unsuppressed.suppressed_reason is None
     assert unsuppressed.suppressed_by is None
     assert session.add.call_count == 2
-    assert session.commit.called
+    assert session.flush.called
 
 
 @pytest.mark.asyncio

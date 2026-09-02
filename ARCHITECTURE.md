@@ -54,6 +54,9 @@ flowchart LR
   under the same fail-closed site gates as an on-demand action, and a dispatcher delivers report
   digests to configured channels. Routines produce evidence and reports only; they hold no
   deployment authority.
+- Agent workspace: a conversation over the platform's own skills. A message is routed
+  deterministically to at most one skill from a fixed, code-defined registry, and every skill
+  re-checks the actor's role, so chat grants no authority the actor did not already have.
 - Audit, usage & billing
 
 Cross-context writes go through application commands and an outbox. Consumers are idempotent and record the handled event ID.

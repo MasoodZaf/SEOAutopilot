@@ -231,7 +231,7 @@ async def test_rollback_fails_closed_until_connector_is_configured() -> None:
     assert exc.value.detail == "rollback_connector_not_configured"
     assert mock_receipt.status == "applied"
     assert mock_proposal.status == "deployed"
-    session.commit.assert_not_awaited()
+    session.flush.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -302,6 +302,29 @@ over measured factors, so a missing input lowers confidence rather than scoring 
 observe answer-engine citations; `citation_source` is always `none` and the column admits no other
 value until a provider is certified.
 
+### Agent workspace
+
+- `GET /v1/skills`
+- `GET /v1/sites/{site_id}/agent-sessions`
+- `POST /v1/sites/{site_id}/agent-sessions`
+- `GET /v1/agent-sessions/{session_id}/messages`
+- `POST /v1/agent-sessions/{session_id}/messages`
+- `GET /v1/sites/{site_id}/agent-tasks`
+
+A chat message is untrusted input and never becomes tool authority. Posting one runs a deterministic
+scored router over a fixed, code-defined skill registry; the router can return at most one skill from
+that registry, and the skill re-checks the actor's role before executing. The workspace therefore
+reaches exactly what the same actor could already reach through the API. `GET /v1/skills` returns
+only the skills that actor may invoke, and that list is the whole surface.
+
+Routing is token overlap, not a model call, so the same phrasing always selects the same skill.
+Scheduling a routine is held to a higher score than answering a question, an explicit imperative
+("regenerate", "recrawl", "scan") breaks a tie toward doing the work, and anything else that ties or
+scores low returns no skill and offers the reader a choice rather than guessing. A read skill answers
+from stored records and returns the references it used; a scheduling skill queues a routine run,
+creating the routine parked rather than silently starting a recurring schedule. No skill can deploy,
+approve, or write site content.
+
 ## Minimal resource examples
 
 ```json

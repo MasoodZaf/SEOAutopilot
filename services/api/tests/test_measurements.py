@@ -114,7 +114,7 @@ async def test_verify_deployment_service_flow() -> None:
     assert verification.http_status == 200
     assert mock_receipt.verified_at is not None
     assert session.add.call_count == 3  # Verification, AuditEvent, OutboxEvent
-    assert session.commit.called
+    assert session.flush.called
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,7 @@ async def test_verification_rejects_missing_live_evidence() -> None:
 
     assert exc.value.status_code == 409
     assert exc.value.detail == "live_verification_evidence_required"
-    session.commit.assert_not_awaited()
+    session.flush.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -233,7 +233,7 @@ async def test_calculate_measurement_series_service_flow() -> None:
     assert series.delta_metrics["clicks_delta"] == 80.0
     assert series.delta_metrics["position_delta"] == 3.8
     assert session.add.call_count == 3  # MeasurementSeries, AuditEvent, OutboxEvent
-    assert session.commit.called
+    assert session.flush.called
 
 
 @pytest.mark.asyncio

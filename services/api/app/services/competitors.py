@@ -111,7 +111,7 @@ class CompetitorService:
                 event_hash=stable_hash({**payload, "actor_id": str(self.context.actor_id)}),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(competitor)
         return competitor
 
@@ -175,7 +175,7 @@ class CompetitorService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="competitor_page_already_tracked"
             ) from error
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(page)
         return page
 
@@ -210,7 +210,7 @@ class CompetitorService:
                 ),
             )
         )
-        await self.session.commit()
+        await self.session.flush()
 
     async def latest_scan(
         self, site_id: UUID

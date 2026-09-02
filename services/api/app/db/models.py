@@ -1004,3 +1004,61 @@ class AiVisibilitySnapshot(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     citation_source: Mapped[str] = mapped_column(String(16), default="none")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_session"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        Index("agent_session_tenant_site_idx", "tenant_id", "site_id", "updated_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    message_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentTask(Base):
+    __tablename__ = "agent_task"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        Index("agent_task_tenant_site_idx", "tenant_id", "site_id", "created_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    session_id: Mapped[UUID | None] = mapped_column()
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    skill_key: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    requested_by: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentMessage(Base):
+    __tablename__ = "agent_message"
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence"),
+        Index("agent_message_session_idx", "tenant_id", "session_id", "sequence"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    session_id: Mapped[UUID] = mapped_column(nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(8))
+    body: Mapped[str] = mapped_column(Text)
+    skill_key: Mapped[str | None] = mapped_column(String(60))
+    agent_task_id: Mapped[UUID | None] = mapped_column()
+    evidence_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

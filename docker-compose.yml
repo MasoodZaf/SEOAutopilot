@@ -41,9 +41,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
       REDIS_URL: redis://redis:6379/0
-      ROUTINES_ENABLED: ${ROUTINES_ENABLED:-false}
-      NOTIFICATIONS_ENABLED: ${NOTIFICATIONS_ENABLED:-false}
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+      # ROUTINES_ENABLED, NOTIFICATIONS_ENABLED and APP_BASE_URL come from
+      # env_file. Repeating them here would override it with the shell's
+      # (usually empty) value and silently disable the scheduler.
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}

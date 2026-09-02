@@ -55,7 +55,7 @@ async def test_create_proposal_generates_diff_and_evaluates_policy() -> None:
     assert "--- a//page" in proposal.diff_unified
     assert "+++ b//page" in proposal.diff_unified
     assert session.add.call_count == 3  # Proposal, AuditEvent, OutboxEvent
-    assert session.commit.called
+    assert session.flush.called
 
 
 @pytest.mark.asyncio

@@ -241,6 +241,22 @@ self-referential. Both tables enable row-level security with the standard `app.t
 
 All five tables enable row-level security with the standard `app.tenant_id` policy.
 
+### Agent workspace
+
+- `agent_session(id, tenant_id, site_id, title, status, message_count, created_by)`.
+- `agent_task(id, tenant_id, session_id, site_id, skill_key, status, routine_run_id, result_json,
+  error_code, requested_by, finished_at)` — one row per skill invocation, whether it answered from
+  evidence or queued work.
+- `agent_message(id, tenant_id, session_id, site_id, sequence, role, body, skill_key,
+  agent_task_id, evidence_json)` — unique on `(session_id, sequence)`. A check constraint keeps
+  `skill_key` and `agent_task_id` off user messages. `evidence_json` holds references to the stored
+  records an answer was built from; an agent message with no evidence is a routing or refusal
+  message, never an assertion.
+
+The skill registry itself lives in code (`services/api/app/domain/skills.py`), versioned with the
+service rather than stored as data, so the set of things the agent can do cannot be widened by a
+database write. All three tables enable row-level security with the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.

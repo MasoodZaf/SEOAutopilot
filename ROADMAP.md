@@ -160,6 +160,19 @@ every other recurring capability depends on it.
 - Still open: observed answer-engine citations and SERP rank tracking still need a certified
   provider decision on terms and economics. Nothing in the product reports them today.
 
+## Agent workspace checkpoint (2026-09-02)
+
+- The control plane now has a Chat / Tasks / Skills / Reports workspace over twelve skills.
+- Routing is deterministic scored token overlap against a code-defined registry, not a model call.
+  A message cannot name a capability that is not in the registry, a role cannot reach a skill it is
+  not allowed, and an unclear request starts nothing and offers choices instead.
+- Read skills answer from stored records and return the references used. Scheduling skills queue a
+  routine run and create the routine parked, so asking for one run never starts a recurring
+  schedule. No skill can deploy, approve, or write site content.
+- An LLM classifier remains a possible future addition behind the existing adapter's schema, cost,
+  and evidence-validation controls. It is not required and is not wired in: the deterministic
+  router is the shipped behaviour.
+
 ## Delivery principles
 
 - Ship vertical slices: evidence -> opportunity -> proposal -> deploy -> measure.
