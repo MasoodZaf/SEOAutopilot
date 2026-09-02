@@ -182,6 +182,32 @@ Verified after deploy: 52 tables with row-level security on all twenty new ones,
 listed, the agent answering from real production evidence with citations, and
 `/pilot/workspace` gated by the same basic-auth rule as `/pilot`.
 
+## 6b. Fix deploy (2026-09-02, later the same day)
+
+Three defects in the always-on workflow code, all found by exercising the live
+paths rather than re-reading the diff. No migrations; schema unchanged at 52
+tables.
+
+| Defect | Symptom in production |
+|---|---|
+| `session.rollback()` in three `IntegrityError` handlers | Asking the agent for the same thing twice inside a minute returned 500 and lost the turn |
+| Router scored `run`/`scan` as imperatives anywhere | "When did the last crawl run?" **started a crawl**; "Show me the daily report" scheduled it daily |
+| A refused claim was acked with no record | A run queued before a freeze sat in `queued` for ever, after the agent said it was queued |
+
+The first is the same class as the `commit()` defect fixed earlier: both end the
+request transaction, and `app.tenant_id` is transaction-local, so row-level
+security rejects every later write. `services/api/tests/test_unit_of_work.py`
+now fails if any service calls `commit()` or `rollback()`. That invariant has
+caused two defects and is invisible to the service tests, because they all run
+against a mocked session — worth remembering before adding another.
+
+Backup taken first: `backups/seo_autopilot_20260902T155421Z.dump` (1.2 MB).
+Rebuilt and restarted `api`, `worker` and `crawler`. Verified after deploy:
+questions no longer start work, a repeated request answers `blocked` instead of
+500, a crawl driven through the agent completed end to end in 8s on the rebuilt
+crawler, `sites=3 pages=545 opportunities=2541` unchanged, no errors in any
+service log, and `/pilot` and `/pilot/workspace` still 401 behind the gate.
+
 ## 7. Audit findings (2026-08-29)
 
 Full report: https://claude.ai/code/artifact/2e4f154d-700c-4754-a997-aea9ebb83b17
@@ -237,6 +263,9 @@ Genuine findings, in priority order:
 - **The migration loop in §3 only works on a fresh database.** The files use bare
   `CREATE TABLE`, so re-running an applied migration aborts the loop. Name the new
   range explicitly on an incremental deploy.
+- **The rsync excludes miss local tool caches.** `.ruff_cache/` and
+  `.pytest_cache/` are shipped to the server on every deploy. Harmless, but add
+  them to the exclude list when next editing the command.
 - **`rsync --delete` is the documented sync, but it is destructive on the remote.**
   When a deploy only adds files, dropping `--delete` is equivalent and safer.
   Keep it for a deploy that removes or renames files, and check what it would
