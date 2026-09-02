@@ -138,6 +138,13 @@ every other recurring capability depends on it.
 - Recorded honestly: `keyword_refresh`, `sitemap_coverage`, `competitor_scan`, and
   `ai_visibility_scan` are accepted as routine kinds but record `skipped` with
   `routine_kind_not_implemented` until their phases land. They do not report success.
+- Keyword workspace: GSC query terms are now sealed per site in an AES-256-GCM envelope alongside
+  the existing HMAC, which unlocked deterministic token-overlap clustering, rule-based intent,
+  question-share AEO candidacy, striking-distance and cannibalisation signals, and a bounded
+  opportunity score. Raw terms are readable only through one role-gated, audited endpoint.
+- Sitemap coverage: the crawler now records which sitemaps it considered, how it found each one,
+  and every in-scope URL declared, so declared-versus-crawled-versus-indexable is measured rather
+  than inferred.
 - Still open: competitor and answer-engine visibility need a provider decision on terms and
   economics before any external SERP data is fetched.
 

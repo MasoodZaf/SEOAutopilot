@@ -772,6 +772,7 @@ class ReportKindName(StrEnum):
     AUDIT_SUMMARY = "audit_summary"
     COMPETITOR_DIGEST = "competitor_digest"
     AI_VISIBILITY_DIGEST = "ai_visibility_digest"
+    SITEMAP_COVERAGE = "sitemap_coverage"
 
 
 class ReportRead(BaseModel):

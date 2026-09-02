@@ -17,6 +17,7 @@ from redis.exceptions import ResponseError
 
 from app.keywords.analysis import run_keyword_analysis
 from app.routines.reports import build_weekly_digest, content_hash
+from app.routines.sitemap_coverage import build_sitemap_coverage
 
 STREAM = "seo-autopilot:events"
 GROUP = "routines"
@@ -27,7 +28,7 @@ DEFAULT_CRAWL_MAX_DEPTH = 5
 logger = logging.getLogger(__name__)
 
 # Kinds landing in later phases. Recorded honestly instead of faked.
-UNIMPLEMENTED_KINDS = {"sitemap_coverage", "competitor_scan", "ai_visibility_scan"}
+UNIMPLEMENTED_KINDS = {"competitor_scan", "ai_visibility_scan"}
 
 # Keyword clustering reads a rolling window of search evidence.
 KEYWORD_WINDOW_DAYS = 28
@@ -208,6 +209,63 @@ async def _run_keyword_refresh(
     return "completed", summary, None
 
 
+async def _run_sitemap_coverage(
+    connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID
+) -> tuple[str, dict[str, Any], str | None]:
+    """Publish coverage for the most recent finished crawl.
+
+    Coverage is only meaningful against the crawl that produced it, so a site
+    with no completed crawl is skipped rather than reported as fully covered.
+    """
+    crawl = await connection.fetchrow(
+        """
+        SELECT id, finished_at FROM crawl_job
+        WHERE tenant_id=$1 AND site_id=$2 AND status IN('completed','partial')
+          AND finished_at IS NOT NULL
+        ORDER BY finished_at DESC, id DESC LIMIT 1
+        """,
+        tenant_id, site_id,
+    )
+    if crawl is None:
+        return "skipped", {}, "no_completed_crawl"
+    declared = await connection.fetchval(
+        "SELECT count(*) FROM sitemap_source WHERE tenant_id=$1 AND crawl_job_id=$2",
+        tenant_id, crawl["id"],
+    )
+    if not declared:
+        # Crawls predating sitemap inventory carry no sources to compare.
+        return "skipped", {"crawl_job_id": str(crawl["id"])}, "no_sitemap_inventory"
+
+    payload = await build_sitemap_coverage(connection, tenant_id, site_id, crawl["id"])
+    digest = content_hash(payload)
+    snapshot_day = crawl["finished_at"].date()
+    report_id = await connection.fetchval(
+        """
+        INSERT INTO report(
+          tenant_id,site_id,routine_run_id,kind,period_start,period_end,
+          content_hash,payload_json)
+        VALUES($1,$2,$3,'sitemap_coverage',$4,$4,$5,$6::jsonb)
+        ON CONFLICT(tenant_id,site_id,kind,period_start,period_end) DO UPDATE
+          SET routine_run_id=EXCLUDED.routine_run_id,
+              content_hash=EXCLUDED.content_hash,
+              payload_json=EXCLUDED.payload_json,
+              generated_at=now()
+        RETURNING id
+        """,
+        tenant_id, site_id, run_id, snapshot_day, digest,
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+    )
+    totals = payload["totals"]
+    return "completed", {
+        "report_id": str(report_id),
+        "crawl_job_id": str(crawl["id"]),
+        "content_hash": digest,
+        "declared_in_scope": totals["declared_in_scope"],
+        "declared_not_crawled": totals["declared_not_crawled"],
+        "indexable_missing_from_sitemap": totals["indexable_missing_from_sitemap"],
+    }, None
+
+
 async def _run_weekly_report(
     connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID, today: date
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -289,6 +347,10 @@ async def process_run(
                 status, summary, skip = await _run_keyword_refresh(
                     connection, tenant_id, site_id, run_id,
                     today or datetime.now(UTC).date(), encryption_key,
+                )
+            elif kind == "sitemap_coverage":
+                status, summary, skip = await _run_sitemap_coverage(
+                    connection, tenant_id, site_id, run_id
                 )
             elif kind == "weekly_report":
                 status, summary, skip = await _run_weekly_report(

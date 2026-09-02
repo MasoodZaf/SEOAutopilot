@@ -193,6 +193,22 @@ All five tables enable row-level security with the standard `app.tenant_id` poli
 
 All four tables enable row-level security with the standard `app.tenant_id` policy.
 
+### Sitemap coverage
+
+- `sitemap_source(id, tenant_id, site_id, crawl_job_id, sitemap_url, discovered_via, status,
+  declared_url_count, in_scope_url_count, truncated, fetched_at)` — one row per sitemap a crawl
+  considered. `discovered_via` is `well_known` or `robots_txt`; `status` records `fetched`,
+  `unreachable`, `malformed`, or `out_of_scope`, so an off-host sitemap is recorded without ever
+  being fetched.
+- `sitemap_url(tenant_id, crawl_job_id, url_hash, site_id, sitemap_source_id, normalized_url)` —
+  every in-scope URL a sitemap declared, whether or not the crawl reached it. This is what makes
+  "declared but never crawled" answerable rather than inferred.
+
+Coverage is always computed within a single `crawl_job_id`; comparing a sitemap from one crawl
+against pages from another would mix a stale declaration with a fresh page set. A page counts as
+indexable when the crawl saw a 200, no `noindex` directive, and a canonical that is absent or
+self-referential. Both tables enable row-level security with the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.

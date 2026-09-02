@@ -226,6 +226,12 @@ requires an active, DNS-verified site, so a schedule cannot become a path around
 present so an edit never replays a passed slot. A manual run is deduplicated to the minute through
 the `(routine_id, scheduled_for)` uniqueness constraint.
 
+Report kinds are `weekly_digest`, `audit_summary`, `competitor_digest`, `ai_visibility_digest`, and
+`sitemap_coverage`. A sitemap coverage report is a point-in-time snapshot of one crawl: it reports
+declared-in-scope, declared-and-crawled, declared-and-indexable, declared-not-crawled, and indexable
+pages missing from the sitemap, with bounded URL samples for each gap. It is skipped rather than
+published when the site has no completed crawl or that crawl recorded no sitemap inventory.
+
 Notification endpoints return `503 notifications_not_configured` unless `NOTIFICATIONS_ENABLED` is
 set with a secret backend. A webhook destination is a secret: it is stored in an AES-256-GCM
 envelope, is never returned by the API, and reads back only as a `destination_hint` (host plus a

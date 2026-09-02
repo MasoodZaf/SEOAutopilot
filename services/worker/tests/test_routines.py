@@ -209,3 +209,37 @@ def test_message_carries_headline_counts_without_evidence_detail() -> None:
     # Page-level evidence stays behind authentication.
     assert "private-page" not in text
     assert "Missing title" not in text
+
+
+# --- sitemap coverage ---
+
+
+def test_coverage_ratio_reports_nothing_rather_than_zero_without_a_sitemap() -> None:
+    from app.routines.sitemap_coverage import coverage_ratio
+
+    assert coverage_ratio(20, 23) == 0.8696
+    assert coverage_ratio(0, 5) == 0.0
+    # An empty sitemap is unmeasured, not 0% covered.
+    assert coverage_ratio(0, 0) is None
+
+
+def test_indexable_predicate_requires_status_robots_and_canonical_agreement() -> None:
+    from app.routines.sitemap_coverage import INDEXABLE_PREDICATE
+
+    normalized = " ".join(INDEXABLE_PREDICATE.split())
+    assert "o.http_status = 200" in normalized
+    assert "NOT (o.robots_directives @> ARRAY['noindex'])" in normalized
+    assert "o.canonical_url IS NULL OR o.canonical_url = p.normalized_url" in normalized
+
+
+def test_sitemap_coverage_is_scoped_to_one_crawl() -> None:
+    """Coverage across crawls would mix a stale sitemap with a fresh page set."""
+    from app.routines.sitemap_coverage import (
+        CRAWLED_NOT_DECLARED_SQL,
+        DECLARED_NOT_CRAWLED_SQL,
+        DECLARED_SUMMARY_SQL,
+    )
+
+    for statement in (DECLARED_SUMMARY_SQL, DECLARED_NOT_CRAWLED_SQL, CRAWLED_NOT_DECLARED_SQL):
+        assert "crawl_job_id=$2" in statement.replace(" ", "")
+        assert "tenant_id=$1" in statement.replace(" ", "")
