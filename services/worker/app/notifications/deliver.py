@@ -73,14 +73,19 @@ def build_message(kind: str, site_name: str, payload: dict[str, Any], report_url
     opportunities = payload.get("opportunities", {})
     period = payload.get("period", {})
     search = payload.get("search", {})
-    top_count = len(opportunities.get("top", []) or [])
+    # `top` is capped for display; the per-category counts carry the real total.
+    open_total = sum(
+        int(row.get("open_count", 0))
+        for row in (opportunities.get("open_by_category") or [])
+        if isinstance(row, dict)
+    )
     lines = [
         f"*{site_name}* — SEO Autopilot weekly digest",
         f"Period {period.get('start')} → {period.get('end')}",
         (
             f"{opportunities.get('opened_in_period', 0)} opportunities opened, "
             f"{opportunities.get('resolved_in_period', 0)} resolved, "
-            f"{top_count} in the review queue."
+            f"{open_total} open in the review queue."
         ),
     ]
     if search.get("available"):

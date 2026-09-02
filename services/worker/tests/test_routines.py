@@ -196,6 +196,11 @@ def test_message_carries_headline_counts_without_evidence_detail() -> None:
         "opportunities": {
             "opened_in_period": 4,
             "resolved_in_period": 1,
+            # `top` is capped for display; the category counts carry the total.
+            "open_by_category": [
+                {"category": "technical", "open_count": 31},
+                {"category": "content", "open_count": 11},
+            ],
             "top": [{"title": "Missing title", "url": "https://example.com/private-page"}],
         },
         "search": {"available": True, "clicks": {"current": 120.0, "previous": 100.0}},
@@ -205,6 +210,8 @@ def test_message_carries_headline_counts_without_evidence_detail() -> None:
     assert set(message) == {"text"}
     text = message["text"]
     assert "4 opportunities opened" in text
+    # The real open total, not the length of the capped display list.
+    assert "42 open in the review queue" in text
     assert "association, not attribution" in text
     # Page-level evidence stays behind authentication.
     assert "private-page" not in text

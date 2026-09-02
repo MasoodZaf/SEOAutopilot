@@ -487,12 +487,19 @@ class AgentService:
         payload = report.payload_json or {}
         opportunities = payload.get("opportunities", {})
         search = payload.get("search", {})
+        # `top` is capped for display, so its length would always read as the
+        # cap. The per-category counts carry the real open total.
+        open_total = sum(
+            int(row.get("open_count", 0))
+            for row in (opportunities.get("open_by_category") or [])
+            if isinstance(row, dict)
+        )
         lines = [
             (
                 f"{opportunities.get('opened_in_period', 0)} findings opened, "
                 f"{opportunities.get('resolved_in_period', 0)} resolved"
             ),
-            f"{len(opportunities.get('top', []) or [])} in the review queue",
+            f"{open_total} open findings in the review queue",
         ]
         if search.get("available"):
             clicks = search.get("clicks", {})
