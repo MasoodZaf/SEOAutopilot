@@ -16,7 +16,9 @@ from uuid import UUID
 from redis.exceptions import ResponseError
 
 from app.briefs.generate import generate_briefs
+from app.competitors.scan import run_competitor_scan
 from app.keywords.analysis import run_keyword_analysis
+from app.routines.ai_visibility import build_ai_visibility_snapshot
 from app.routines.reports import build_weekly_digest, content_hash
 from app.routines.sitemap_coverage import build_sitemap_coverage
 
@@ -29,7 +31,9 @@ DEFAULT_CRAWL_MAX_DEPTH = 5
 logger = logging.getLogger(__name__)
 
 # Kinds landing in later phases. Recorded honestly instead of faked.
-UNIMPLEMENTED_KINDS = {"competitor_scan", "ai_visibility_scan"}
+# Every routine kind now executes. A kind added later must record a skip
+# reason rather than reporting a success it did not achieve.
+UNIMPLEMENTED_KINDS: set[str] = set()
 
 # Keyword clustering reads a rolling window of search evidence.
 KEYWORD_WINDOW_DAYS = 28
@@ -210,6 +214,72 @@ async def _run_keyword_refresh(
     return "completed", summary, None
 
 
+async def _latest_finished_crawl(connection: Any, tenant_id: UUID, site_id: UUID) -> Any:
+    return await connection.fetchrow(
+        """
+        SELECT id, finished_at FROM crawl_job
+        WHERE tenant_id=$1 AND site_id=$2 AND status IN('completed','partial')
+          AND finished_at IS NOT NULL
+        ORDER BY finished_at DESC, id DESC LIMIT 1
+        """,
+        tenant_id, site_id,
+    )
+
+
+async def _run_competitor_scan(
+    connection: Any,
+    tenant_id: UUID,
+    site_id: UUID,
+    run_id: UUID,
+    fetcher: Any | None,
+) -> tuple[str, dict[str, Any], str | None]:
+    if fetcher is None:
+        return "skipped", {}, "competitor_fetcher_unavailable"
+    summary = await run_competitor_scan(connection, fetcher, tenant_id, site_id, run_id)
+    if summary.get("pages_requested", 0) == 0:
+        return "skipped", summary, "no_competitor_pages"
+    # A scan that reached some pages is still a completed run; the per-page
+    # outcomes are recorded on the scan itself.
+    return "completed", summary, None
+
+
+async def _run_ai_visibility_scan(
+    connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID, today: date
+) -> tuple[str, dict[str, Any], str | None]:
+    """Snapshot answer-engine readiness from stored evidence only."""
+    crawl = await _latest_finished_crawl(connection, tenant_id, site_id)
+    if crawl is None:
+        return "skipped", {}, "no_completed_crawl"
+    payload = await build_ai_visibility_snapshot(connection, tenant_id, site_id, crawl["id"])
+    digest = content_hash(payload)
+    snapshot_id = await connection.fetchval(
+        """
+        INSERT INTO ai_visibility_snapshot(
+          tenant_id,site_id,routine_run_id,crawl_job_id,captured_on,
+          readiness_score,factors_json,content_hash,citation_source)
+        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,'none')
+        ON CONFLICT(tenant_id,site_id,captured_on) DO UPDATE SET
+          routine_run_id=EXCLUDED.routine_run_id,
+          crawl_job_id=EXCLUDED.crawl_job_id,
+          readiness_score=EXCLUDED.readiness_score,
+          factors_json=EXCLUDED.factors_json,
+          content_hash=EXCLUDED.content_hash,
+          created_at=now()
+        RETURNING id
+        """,
+        tenant_id, site_id, run_id, crawl["id"], today, payload["readiness_score"],
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+        digest,
+    )
+    return "completed", {
+        "ai_visibility_snapshot_id": str(snapshot_id),
+        "readiness_score": payload["readiness_score"],
+        "measured_weight": payload["measured_weight"],
+        "citation_source": "none",
+        "content_hash": digest,
+    }, None
+
+
 async def _run_content_briefs(
     connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -343,6 +413,7 @@ async def process_run(
     run_id: UUID,
     today: date | None = None,
     encryption_key: bytes | None = None,
+    fetcher: Any | None = None,
 ) -> None:
     row = await connection.fetchrow(CLAIM_RUN_SQL, run_id, tenant_id, LEASE_MINUTES)
     if row is None:
@@ -368,6 +439,15 @@ async def process_run(
                 status, summary, skip = await _run_keyword_refresh(
                     connection, tenant_id, site_id, run_id,
                     today or datetime.now(UTC).date(), encryption_key,
+                )
+            elif kind == "competitor_scan":
+                status, summary, skip = await _run_competitor_scan(
+                    connection, tenant_id, site_id, run_id, fetcher
+                )
+            elif kind == "ai_visibility_scan":
+                status, summary, skip = await _run_ai_visibility_scan(
+                    connection, tenant_id, site_id, run_id,
+                    today or datetime.now(UTC).date(),
                 )
             elif kind == "content_briefs":
                 status, summary, skip = await _run_content_briefs(
@@ -401,7 +481,11 @@ async def process_run(
 
 
 async def run_routine_consumer(
-    pool: Pool, streams: Stream, consumer: str, encryption_key: bytes | None = None
+    pool: Pool,
+    streams: Stream,
+    consumer: str,
+    encryption_key: bytes | None = None,
+    fetcher: Any | None = None,
 ) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -429,6 +513,7 @@ async def run_routine_consumer(
                         UUID(fields["tenant_id"]),
                         UUID(fields["aggregate_id"]),
                         encryption_key=encryption_key,
+                        fetcher=fetcher,
                     )
                 await streams.xack(STREAM, GROUP, message_id)
             except (KeyError, ValueError):

@@ -220,6 +220,27 @@ self-referential. Both tables enable row-level security with the standard `app.t
   status to a stored reason. `query_hashes` references members; no readable term is persisted here.
   Row-level security uses the standard `app.tenant_id` policy.
 
+### Competitors and answer-engine readiness
+
+- `competitor(id, tenant_id, site_id, normalized_host, label, status, created_by)` — unique on
+  `(tenant_id, site_id, normalized_host)`.
+- `competitor_page(id, tenant_id, competitor_id, site_id, normalized_url, url_hash,
+  keyword_cluster_key, status, created_by)` — the complete set of URLs a scan may request. There is
+  no discovery path that adds rows here.
+- `competitor_scan(id, tenant_id, site_id, routine_run_id, status, started_at, finished_at,
+  pages_requested, pages_observed, pages_blocked, pages_failed, error_code)`.
+- `competitor_observation(id, tenant_id, competitor_scan_id, competitor_page_id, site_id, outcome,
+  http_status, title, meta_description, h1_json, heading_count, word_count, internal_link_count,
+  structured_data_types, content_hash)` — `outcome` records `observed`, `robots_disallowed`,
+  `unreachable`, `not_html`, or `too_large`. Body text is never stored; `content_hash` shows that a
+  page changed without retaining what it said.
+- `ai_visibility_snapshot(id, tenant_id, site_id, routine_run_id, crawl_job_id, captured_on,
+  readiness_score, factors_json, content_hash, citation_source)` — one per site per day.
+  `citation_source` is constrained to `none`, so a later writer cannot imply an observed
+  answer-engine citation the platform never measured.
+
+All five tables enable row-level security with the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.

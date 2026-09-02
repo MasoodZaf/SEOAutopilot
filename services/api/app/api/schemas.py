@@ -992,3 +992,144 @@ class ContentBriefStatusUpdate(BaseModel):
         if self.status is ContentBriefStatus.DISMISSED and not self.reason.strip():
             raise ValueError("a dismissal reason is required")
         return self
+
+
+def normalize_competitor_url(value: str) -> str:
+    """https, no credentials, public host, trailing slash trimmed."""
+    parsed = urlsplit(value.strip())
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("competitor URLs must be https")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("credentials and fragments are not allowed")
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".local"):
+        raise ValueError("local hosts are not allowed")
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+    return urlunsplit(("https", host, path, parsed.query, ""))
+
+
+class CompetitorCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    origin: str
+
+    @field_validator("origin")
+    @classmethod
+    def validate_origin(cls, value: str) -> str:
+        return normalize_origin(value)
+
+
+class CompetitorRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    normalized_host: str
+    label: str
+    status: str
+    created_at: datetime
+
+
+class CompetitorCollection(BaseModel):
+    data: list[CompetitorRead]
+    meta: dict[str, str | int]
+
+
+class CompetitorEnvelope(BaseModel):
+    data: CompetitorRead
+    meta: dict[str, str]
+
+
+class CompetitorPageCreate(BaseModel):
+    """A tracked page must be named explicitly; the scan performs no discovery."""
+
+    url: str
+    keyword_cluster_key: str | None = Field(default=None, max_length=200)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return normalize_competitor_url(value)
+
+
+class CompetitorPageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    competitor_id: UUID
+    site_id: UUID
+    normalized_url: str
+    keyword_cluster_key: str | None
+    status: str
+    created_at: datetime
+
+
+class CompetitorPageCollection(BaseModel):
+    data: list[CompetitorPageRead]
+    meta: dict[str, str | int]
+
+
+class CompetitorPageEnvelope(BaseModel):
+    data: CompetitorPageRead
+    meta: dict[str, str]
+
+
+class CompetitorObservationRead(BaseModel):
+    """Structural evidence only; competitor body text is never stored."""
+
+    model_config = ConfigDict(from_attributes=True)
+    competitor_page_id: UUID
+    observed_at: datetime
+    outcome: str
+    http_status: int | None
+    title: str | None
+    meta_description: str | None
+    h1_json: list[object]
+    heading_count: int
+    word_count: int
+    internal_link_count: int
+    structured_data_types: list[str]
+    content_hash: str | None
+
+
+class CompetitorScanRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    pages_requested: int
+    pages_observed: int
+    pages_blocked: int
+    pages_failed: int
+    error_code: str | None
+
+
+class CompetitorScanEnvelope(BaseModel):
+    data: CompetitorScanRead
+    observations: list[CompetitorObservationRead]
+    meta: dict[str, str | int]
+
+
+class AiVisibilityRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    captured_on: date
+    readiness_score: float
+    factors_json: dict[str, object]
+    content_hash: str
+    # Always "none" until a citation provider is certified; readiness is not
+    # observed answer-engine visibility.
+    citation_source: str
+    created_at: datetime
+
+
+class AiVisibilityEnvelope(BaseModel):
+    data: AiVisibilityRead
+    meta: dict[str, str]
+
+
+class AiVisibilityCollection(BaseModel):
+    data: list[AiVisibilityRead]
+    meta: dict[str, str | int]

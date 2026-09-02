@@ -64,6 +64,12 @@ async def run() -> None:
     notification_client = httpx.AsyncClient(
         follow_redirects=False, timeout=httpx.Timeout(10.0)
     )
+    # Redirects are never auto-followed: the guard validates a destination
+    # before the request, so a redirect into private space would slip past it.
+    # observe_competitor_page follows hops itself, revalidating each one.
+    competitor_client = httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(15.0)
+    )
 
     background = [
         run_dispatcher(pool, streams),
@@ -95,6 +101,7 @@ async def run() -> None:
                 cast(RoutineStream, streams),
                 f"routine-worker-{os.getpid()}",
                 connector_key,
+                competitor_client,
             )
         )
     if notifications_enabled:
@@ -105,6 +112,7 @@ async def run() -> None:
     try:
         await asyncio.gather(*background)
     finally:
+        await competitor_client.aclose()
         await notification_client.aclose()
         await pagespeed.close()
         await streams.aclose()

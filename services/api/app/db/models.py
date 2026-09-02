@@ -901,3 +901,106 @@ class ContentBrief(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class Competitor(Base):
+    __tablename__ = "competitor"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "site_id", "normalized_host"),
+        Index("competitor_tenant_site_idx", "tenant_id", "site_id", "status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    normalized_host: Mapped[str] = mapped_column(String(253))
+    label: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_by: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CompetitorPage(Base):
+    __tablename__ = "competitor_page"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "competitor_id", "url_hash"),
+        Index("competitor_page_tenant_site_idx", "tenant_id", "site_id", "status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    competitor_id: Mapped[UUID] = mapped_column(nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    normalized_url: Mapped[str] = mapped_column(Text)
+    url_hash: Mapped[str] = mapped_column(String(64))
+    keyword_cluster_key: Mapped[str | None] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_by: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CompetitorScan(Base):
+    __tablename__ = "competitor_scan"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        Index("competitor_scan_tenant_site_idx", "tenant_id", "site_id", "started_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pages_requested: Mapped[int] = mapped_column(Integer, default=0)
+    pages_observed: Mapped[int] = mapped_column(Integer, default=0)
+    pages_blocked: Mapped[int] = mapped_column(Integer, default=0)
+    pages_failed: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class CompetitorObservation(Base):
+    __tablename__ = "competitor_observation"
+    __table_args__ = (
+        UniqueConstraint("competitor_scan_id", "competitor_page_id"),
+        Index("competitor_observation_page_idx", "tenant_id", "competitor_page_id", "observed_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    competitor_scan_id: Mapped[UUID] = mapped_column(nullable=False)
+    competitor_page_id: Mapped[UUID] = mapped_column(nullable=False)
+    site_id: Mapped[UUID] = mapped_column(nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    outcome: Mapped[str] = mapped_column(String(24))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    title: Mapped[str | None] = mapped_column(Text)
+    meta_description: Mapped[str | None] = mapped_column(Text)
+    h1_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    heading_count: Mapped[int] = mapped_column(Integer, default=0)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    internal_link_count: Mapped[int] = mapped_column(Integer, default=0)
+    structured_data_types: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class AiVisibilitySnapshot(Base):
+    __tablename__ = "ai_visibility_snapshot"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "site_id", "captured_on"),
+        Index("ai_visibility_snapshot_tenant_site_idx", "tenant_id", "site_id", "captured_on"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    crawl_job_id: Mapped[UUID | None] = mapped_column()
+    captured_on: Mapped[date] = mapped_column(Date)
+    readiness_score: Mapped[float] = mapped_column(Float)
+    factors_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    citation_source: Mapped[str] = mapped_column(String(16), default="none")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

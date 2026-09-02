@@ -275,6 +275,33 @@ out-of-order transition returns `409 content_brief_transition_not_allowed`, and 
 a `content_brief.status_changed` audit event. Briefs carry query hashes, never readable terms, so
 listing them does not widen who can read what people searched for.
 
+### Competitors and answer-engine readiness
+
+- `GET /v1/sites/{site_id}/competitors`
+- `POST /v1/sites/{site_id}/competitors`
+- `POST /v1/competitors/{competitor_id}/pause`
+- `GET /v1/competitors/{competitor_id}/pages`
+- `POST /v1/competitors/{competitor_id}/pages`
+- `GET /v1/sites/{site_id}/competitor-scans/latest`
+- `GET /v1/sites/{site_id}/ai-visibility`
+
+A competitor and every tracked page are entered by a human. There is no discovery: a scan requests
+exactly the stored URLs, so adding a competitor never widens what the platform fetches. A page whose
+host does not match its competitor record is rejected with `409 url_host_does_not_match_competitor`.
+Each request passes the shared egress policy (https only, no embedded credentials, every resolved
+address checked public at request time) and the competitor's own robots.txt; a disallowed path is
+recorded as `robots_disallowed` rather than fetched. Redirects are followed manually, at most three
+hops, revalidating each one, and a redirect leaving the competitor's host ends the attempt.
+Observations keep structure only - title, description, headings, word count, internal link count,
+structured-data types - plus a content hash that shows a page changed without retaining what it said.
+
+`GET /v1/sites/{site_id}/ai-visibility` returns answer-engine **readiness** measured from
+first-party crawl and search evidence: crawlable and indexable share, entity markup, question and
+answer markup, and how many question-bearing clusters have an answering page. Weights renormalise
+over measured factors, so a missing input lowers confidence rather than scoring zero. It does not
+observe answer-engine citations; `citation_source` is always `none` and the column admits no other
+value until a provider is certified.
+
 ## Minimal resource examples
 
 ```json

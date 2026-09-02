@@ -151,8 +151,14 @@ every other recurring capability depends on it.
 - Keyword clustering now stems tokens before comparing them, so "percentage calculator", "how to
   calculate percentage", and "what is a percentage calculator" form one cluster. Labels are built
   from the original words, so a stem never reaches the reader.
-- Still open: competitor and answer-engine visibility need a provider decision on terms and
-  economics before any external SERP data is fetched.
+- Competitor tracking: competitors and their pages are entered by a human and fetched with no
+  discovery, under a shared egress policy, the competitor's robots.txt, and manual redirect
+  revalidation. Only structure is stored, never body text.
+- Answer-engine readiness: measured from first-party crawl and search evidence, with weights
+  renormalised over the factors actually measured. It never claims to observe citations, and the
+  snapshot column admits no citation source but `none`.
+- Still open: observed answer-engine citations and SERP rank tracking still need a certified
+  provider decision on terms and economics. Nothing in the product reports them today.
 
 ## Delivery principles
 

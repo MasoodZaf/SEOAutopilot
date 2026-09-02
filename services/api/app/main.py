@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.briefs import router as briefs_router
+from app.api.routes.competitors import router as competitors_router
 from app.api.routes.connectors import router as connectors_router
 from app.api.routes.governance import router as governance_router
 from app.api.routes.keywords import router as keywords_router
@@ -43,4 +44,5 @@ app.include_router(governance_router)
 app.include_router(routines_router)
 app.include_router(keywords_router)
 app.include_router(briefs_router)
+app.include_router(competitors_router)
 

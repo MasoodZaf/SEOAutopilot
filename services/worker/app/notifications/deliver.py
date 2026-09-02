@@ -6,15 +6,15 @@ time, a bounded payload, and no evidence content beyond headline counts.
 """
 
 import hashlib
-import ipaddress
 import json
 import logging
-import socket
 from typing import Any, Protocol
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from app.egress.guard import EgressBlocked
+from app.egress.guard import assert_public_https_target as guard_public_https_target
 
 logger = logging.getLogger(__name__)
 
@@ -61,26 +61,11 @@ def decrypt_webhook_url(
 
 
 def assert_public_https_target(url: str) -> None:
-    parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise DeliveryError("destination_scheme_rejected")
-    if parsed.username or parsed.password:
-        raise DeliveryError("destination_credentials_rejected")
+    """Delegates to the shared egress policy, re-raising as a delivery error."""
     try:
-        resolved = socket.getaddrinfo(parsed.hostname, parsed.port or 443, proto=socket.IPPROTO_TCP)
-    except OSError as error:
-        raise DeliveryError("destination_unresolvable") from error
-    for entry in resolved:
-        address = ipaddress.ip_address(entry[4][0])
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-            or address.is_multicast
-            or address.is_unspecified
-        ):
-            raise DeliveryError("destination_not_public")
+        guard_public_https_target(url)
+    except EgressBlocked as error:
+        raise DeliveryError(error.code) from error
 
 
 def build_message(kind: str, site_name: str, payload: dict[str, Any], report_url: str) -> dict[str, Any]:

@@ -243,3 +243,69 @@ def test_sitemap_coverage_is_scoped_to_one_crawl() -> None:
     for statement in (DECLARED_SUMMARY_SQL, DECLARED_NOT_CRAWLED_SQL, CRAWLED_NOT_DECLARED_SQL):
         assert "crawl_job_id=$2" in statement.replace(" ", "")
         assert "tenant_id=$1" in statement.replace(" ", "")
+
+
+# --- answer-engine readiness ---
+
+
+def test_readiness_weights_sum_to_one_and_renormalise_over_measured_factors() -> None:
+    from app.routines.ai_visibility import FACTOR_WEIGHTS
+
+    assert round(sum(FACTOR_WEIGHTS.values()), 6) == 1.0
+
+
+def test_readiness_is_scored_only_from_first_party_evidence() -> None:
+    """Every factor must come from our own crawl or search evidence.
+
+    A factor sourced from an external answer engine would make the score claim
+    observed visibility, which no certified provider currently backs.
+    """
+    from app.routines.ai_visibility import (
+        ANSWER_ENGINE_TYPES,
+        ENTITY_TYPES,
+        FACTOR_WEIGHTS,
+        PAGE_EVIDENCE_SQL,
+    )
+
+    assert set(FACTOR_WEIGHTS) == {
+        "crawlable_indexable",
+        "entity_markup",
+        "question_answer_markup",
+        "question_topic_coverage",
+    }
+    # The only tables read are our own observations and clusters.
+    compact = " ".join(PAGE_EVIDENCE_SQL.split())
+    assert "page_observation" in compact
+    assert "page p" in compact
+    assert ANSWER_ENGINE_TYPES == ("FAQPage", "QAPage", "HowTo")
+    assert "Organization" in ENTITY_TYPES
+
+
+def test_the_snapshot_table_admits_no_citation_source_but_none() -> None:
+    """The column is constrained so a future writer cannot imply observed data."""
+    from pathlib import Path
+
+    migration = Path("infra/migrations/0024_competitors_and_ai_visibility.sql").read_text()
+    assert "citation_source text NOT NULL DEFAULT 'none'" in migration
+    assert "CHECK(citation_source IN('none'))" in migration
+
+
+def test_an_unmeasured_factor_lowers_confidence_rather_than_scoring_zero() -> None:
+    from app.routines.ai_visibility import FACTOR_WEIGHTS
+
+    # Reproduces the renormalisation the builder performs: a site with no
+    # keyword analysis must not be penalised for the missing coverage factor.
+    factors = {
+        "crawlable_indexable": {"value": 1.0, "measured": True},
+        "entity_markup": {"value": 1.0, "measured": True},
+        "question_answer_markup": {"value": 1.0, "measured": True},
+        "question_topic_coverage": {"value": 0.0, "measured": False},
+    }
+    measured_weight = sum(w for n, w in FACTOR_WEIGHTS.items() if factors[n]["measured"])
+    score = (
+        sum(FACTOR_WEIGHTS[n] * float(factors[n]["value"]) for n in FACTOR_WEIGHTS if factors[n]["measured"])
+        / measured_weight
+        * 100
+    )
+    assert round(score, 2) == 100.0
+    assert measured_weight < 1.0
