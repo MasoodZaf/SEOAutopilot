@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     cursor_signing_key: str = LOCAL_CURSOR_KEY
     google_connectors_enabled: bool = False
     dns_provider_connectors_enabled: bool = False
+    routines_enabled: bool = False
+    notifications_enabled: bool = False
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
     google_oauth_redirect_uri: str = "http://localhost:8000/v1/connectors/oauth/callback"
@@ -55,10 +57,15 @@ class Settings(BaseSettings):
                 or len(self.search_query_hash_key.get_secret_value()) < 32
             ):
                 raise ValueError("SEARCH_QUERY_HASH_KEY must contain at least 32 characters")
-        if self.google_connectors_enabled or self.dns_provider_connectors_enabled:
+        if (
+            self.google_connectors_enabled
+            or self.dns_provider_connectors_enabled
+            or self.notifications_enabled
+        ):
             if self.connector_secret_backend == "disabled":
                 raise ValueError(
-                    "A connector secret backend is required when a connector is enabled"
+                    "A connector secret backend is required when a connector or notifications "
+                    "are enabled"
                 )
             if (
                 self.app_env in {"staging", "production"}

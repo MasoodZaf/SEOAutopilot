@@ -3,7 +3,7 @@ from enum import StrEnum
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 class ProductMode(StrEnum):
@@ -673,4 +673,184 @@ class RollbackReceiptRead(BaseModel):
 
 class RollbackReceiptEnvelope(BaseModel):
     data: RollbackReceiptRead
+    meta: dict[str, str]
+
+
+class RoutineKindName(StrEnum):
+    SITE_AUDIT = "site_audit"
+    KEYWORD_REFRESH = "keyword_refresh"
+    SITEMAP_COVERAGE = "sitemap_coverage"
+    COMPETITOR_SCAN = "competitor_scan"
+    AI_VISIBILITY_SCAN = "ai_visibility_scan"
+    WEEKLY_REPORT = "weekly_report"
+
+
+class CadenceName(StrEnum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+
+class RoutineUpsert(BaseModel):
+    kind: RoutineKindName
+    cadence: CadenceName
+    schedule_hour_utc: int = Field(default=6, ge=0, le=23)
+    schedule_minute_utc: int = Field(default=0, ge=0, le=59)
+    schedule_isodow: int | None = Field(default=None, ge=1, le=7)
+    schedule_dom: int | None = Field(default=None, ge=1, le=28)
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_cadence_fields(self) -> "RoutineUpsert":
+        if self.cadence is CadenceName.WEEKLY and self.schedule_isodow is None:
+            raise ValueError("schedule_isodow is required for a weekly cadence")
+        if self.cadence is CadenceName.MONTHLY and self.schedule_dom is None:
+            raise ValueError("schedule_dom is required for a monthly cadence")
+        return self
+
+
+class RoutineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    kind: RoutineKindName
+    cadence: CadenceName
+    schedule_hour_utc: int
+    schedule_minute_utc: int
+    schedule_isodow: int | None
+    schedule_dom: int | None
+    enabled: bool
+    next_run_at: datetime
+    last_run_at: datetime | None
+    last_status: str | None
+    consecutive_failures: int
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class RoutineCollection(BaseModel):
+    data: list[RoutineRead]
+    meta: dict[str, str | int]
+
+
+class RoutineEnvelope(BaseModel):
+    data: RoutineRead
+    meta: dict[str, str]
+
+
+class RoutineRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    routine_id: UUID
+    site_id: UUID
+    kind: RoutineKindName
+    status: str
+    trigger: str
+    scheduled_for: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    attempts: int
+    skip_reason: str | None
+    error_code: str | None
+    summary_json: dict[str, object]
+    created_at: datetime
+
+
+class RoutineRunCollection(BaseModel):
+    data: list[RoutineRunRead]
+    meta: dict[str, str | int]
+
+
+class RoutineRunEnvelope(BaseModel):
+    data: RoutineRunRead
+    meta: dict[str, str]
+
+
+class ReportKindName(StrEnum):
+    WEEKLY_DIGEST = "weekly_digest"
+    AUDIT_SUMMARY = "audit_summary"
+    COMPETITOR_DIGEST = "competitor_digest"
+    AI_VISIBILITY_DIGEST = "ai_visibility_digest"
+
+
+class ReportRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    routine_run_id: UUID | None
+    kind: ReportKindName
+    period_start: date
+    period_end: date
+    generated_at: datetime
+    content_hash: str
+    payload_json: dict[str, object]
+
+
+class ReportSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    kind: ReportKindName
+    period_start: date
+    period_end: date
+    generated_at: datetime
+    content_hash: str
+
+
+class ReportCollection(BaseModel):
+    data: list[ReportSummary]
+    meta: dict[str, str | int]
+
+
+class ReportEnvelope(BaseModel):
+    data: ReportRead
+    meta: dict[str, str]
+
+
+class NotificationChannelKind(StrEnum):
+    SLACK_WEBHOOK = "slack_webhook"
+    GENERIC_WEBHOOK = "generic_webhook"
+
+
+class NotificationChannelCreate(BaseModel):
+    kind: NotificationChannelKind
+    name: str = Field(min_length=1, max_length=120)
+    site_id: UUID | None = None
+    webhook_url: SecretStr
+
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, value: SecretStr) -> SecretStr:
+        parsed = urlsplit(value.get_secret_value().strip())
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("webhook_url must be an https URL")
+        if parsed.username or parsed.password:
+            raise ValueError("webhook_url must not embed credentials")
+        hostname = parsed.hostname.rstrip(".").lower()
+        if hostname == "localhost" or hostname.endswith(".local"):
+            raise ValueError("local hosts are not allowed")
+        return value
+
+
+class NotificationChannelRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID | None
+    kind: NotificationChannelKind
+    name: str
+    enabled: bool
+    # Host plus a truncated path only; the full URL is never returned.
+    destination_hint: str
+    created_at: datetime
+    revoked_at: datetime | None
+
+
+class NotificationChannelCollection(BaseModel):
+    data: list[NotificationChannelRead]
+    meta: dict[str, str | int]
+
+
+class NotificationChannelEnvelope(BaseModel):
+    data: NotificationChannelRead
     meta: dict[str, str]

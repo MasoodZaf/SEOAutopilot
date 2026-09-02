@@ -10,6 +10,7 @@ from app.api.routes.opportunities import calibration_router
 from app.api.routes.opportunities import router as opportunities_router
 from app.api.routes.pages import router as pages_router
 from app.api.routes.proposals import router as proposals_router
+from app.api.routes.routines import router as routines_router
 from app.api.routes.sites import router as sites_router
 from app.api.routes.system import router as system_router
 from app.core.config import get_settings
@@ -37,4 +38,5 @@ app.include_router(calibration_router)
 app.include_router(proposals_router)
 app.include_router(measurements_router)
 app.include_router(governance_router)
+app.include_router(routines_router)
 

@@ -123,6 +123,24 @@ Against the SerpApi Awesome SEO Tools catalog, breadth is tracked as coverage bu
   release additionally requires production identity/membership, effective RLS, certified GitHub or
   CMS staging plus rollback, browser E2E/accessibility evidence, operations runbooks, and G3 approval.
 
+## Always-on workflow checkpoint (2026-09-02)
+
+Feature parity work against hosted always-on SEO agents began with the scheduling substrate, since
+every other recurring capability depends on it.
+
+- Delivered: `routine`/`routine_run` scheduling with deterministic daily, weekly, and monthly slots;
+  idempotent claiming across worker replicas; collapsed catch-up after downtime; `site_audit` and
+  `weekly_report` execution; deterministic `report` payloads hashed for reproducibility; AES-256-GCM
+  notification channels with https-only, public-address-checked delivery.
+- Fails closed: a routine requires an active DNS-verified site, skips while a site is frozen, skips
+  when a crawl is already active, and parks after five consecutive failures. A frozen site publishes
+  no work at all.
+- Recorded honestly: `keyword_refresh`, `sitemap_coverage`, `competitor_scan`, and
+  `ai_visibility_scan` are accepted as routine kinds but record `skipped` with
+  `routine_kind_not_implemented` until their phases land. They do not report success.
+- Still open: competitor and answer-engine visibility need a provider decision on terms and
+  economics before any external SERP data is fetched.
+
 ## Delivery principles
 
 - Ship vertical slices: evidence -> opportunity -> proposal -> deploy -> measure.

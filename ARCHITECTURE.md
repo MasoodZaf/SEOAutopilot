@@ -31,7 +31,7 @@ flowchart LR
 
 - **Web:** server-rendered Next.js UI. It never holds provider refresh tokens or makes privileged connector calls from the browser.
 - **API:** authentication, tenant/resource authorization, CRUD, approval commands, webhook intake, signed upload URLs, and read models.
-- **Worker:** durable job execution, connector syncs, scoring, agent orchestration, proposal validation, deployment, verification, and measurement scheduling.
+- **Worker:** durable job execution, connector syncs, scoring, agent orchestration, proposal validation, deployment, verification, measurement scheduling, the routine scheduler/runner, and outbound report delivery. The scheduler and notification dispatcher are each behind their own flag (`ROUTINES_ENABLED`, `NOTIFICATIONS_ENABLED`) and default closed.
 - **Crawler:** isolated browser/HTTP process with egress policy, DNS/IP validation, host budgets, response size limits, and no control-plane credentials.
 - **PostgreSQL:** transactional state, outbox, immutable audit chain, observations, policies, proposals, deployments, and measurement series.
 - **Redis:** queues, short-lived locks, rate-limit counters, and cache. Jobs remain reconstructible from PostgreSQL.
@@ -50,6 +50,10 @@ flowchart LR
 - Proposals, policy & approvals
 - Deployment & rollback
 - Measurement & reporting
+- Scheduled routines & outbound notification: a scheduler claims due slots, a runner executes them
+  under the same fail-closed site gates as an on-demand action, and a dispatcher delivers report
+  digests to configured channels. Routines produce evidence and reports only; they hold no
+  deployment authority.
 - Audit, usage & billing
 
 Cross-context writes go through application commands and an outbox. Consumers are idempotent and record the handled event ID.

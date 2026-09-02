@@ -207,6 +207,31 @@ proposal output as its own proof. Measurement creation is a command because it p
 requires an independently verified deployment and a completed 28-day follow-up window. The stored
 comparison is an empirical association, not causal attribution.
 
+### Scheduled routines, reports, and notifications
+
+- `GET /v1/sites/{site_id}/routines`
+- `PUT /v1/sites/{site_id}/routines`
+- `POST /v1/routines/{routine_id}/runs`
+- `GET /v1/sites/{site_id}/routine-runs`
+- `GET /v1/sites/{site_id}/reports`
+- `GET /v1/reports/{report_id}`
+- `GET /v1/notification-channels`
+- `POST /v1/notification-channels`
+- `POST /v1/notification-channels/{channel_id}/revoke`
+
+Routine endpoints return `503 routines_not_enabled` unless `ROUTINES_ENABLED` is set. A routine
+gathers evidence and produces reports; it never deploys, approves, or suppresses. Creating one
+requires an active, DNS-verified site, so a schedule cannot become a path around verification.
+`PUT` is an upsert keyed on `(site_id, kind)`; editing a schedule re-anchors `next_run_at` to the
+present so an edit never replays a passed slot. A manual run is deduplicated to the minute through
+the `(routine_id, scheduled_for)` uniqueness constraint.
+
+Notification endpoints return `503 notifications_not_configured` unless `NOTIFICATIONS_ENABLED` is
+set with a secret backend. A webhook destination is a secret: it is stored in an AES-256-GCM
+envelope, is never returned by the API, and reads back only as a `destination_hint` (host plus a
+four-character tail). Delivery is https-only to a public address resolved at send time, and the
+message body carries headline counts and a link, never page-level evidence.
+
 ## Minimal resource examples
 
 ```json
@@ -247,7 +272,7 @@ Outbox/webhook event envelope:
 }
 ```
 
-Initial events: `site.verified.v1`, `crawl.requested.v1`, `crawl.completed.v1`, `performance.requested.v1`, `connector.sync_completed.v1`, `opportunity.created.v1`, `proposal.submitted.v1`, `proposal.approved.v1`, `deployment.requested.v1`, `deployment.completed.v1`, `deployment.verification_failed.v1`.
+Initial events: `site.verified.v1`, `crawl.requested.v1`, `crawl.completed.v1`, `performance.requested.v1`, `connector.sync_completed.v1`, `opportunity.created.v1`, `proposal.submitted.v1`, `proposal.approved.v1`, `deployment.requested.v1`, `deployment.completed.v1`, `deployment.verification_failed.v1`, `routine.run.queued.v1`.
 
 ## Rate limits and safety
 

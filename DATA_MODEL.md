@@ -149,6 +149,29 @@ retention and audit approval are required before any removal.
 - `outbox_event(id, tenant_id, event_type, event_version, aggregate_type, aggregate_id, payload_json, occurred_at, published_at, attempts)`
 - `idempotency_record(id, tenant_id, scope, key, request_hash, response_ref, status, expires_at)`
 
+### Scheduled routines and reporting
+
+- `routine(id, tenant_id, site_id, kind, cadence, schedule_hour_utc, schedule_minute_utc,
+  schedule_isodow, schedule_dom, enabled, next_run_at, last_run_at, last_status,
+  consecutive_failures, config_json, created_by, version)` — unique on `(tenant_id, site_id, kind)`.
+  `schedule_dom` is capped at 28 so every month contains the slot.
+- `routine_run(id, tenant_id, routine_id, site_id, kind, status, trigger, scheduled_for,
+  started_at, finished_at, lease_until, attempts, skip_reason, error_code, summary_json)` — unique
+  on `(routine_id, scheduled_for)`, which makes the scheduler idempotent across restarts and
+  replicas.
+- `report(id, tenant_id, site_id, routine_run_id, kind, period_start, period_end, generated_at,
+  scoring_version_id, content_hash, payload_json)` — unique on
+  `(tenant_id, site_id, kind, period_start, period_end)`; `content_hash` is the SHA-256 of the
+  canonical payload, so an identical evidence set reproduces an identical report.
+- `notification_channel(id, tenant_id, site_id, kind, name, enabled, destination_hint, ciphertext,
+  nonce, aad_hash, key_version, created_by, revoked_at)` — the webhook URL lives only in the
+  AES-256-GCM envelope; `destination_hint` is the only readable form.
+- `notification_delivery(id, tenant_id, channel_id, report_id, status, attempts, lease_until,
+  delivered_at, error_code)` — unique on `(channel_id, report_id)` so a report is delivered once
+  per channel.
+
+All five tables enable row-level security with the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.
@@ -157,6 +180,14 @@ retention and audit approval are required before any removal.
 - Connector: `pending -> connected -> degraded | reauth_required | revoked`.
 
 Invalid transitions return conflict errors and create security/audit signals when suspicious.
+
+### Routine run lifecycle
+
+`queued -> running -> completed | failed | skipped`
+
+A run is `skipped` with a recorded reason when the site is unverified, frozen, the routine is
+parked after repeated failures, a crawl is already active, or the kind is not implemented yet. A
+skip is a first-class outcome, not a silent success.
 
 ## Isolation and retention
 

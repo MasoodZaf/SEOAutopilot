@@ -10,6 +10,8 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -665,3 +667,113 @@ class RollbackReceipt(Base):
     status: Mapped[str] = mapped_column(String(24), default="applied")
     rolled_back_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class Routine(Base):
+    __tablename__ = "routine"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "site_id", "kind"),
+        Index("routine_tenant_site_idx", "tenant_id", "site_id", "kind"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32))
+    cadence: Mapped[str] = mapped_column(String(16))
+    schedule_hour_utc: Mapped[int] = mapped_column(SmallInteger, default=6)
+    schedule_minute_utc: Mapped[int] = mapped_column(SmallInteger, default=0)
+    schedule_isodow: Mapped[int | None] = mapped_column(SmallInteger)
+    schedule_dom: Mapped[int | None] = mapped_column(SmallInteger)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str | None] = mapped_column(String(16))
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_by: Mapped[UUID]
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RoutineRun(Base):
+    __tablename__ = "routine_run"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("routine_id", "scheduled_for"),
+        Index("routine_run_tenant_site_idx", "tenant_id", "site_id", "created_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    routine_id: Mapped[UUID] = mapped_column(nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    trigger: Mapped[str] = mapped_column(String(16), default="schedule")
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    skip_reason: Mapped[str | None] = mapped_column(String(80))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Report(Base):
+    __tablename__ = "report"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "site_id", "kind", "period_start", "period_end"),
+        Index("report_tenant_site_idx", "tenant_id", "site_id", "generated_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    kind: Mapped[str] = mapped_column(String(32))
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    scoring_version_id: Mapped[UUID | None] = mapped_column(ForeignKey("scoring_version.id"))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationChannel(Base):
+    __tablename__ = "notification_channel"
+    __table_args__ = (UniqueConstraint("id", "tenant_id"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID | None] = mapped_column(ForeignKey("site.id"))
+    kind: Mapped[str] = mapped_column(String(24))
+    name: Mapped[str] = mapped_column(String(120))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    destination_hint: Mapped[str] = mapped_column(String(200))
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    aad_hash: Mapped[str] = mapped_column(String(64))
+    key_version: Mapped[str] = mapped_column(String(80))
+    created_by: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_delivery"
+    __table_args__ = (UniqueConstraint("channel_id", "report_id"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    channel_id: Mapped[UUID] = mapped_column(nullable=False)
+    report_id: Mapped[UUID] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

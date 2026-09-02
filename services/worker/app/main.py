@@ -4,6 +4,7 @@ import os
 from typing import cast
 
 import asyncpg
+import httpx
 import redis.asyncio as redis
 
 from app.analysis_consumer import AnalysisPool, AnalysisStream, run_analysis_consumer
@@ -13,11 +14,17 @@ from app.gsc.consumer import (
     require_secret_bytes,
     run_gsc_consumer,
 )
+from app.notifications.deliver import run_notification_dispatcher
 from app.outbox import DatabaseConnection, StreamClient, dispatch_batch
 from app.pagespeed.client import PageSpeedClient
 from app.pagespeed.consumer import Pool as PageSpeedPool
 from app.pagespeed.consumer import Stream as PageSpeedStream
 from app.pagespeed.consumer import run_pagespeed_consumer
+from app.routines.runner import Pool as RoutinePool
+from app.routines.runner import Stream as RoutineStream
+from app.routines.runner import run_routine_consumer
+from app.routines.scheduler import Pool as SchedulerPool
+from app.routines.scheduler import run_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -51,29 +58,52 @@ async def run() -> None:
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
     streams = redis.from_url(redis_url, decode_responses=True)
     pagespeed = PageSpeedClient(api_key=os.environ.get("PAGESPEED_API_KEY") or None)
-    try:
-        await asyncio.gather(
-            run_dispatcher(pool, streams),
-            run_analysis_consumer(
-                cast(AnalysisPool, pool),
-                cast(AnalysisStream, streams),
-                f"worker-{os.getpid()}",
-            ),
-            run_gsc_consumer(
-                pool,
-                cast(SyncStream, streams),
-                f"gsc-worker-{os.getpid()}",
-                encryption_key=connector_key,
-                query_hash_key=query_hash_key,
-            ),
-            run_pagespeed_consumer(
-                cast(PageSpeedPool, pool),
-                cast(PageSpeedStream, streams),
-                f"pagespeed-worker-{os.getpid()}",
-                pagespeed,
-            ),
+    routines_enabled = os.environ.get("ROUTINES_ENABLED", "false").lower() == "true"
+    notifications_enabled = os.environ.get("NOTIFICATIONS_ENABLED", "false").lower() == "true"
+    app_base_url = os.environ.get("APP_BASE_URL", "http://localhost:3000")
+    notification_client = httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(10.0)
+    )
+
+    background = [
+        run_dispatcher(pool, streams),
+        run_analysis_consumer(
+            cast(AnalysisPool, pool),
+            cast(AnalysisStream, streams),
+            f"worker-{os.getpid()}",
+        ),
+        run_gsc_consumer(
+            pool,
+            cast(SyncStream, streams),
+            f"gsc-worker-{os.getpid()}",
+            encryption_key=connector_key,
+            query_hash_key=query_hash_key,
+        ),
+        run_pagespeed_consumer(
+            cast(PageSpeedPool, pool),
+            cast(PageSpeedStream, streams),
+            f"pagespeed-worker-{os.getpid()}",
+            pagespeed,
+        ),
+    ]
+    if routines_enabled:
+        background.append(run_scheduler(cast(SchedulerPool, pool)))
+        background.append(
+            run_routine_consumer(
+                cast(RoutinePool, pool),
+                cast(RoutineStream, streams),
+                f"routine-worker-{os.getpid()}",
+            )
         )
+    if notifications_enabled:
+        background.append(
+            run_notification_dispatcher(pool, notification_client, connector_key, app_base_url)
+        )
+
+    try:
+        await asyncio.gather(*background)
     finally:
+        await notification_client.aclose()
         await pagespeed.close()
         await streams.aclose()
         await pool.close()
