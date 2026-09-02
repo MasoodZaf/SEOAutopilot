@@ -15,7 +15,7 @@ SEO Autopilot is deployed as a standalone hosted control-plane application. Cust
 - **`services/worker`**: Asynchronous Python worker with a six-dimension deterministic rules engine and durable event consumers. LLM and external deployment adapters are release-gated.
 - **`services/crawler`**: Adaptive Playwright & HTTP crawler with SSRF blocking and hostile fixture containment.
 - **`packages/contracts`**: Shared TypeScript Zod validation schemas.
-- **`infra/migrations`**: 17 ordered PostgreSQL migrations (`0001` to `0017`).
+- **`infra/migrations`**: 26 ordered PostgreSQL migrations (`0001` to `0026`).
 
 ---
 
@@ -53,6 +53,31 @@ SEO Autopilot is deployed as a standalone hosted control-plane application. Cust
 - **Emergency Freeze**: Site freeze, global deployment flag, mode, freeze-window, role, and daily-budget checks fail closed before any adapter is invoked.
 - **Measurement Integrity**: Measurement requires independently verified deployment evidence and a complete 28-day follow-up window. Results are association, not causal attribution.
 - **Connector status**: GitHub, Shopify, WordPress, live verification, and external rollback adapters do not report success; they remain blocked pending real provider integration and certification.
+
+---
+
+## 🤖 Always-on workflows
+
+- **Scheduled routines**: deterministic daily/weekly/monthly slots for site audits, keyword
+  reclustering, sitemap coverage, content briefs, competitor scans, answer-engine readiness, and the
+  weekly report. Claiming is idempotent across worker replicas and backlog is collapsed after an
+  outage rather than replayed. Behind `ROUTINES_ENABLED`, default off.
+- **Keyword workspace**: Search Console query terms are sealed per site in an AES-256-GCM envelope
+  alongside the existing HMAC, which enables deterministic token-overlap clustering, rule-based
+  intent, question-share answer-engine candidacy, striking-distance and cannibalisation signals.
+  Readable terms are available only through one role-gated, audited endpoint.
+- **Content briefs and refresh queue**: every gap a brief names is traced to a stored observation.
+  A brief is advisory: it carries no diff and no deployment authority.
+- **Sitemap coverage**: declared versus crawled versus indexable, measured within one crawl.
+- **Competitors**: only URLs a human put on record, fetched under a shared egress policy, the
+  competitor's robots.txt, and per-hop redirect revalidation. Structure only, never body text.
+- **AI search visibility**: readiness measured from first-party evidence. It does not observe
+  answer-engine citations; that needs a certified provider and is not integrated.
+- **Agent workspace**: a Chat / Tasks / Skills / Reports console over twelve skills. Routing is
+  deterministic against a code-defined registry and re-checks the actor's role, so chat grants no
+  authority the actor did not already have and no skill can deploy or approve.
+- **Report delivery**: weekly digests to https-only, public-address-checked webhooks, carrying
+  headline counts rather than page-level evidence. Behind `NOTIFICATIONS_ENABLED`, default off.
 
 ---
 
