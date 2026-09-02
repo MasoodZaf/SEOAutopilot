@@ -777,3 +777,93 @@ class NotificationDelivery(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SearchQuery(Base):
+    __tablename__ = "search_query"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), primary_key=True)
+    site_id: Mapped[UUID] = mapped_column(primary_key=True)
+    query_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    aad_hash: Mapped[str] = mapped_column(String(64))
+    key_version: Mapped[str] = mapped_column(String(80))
+    term_length: Mapped[int] = mapped_column(SmallInteger)
+    token_count: Mapped[int] = mapped_column(SmallInteger)
+    is_question: Mapped[bool] = mapped_column(Boolean, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KeywordAnalysisRun(Base):
+    __tablename__ = "keyword_analysis_run"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint(
+            "tenant_id", "site_id", "window_start", "window_end", "algorithm_version"
+        ),
+        Index("keyword_analysis_run_tenant_site_idx", "tenant_id", "site_id", "created_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    algorithm_version: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(16), default="completed")
+    window_start: Mapped[date] = mapped_column(Date)
+    window_end: Mapped[date] = mapped_column(Date)
+    queries_considered: Mapped[int] = mapped_column(Integer, default=0)
+    clusters_built: Mapped[int] = mapped_column(Integer, default=0)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KeywordCluster(Base):
+    __tablename__ = "keyword_cluster"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("analysis_run_id", "cluster_key"),
+        Index(
+            "keyword_cluster_ranked_idx",
+            "tenant_id",
+            "site_id",
+            "analysis_run_id",
+            "opportunity_score",
+            "cluster_key",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    analysis_run_id: Mapped[UUID] = mapped_column(nullable=False)
+    label: Mapped[str] = mapped_column(String(200))
+    cluster_key: Mapped[str] = mapped_column(String(200))
+    intent: Mapped[str] = mapped_column(String(20))
+    answer_engine_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+    member_count: Mapped[int] = mapped_column(Integer)
+    clicks: Mapped[float] = mapped_column(Float, default=0.0)
+    impressions: Mapped[float] = mapped_column(Float, default=0.0)
+    ctr: Mapped[float] = mapped_column(Float, default=0.0)
+    best_position: Mapped[float | None] = mapped_column(Float)
+    average_position: Mapped[float | None] = mapped_column(Float)
+    striking_distance_count: Mapped[int] = mapped_column(Integer, default=0)
+    primary_page_id: Mapped[UUID | None] = mapped_column()
+    competing_page_count: Mapped[int] = mapped_column(Integer, default=0)
+    opportunity_score: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KeywordClusterMember(Base):
+    __tablename__ = "keyword_cluster_member"
+    __table_args__ = (
+        Index("keyword_cluster_member_cluster_idx", "tenant_id", "cluster_id", "impressions"),
+    )
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), primary_key=True)
+    cluster_id: Mapped[UUID] = mapped_column(primary_key=True)
+    query_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    site_id: Mapped[UUID] = mapped_column(nullable=False)
+    clicks: Mapped[float] = mapped_column(Float, default=0.0)
+    impressions: Mapped[float] = mapped_column(Float, default=0.0)
+    ctr: Mapped[float] = mapped_column(Float, default=0.0)
+    position: Mapped[float] = mapped_column(Float, default=0.0)
+    best_page_id: Mapped[UUID | None] = mapped_column()

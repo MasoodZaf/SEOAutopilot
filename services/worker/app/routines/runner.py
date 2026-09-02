@@ -15,6 +15,7 @@ from uuid import UUID
 
 from redis.exceptions import ResponseError
 
+from app.keywords.analysis import run_keyword_analysis
 from app.routines.reports import build_weekly_digest, content_hash
 
 STREAM = "seo-autopilot:events"
@@ -26,7 +27,10 @@ DEFAULT_CRAWL_MAX_DEPTH = 5
 logger = logging.getLogger(__name__)
 
 # Kinds landing in later phases. Recorded honestly instead of faked.
-UNIMPLEMENTED_KINDS = {"keyword_refresh", "sitemap_coverage", "competitor_scan", "ai_visibility_scan"}
+UNIMPLEMENTED_KINDS = {"sitemap_coverage", "competitor_scan", "ai_visibility_scan"}
+
+# Keyword clustering reads a rolling window of search evidence.
+KEYWORD_WINDOW_DAYS = 28
 
 
 class Pool(Protocol):
@@ -177,6 +181,33 @@ async def _run_site_audit(
     return "completed", {"crawl_id": str(crawl_id)}, None
 
 
+async def _run_keyword_refresh(
+    connection: Any,
+    tenant_id: UUID,
+    site_id: UUID,
+    run_id: UUID,
+    today: date,
+    encryption_key: bytes | None,
+) -> tuple[str, dict[str, Any], str | None]:
+    """Recluster the site's search demand over a rolling window."""
+    if encryption_key is None:
+        return "skipped", {}, "query_encryption_key_unavailable"
+    window_end = today - timedelta(days=1)
+    window_start = window_end - timedelta(days=KEYWORD_WINDOW_DAYS - 1)
+    available = await connection.fetchval(
+        "SELECT count(*) FROM search_query WHERE tenant_id=$1 AND site_id=$2",
+        tenant_id, site_id,
+    )
+    if not available:
+        return "skipped", {}, "no_search_query_evidence"
+    summary = await run_keyword_analysis(
+        connection, tenant_id, site_id, window_start, window_end, encryption_key, run_id
+    )
+    if summary["queries_considered"] == 0:
+        return "skipped", summary, "no_search_evidence_in_window"
+    return "completed", summary, None
+
+
 async def _run_weekly_report(
     connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID, today: date
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -228,7 +259,11 @@ async def _run_weekly_report(
 
 
 async def process_run(
-    connection: Any, tenant_id: UUID, run_id: UUID, today: date | None = None
+    connection: Any,
+    tenant_id: UUID,
+    run_id: UUID,
+    today: date | None = None,
+    encryption_key: bytes | None = None,
 ) -> None:
     row = await connection.fetchrow(CLAIM_RUN_SQL, run_id, tenant_id, LEASE_MINUTES)
     if row is None:
@@ -249,6 +284,11 @@ async def process_run(
             if kind == "site_audit":
                 status, summary, skip = await _run_site_audit(
                     connection, tenant_id, site_id, routine_id
+                )
+            elif kind == "keyword_refresh":
+                status, summary, skip = await _run_keyword_refresh(
+                    connection, tenant_id, site_id, run_id,
+                    today or datetime.now(UTC).date(), encryption_key,
                 )
             elif kind == "weekly_report":
                 status, summary, skip = await _run_weekly_report(
@@ -273,7 +313,9 @@ async def process_run(
         )
 
 
-async def run_routine_consumer(pool: Pool, streams: Stream, consumer: str) -> None:
+async def run_routine_consumer(
+    pool: Pool, streams: Stream, consumer: str, encryption_key: bytes | None = None
+) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
     except ResponseError as error:
@@ -296,7 +338,10 @@ async def run_routine_consumer(pool: Pool, streams: Stream, consumer: str) -> No
             try:
                 async with pool.acquire() as connection:
                     await process_run(
-                        connection, UUID(fields["tenant_id"]), UUID(fields["aggregate_id"])
+                        connection,
+                        UUID(fields["tenant_id"]),
+                        UUID(fields["aggregate_id"]),
+                        encryption_key=encryption_key,
                     )
                 await streams.xack(STREAM, GROUP, message_id)
             except (KeyError, ValueError):

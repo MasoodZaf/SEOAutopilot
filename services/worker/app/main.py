@@ -78,6 +78,7 @@ async def run() -> None:
             f"gsc-worker-{os.getpid()}",
             encryption_key=connector_key,
             query_hash_key=query_hash_key,
+            query_key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
         ),
         run_pagespeed_consumer(
             cast(PageSpeedPool, pool),
@@ -93,6 +94,7 @@ async def run() -> None:
                 cast(RoutinePool, pool),
                 cast(RoutineStream, streams),
                 f"routine-worker-{os.getpid()}",
+                connector_key,
             )
         )
     if notifications_enabled:

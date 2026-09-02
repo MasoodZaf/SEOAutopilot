@@ -854,3 +854,82 @@ class NotificationChannelCollection(BaseModel):
 class NotificationChannelEnvelope(BaseModel):
     data: NotificationChannelRead
     meta: dict[str, str]
+
+
+class KeywordIntent(StrEnum):
+    INFORMATIONAL = "informational"
+    COMMERCIAL = "commercial"
+    TRANSACTIONAL = "transactional"
+    NAVIGATIONAL = "navigational"
+
+
+class KeywordAnalysisRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    algorithm_version: str
+    status: str
+    window_start: date
+    window_end: date
+    queries_considered: int
+    clusters_built: int
+    content_hash: str
+    created_at: datetime
+
+
+class KeywordAnalysisRunEnvelope(BaseModel):
+    data: KeywordAnalysisRunRead
+    meta: dict[str, str]
+
+
+class KeywordClusterRead(BaseModel):
+    """Aggregate view. Carries no readable query term by design."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    analysis_run_id: UUID
+    label: str
+    cluster_key: str
+    intent: KeywordIntent
+    answer_engine_candidate: bool
+    member_count: int
+    clicks: float
+    impressions: float
+    ctr: float
+    best_position: float | None
+    average_position: float | None
+    striking_distance_count: int
+    primary_page_id: UUID | None
+    competing_page_count: int
+    opportunity_score: float
+
+
+class KeywordClusterCollection(BaseModel):
+    data: list[KeywordClusterRead]
+    meta: dict[str, str | int]
+
+
+class KeywordClusterEnvelope(BaseModel):
+    data: KeywordClusterRead
+    meta: dict[str, str]
+
+
+class KeywordMemberRead(BaseModel):
+    """Single-cluster detail. This is the only path that reveals a query term."""
+
+    query_hash: str
+    term: str
+    clicks: float
+    impressions: float
+    ctr: float
+    position: float
+    # Read from the stored shape signal, so the API needs no copy of the
+    # worker's classifier. Cluster-level intent lives on KeywordClusterRead.
+    is_question: bool
+    best_page_id: UUID | None
+
+
+class KeywordMemberCollection(BaseModel):
+    data: list[KeywordMemberRead]
+    meta: dict[str, str | int]

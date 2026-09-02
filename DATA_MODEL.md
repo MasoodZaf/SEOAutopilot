@@ -172,6 +172,27 @@ retention and audit approval are required before any removal.
 
 All five tables enable row-level security with the standard `app.tenant_id` policy.
 
+### Keyword workspace
+
+- `search_query(tenant_id, site_id, query_hash, ciphertext, nonce, aad_hash, key_version,
+  term_length, token_count, is_question, first_seen_at, last_seen_at)` — the readable term is held
+  once per `(site, query)` inside an AES-256-GCM envelope whose AAD binds tenant, site, and key
+  version, so a row lifted into another site's context does not open. `search_metric` still stores
+  only the keyed HMAC; `term_length`, `token_count`, and `is_question` are non-reversible shape
+  signals safe to expose.
+- `keyword_analysis_run(id, tenant_id, site_id, routine_run_id, algorithm_version, status,
+  window_start, window_end, queries_considered, clusters_built, content_hash)` — unique on
+  `(tenant_id, site_id, window_start, window_end, algorithm_version)`, so rerunning a window
+  replaces it rather than accumulating.
+- `keyword_cluster(id, tenant_id, site_id, analysis_run_id, label, cluster_key, intent,
+  answer_engine_candidate, member_count, clicks, impressions, ctr, best_position, average_position,
+  striking_distance_count, primary_page_id, competing_page_count, opportunity_score)` — carries no
+  query term; the label is derived from the cluster's shared tokens.
+- `keyword_cluster_member(tenant_id, cluster_id, site_id, query_hash, clicks, impressions, ctr,
+  position, best_page_id)` — joins back to `search_query` for the sealed term.
+
+All four tables enable row-level security with the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.

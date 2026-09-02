@@ -232,6 +232,24 @@ envelope, is never returned by the API, and reads back only as a `destination_hi
 four-character tail). Delivery is https-only to a public address resolved at send time, and the
 message body carries headline counts and a link, never page-level evidence.
 
+### Keyword workspace
+
+- `GET /v1/sites/{site_id}/keyword-clusters` (`intent`, `answer_engine_only`, `limit`)
+- `GET /v1/sites/{site_id}/keyword-analysis/latest`
+- `GET /v1/keyword-clusters/{cluster_id}`
+- `GET /v1/keyword-clusters/{cluster_id}/members`
+
+Clusters are built by the worker from stored Search Console evidence with a deterministic
+token-overlap algorithm; the same window and `algorithm_version` reproduce the same clusters, keys,
+and scores. `answer_engine_candidate` marks a cluster whose members are at least 30% question-form,
+which is the answer-engine signal observable from first-party evidence.
+
+The cluster endpoints are aggregate reads and carry no query term: only a label derived from the
+cluster's shared tokens, its intent, and its metrics. `GET /v1/keyword-clusters/{id}/members` is the
+one path that decrypts stored terms. It requires Owner, Admin, SEO Manager, or Editor, returns
+`403 insufficient_permissions_for_terms` otherwise, and writes a `keyword_terms.read` audit event
+naming the cluster and the number of terms revealed.
+
 ## Minimal resource examples
 
 ```json

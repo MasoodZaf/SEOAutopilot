@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Protocol
 from uuid import UUID
@@ -34,6 +34,10 @@ class MetricRecord:
     impressions: float
     ctr: float
     position: float
+    # In-memory only, and excluded from repr so an accidentally logged record
+    # cannot leak it. The sink seals it into the search_query envelope; it is
+    # never written to search_metric, a log line, or an error message.
+    query_text: str = field(repr=False, default="")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +76,7 @@ def metric_record(
         source_sync_id=sync_id,
         metric_date=day,
         query_hash=keyed_query_hash(row.query, query_hash_key),
+        query_text=row.query,
         page_url=row.page_url,
         page_url_hash=hashlib.sha256(row.page_url.encode("utf-8")).hexdigest(),
         country=row.country,

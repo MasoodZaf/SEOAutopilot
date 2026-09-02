@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.connectors import router as connectors_router
 from app.api.routes.governance import router as governance_router
+from app.api.routes.keywords import router as keywords_router
 from app.api.routes.local_pilot import router as local_pilot_router
 from app.api.routes.measurements import router as measurements_router
 from app.api.routes.metrics import router as metrics_router
@@ -39,4 +40,5 @@ app.include_router(proposals_router)
 app.include_router(measurements_router)
 app.include_router(governance_router)
 app.include_router(routines_router)
+app.include_router(keywords_router)
 

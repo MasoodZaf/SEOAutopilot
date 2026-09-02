@@ -80,6 +80,10 @@ async def test_sync_is_daily_resumable_and_does_not_store_raw_query() -> None:
     assert provider.calls == [(first, 0), (first, ROW_LIMIT), (second, 0), (second, ROW_LIMIT)]
     assert sink.records[0].query_hash == keyed_query_hash("confidential query", HASH_KEY)
     assert "confidential query" not in repr(sink.records)
+    assert "confidential query" not in str(sink.records)
+    # The term is carried in memory for the envelope sink only, and is
+    # excluded from the record's repr so a logged record cannot leak it.
+    assert sink.records[0].query_text == "confidential query"
     assert sink.checkpoints[-1] == SyncCursor(date(2026, 8, 3), 0)
 
 

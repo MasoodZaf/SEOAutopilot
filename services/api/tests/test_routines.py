@@ -1,9 +1,15 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
-from app.api.schemas import CadenceName, NotificationChannelCreate, RoutineKindName, RoutineUpsert
+from app.api.schemas import (
+    CadenceName,
+    NotificationChannelCreate,
+    NotificationChannelKind,
+    RoutineKindName,
+    RoutineUpsert,
+)
 from app.domain.routines import (
     Cadence,
     RoutineSchedule,
@@ -93,10 +99,16 @@ def test_webhook_url_must_be_public_https_without_credentials() -> None:
         "https://intranet.local/hook",
     ):
         with pytest.raises(ValidationError):
-            NotificationChannelCreate(kind="slack_webhook", name="ops", webhook_url=rejected)
+            NotificationChannelCreate(
+                kind=NotificationChannelKind.SLACK_WEBHOOK,
+                name="ops",
+                webhook_url=SecretStr(rejected),
+            )
 
     accepted = NotificationChannelCreate(
-        kind="slack_webhook", name="ops", webhook_url="https://hooks.slack.com/services/AAA/BBBCCC"
+        kind=NotificationChannelKind.SLACK_WEBHOOK,
+        name="ops",
+        webhook_url=SecretStr("https://hooks.slack.com/services/AAA/BBBCCC"),
     )
     assert accepted.webhook_url.get_secret_value().startswith("https://")
 
