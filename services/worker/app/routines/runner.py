@@ -93,6 +93,22 @@ RETURNING rr.routine_id, rr.site_id, rr.kind, rr.scheduled_for
 """
 
 
+# Explains a run the claim could not take. A run another consumer holds still
+# has a live lease and is left alone; anything else that looks claimable is
+# blocked by site governance or by exhausted attempts.
+UNCLAIMABLE_RUN_SQL = """
+SELECT rr.routine_id, rr.attempts,
+       (rr.status='queued' OR (rr.status='running' AND rr.lease_until<now()))
+         AS awaiting_work,
+       s.status AS site_status, s.verified_at, s.emergency_freeze
+FROM routine_run rr
+JOIN site s ON s.id=rr.site_id AND s.tenant_id=rr.tenant_id
+WHERE rr.id=$1 AND rr.tenant_id=$2
+"""
+
+MAX_RUN_ATTEMPTS = 3
+
+
 async def _finish(
     connection: Any,
     run_id: UUID,
@@ -417,6 +433,10 @@ async def process_run(
 ) -> None:
     row = await connection.fetchrow(CLAIM_RUN_SQL, run_id, tenant_id, LEASE_MINUTES)
     if row is None:
+        # The event is acked either way, so a run the claim rejected would sit
+        # in `queued` for ever with nothing recording why. Give it the same
+        # skip record the scheduler writes for a gated site.
+        await _record_unclaimable(connection, run_id, tenant_id)
         return
     routine_id: UUID = row["routine_id"]
     site_id: UUID = row["site_id"]
@@ -478,6 +498,27 @@ async def process_run(
         await _finish(
             connection, run_id, tenant_id, routine_id, "failed", error_code="routine_run_error"
         )
+
+
+async def _record_unclaimable(connection: Any, run_id: UUID, tenant_id: UUID) -> None:
+    """Record why a run could not be claimed, rather than leaving it queued."""
+    row = await connection.fetchrow(UNCLAIMABLE_RUN_SQL, run_id, tenant_id)
+    if row is None or not row["awaiting_work"]:
+        # Finished, deleted, or held by another consumer under a live lease.
+        return
+    if row["site_status"] != "active" or row["verified_at"] is None:
+        reason = "site_not_verified"
+    elif row["emergency_freeze"]:
+        reason = "site_frozen"
+    elif row["attempts"] >= MAX_RUN_ATTEMPTS:
+        reason = "run_attempts_exhausted"
+    else:
+        # Claimable and ungated: a racing consumer took it between the two
+        # statements. Leave it to them.
+        return
+    await _finish(
+        connection, run_id, tenant_id, row["routine_id"], "skipped", skip_reason=reason
+    )
 
 
 async def run_routine_consumer(

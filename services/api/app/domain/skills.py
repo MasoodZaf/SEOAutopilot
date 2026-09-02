@@ -245,6 +245,29 @@ WEAK_WEIGHT = 1.0
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
+# Words that open a question about state, or ask to be shown something, rather
+# than asking for work to happen. "run", "scan" and "check" are also ordinary
+# nouns and past participles, so without this "When did the last crawl run?"
+# and "Did the competitor scan run?" both read as orders to start one.
+# Modal requests ("can you run...", "please run...") are deliberately absent:
+# those are real instructions.
+NON_IMPERATIVE_OPENERS = frozenset(
+    {
+        # Asking about state.
+        "what", "whats", "when", "where", "which", "who", "whom", "why", "how",
+        "did", "does", "is", "are", "was", "were", "has", "have", "should",
+        # Asking to be shown what is already stored.
+        "show", "list", "display", "tell", "give", "view", "describe", "explain",
+        "summarize", "summarise",
+    }
+)
+
+
+def opens_as_question(lowered: str) -> bool:
+    """True when the first word makes the message a question, not an order."""
+    first = TOKEN_PATTERN.search(lowered)
+    return first is not None and first.group() in NON_IMPERATIVE_OPENERS
+
 
 WEEKDAYS = {
     "monday": 1, "tuesday": 2, "wednesday": 3, "thursday": 4,
@@ -337,6 +360,7 @@ def score_skill(skill: Skill, lowered: str, tokens: set[str]) -> SkillScore:
 def route(message: str, role: Role) -> RoutingResult:
     """Select at most one skill. Ties and weak matches resolve to no skill."""
     lowered, tokens = normalize(message)
+    asking = opens_as_question(lowered)
     scored: list[tuple[float, Skill, tuple[str, ...], bool]] = []
     for skill in SKILLS:
         if role not in skill.allowed_roles:
@@ -344,8 +368,9 @@ def route(message: str, role: Role) -> RoutingResult:
         result = score_skill(skill, lowered, tokens)
         scheduling_skill = skill.effect is SkillEffect.SCHEDULE
         # Naming a topic is a question. A scheduling skill additionally needs a
-        # word asking for the work to happen, and must clear the higher bar.
-        if scheduling_skill and not (result.action_hit and result.strong_hit):
+        # word asking for the work to happen, must clear the higher bar, and
+        # must not be a question about work that already happened.
+        if scheduling_skill and (asking or not (result.action_hit and result.strong_hit)):
             continue
         threshold = SCHEDULE_MIN_SCORE if scheduling_skill else READ_MIN_SCORE
         if result.score >= threshold:

@@ -43,6 +43,13 @@ class RoutineService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="site_not_verified"
             )
+        # The worker refuses to claim a run for a frozen site. Accepting one
+        # here would tell the caller it was queued and then drop it silently,
+        # so the freeze is reported at the point the request is made.
+        if site.emergency_freeze:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="site_frozen"
+            )
         return site
 
     async def list_for_site(self, site_id: UUID) -> list[Routine] | None:
@@ -147,11 +154,15 @@ class RoutineService:
             trigger="manual",
             scheduled_for=slot,
         )
-        self.session.add(run)
+        # The insert is attempted inside a savepoint. Rolling the whole session
+        # back here would end the request transaction and drop the tenant GUC
+        # with it, so a caller that catches this 409 and keeps working -- the
+        # agent does exactly that -- would then write with no tenant scope.
         try:
-            await self.session.flush()
+            async with self.session.begin_nested():
+                self.session.add(run)
+                await self.session.flush()
         except IntegrityError as error:
-            await self.session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="routine_run_already_queued"
             ) from error

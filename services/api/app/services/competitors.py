@@ -88,11 +88,13 @@ class CompetitorService:
             label=command.label,
             created_by=self.context.actor_id,
         )
-        self.session.add(competitor)
+        # Savepoint, not a session rollback: a session rollback would end the
+        # request transaction and drop the tenant GUC scoping every later write.
         try:
-            await self.session.flush()
+            async with self.session.begin_nested():
+                self.session.add(competitor)
+                await self.session.flush()
         except IntegrityError as error:
-            await self.session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="competitor_already_tracked"
             ) from error
@@ -167,11 +169,13 @@ class CompetitorService:
             keyword_cluster_key=command.keyword_cluster_key,
             created_by=self.context.actor_id,
         )
-        self.session.add(page)
+        # Savepoint, not a session rollback: a session rollback would end the
+        # request transaction and drop the tenant GUC scoping every later write.
         try:
-            await self.session.flush()
+            async with self.session.begin_nested():
+                self.session.add(page)
+                await self.session.flush()
         except IntegrityError as error:
-            await self.session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="competitor_page_already_tracked"
             ) from error

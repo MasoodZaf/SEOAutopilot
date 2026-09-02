@@ -11,6 +11,7 @@ from app.notifications.deliver import (
     channel_aad,
     decrypt_webhook_url,
 )
+from app.routines.runner import process_run
 from app.routines.schedule import RoutineSchedule, advance_from_slot, next_occurrence
 from app.routines.scheduler import claim_due_routines, skip_reason_for
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -316,3 +317,84 @@ def test_an_unmeasured_factor_lowers_confidence_rather_than_scoring_zero() -> No
     )
     assert round(score, 2) == 100.0
     assert measured_weight < 1.0
+
+
+# --- a run the claim refuses must still say why ---
+
+
+class UnclaimableConnection:
+    """Refuses the claim, then answers the follow-up that explains why."""
+
+    def __init__(self, **site: Any) -> None:
+        self.site = {
+            "routine_id": ROUTINE,
+            "attempts": 0,
+            "awaiting_work": True,
+            "site_status": "active",
+            "verified_at": at("2026-08-01T00:00:00"),
+            "emergency_freeze": False,
+        }
+        self.site.update(site)
+        self.executed: list[tuple[str, tuple[Any, ...]]] = []
+
+    def transaction(self) -> FakeTransaction:
+        return FakeTransaction()
+
+    async def fetchrow(self, query: str, *args: Any) -> Any:
+        if "UPDATE routine_run rr" in query:
+            return None  # the claim rejects it
+        return self.site
+
+    async def execute(self, query: str, *args: Any) -> str:
+        self.executed.append((query, args))
+        return "OK"
+
+    def finished_as(self) -> list[Any]:
+        return [
+            args
+            for query, args in self.executed
+            if "UPDATE routine_run" in query and "SET status=$3" in query
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("site", "reason"),
+    [
+        ({"emergency_freeze": True}, "site_frozen"),
+        ({"verified_at": None}, "site_not_verified"),
+        ({"site_status": "pending_verification"}, "site_not_verified"),
+        ({"attempts": 3}, "run_attempts_exhausted"),
+    ],
+)
+async def test_a_run_the_claim_refuses_records_a_skip_reason(
+    site: dict[str, Any], reason: str
+) -> None:
+    """The event is acked either way, so silence would strand the run.
+
+    Freezing a site after a run was queued used to leave it in `queued` for
+    ever with nothing recording why, while the caller had been told it was
+    queued to run.
+    """
+    connection = UnclaimableConnection(**site)
+    await process_run(connection, TENANT, RUN)
+    finished = connection.finished_as()
+    assert len(finished) == 1
+    assert finished[0][2] == "skipped"
+    assert finished[0][5] == reason
+
+
+@pytest.mark.asyncio
+async def test_a_run_held_by_another_consumer_is_left_alone() -> None:
+    # A live lease elsewhere is not a skip: that consumer still owns the run.
+    connection = UnclaimableConnection(awaiting_work=False)
+    await process_run(connection, TENANT, RUN)
+    assert connection.finished_as() == []
+
+
+@pytest.mark.asyncio
+async def test_a_claimable_ungated_run_lost_to_a_race_is_left_alone() -> None:
+    # Nothing is wrong with it; another consumer claimed it between statements.
+    connection = UnclaimableConnection()
+    await process_run(connection, TENANT, RUN)
+    assert connection.finished_as() == []

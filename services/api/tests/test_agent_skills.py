@@ -175,3 +175,32 @@ def test_registry_keys_are_unique_and_examples_route_to_themselves() -> None:
 def test_every_skill_is_described_for_a_reader(skill) -> None:
     assert skill.name and skill.description and skill.example
     assert skill.strong_triggers or skill.weak_triggers
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "When did the last crawl run?",
+        "Has the crawl run yet?",
+        "How often does the audit run?",
+        "Did the competitor scan run?",
+        "What did the audit run find?",
+        "Why does the keyword refresh run so slowly?",
+        "Show me the daily report",
+        "Show me the competitor scan results",
+    ],
+)
+def test_a_question_about_past_work_never_starts_new_work(message: str) -> None:
+    """"run" and "scan" are also nouns and past participles.
+
+    Scoring them as imperatives made "When did the last crawl run?" order a
+    crawl, so a question opener now disqualifies every scheduling skill.
+    """
+    result = route(message, Role.OWNER)
+    assert result.skill is None or result.skill.effect is SkillEffect.READ
+
+
+def test_a_politely_phrased_instruction_is_still_an_instruction() -> None:
+    # Suppressing questions must not suppress a real request that ends in "?".
+    assert routed("Can you run a crawl every day?") == "run_site_audit"
+    assert routed("please run an audit") == "run_site_audit"
