@@ -321,9 +321,15 @@ Routing is token overlap, not a model call, so the same phrasing always selects 
 Scheduling a routine is held to a higher score than answering a question, an explicit imperative
 ("regenerate", "recrawl", "scan") breaks a tie toward doing the work, and anything else that ties or
 scores low returns no skill and offers the reader a choice rather than guessing. A read skill answers
-from stored records and returns the references it used; a scheduling skill queues a routine run,
-creating the routine parked rather than silently starting a recurring schedule. No skill can deploy,
-approve, or write site content.
+from stored records and returns the references it used. No skill can deploy, approve, or write site
+content.
+
+A scheduling skill needs more than a topic: naming a subject is a question, so it also requires a
+word asking for the work to happen ("run", "schedule", "every", "recrawl", "regenerate"). Without a
+cadence it queues a single run and leaves the routine parked, so asking for one run never starts a
+recurring schedule. When the request names a cadence — "every day", "every Monday", "every month" —
+the routine is enabled on that schedule and the reply states the next run. Each of the seven routine
+kinds has a scheduling skill, so any recurring workflow can be set up from chat.
 
 ## Minimal resource examples
 

@@ -73,9 +73,11 @@ SEO Autopilot is deployed as a standalone hosted control-plane application. Cust
   competitor's robots.txt, and per-hop redirect revalidation. Structure only, never body text.
 - **AI search visibility**: readiness measured from first-party evidence. It does not observe
   answer-engine citations; that needs a certified provider and is not integrated.
-- **Agent workspace**: a Chat / Tasks / Skills / Reports console over twelve skills. Routing is
+- **Agent workspace**: a Chat / Tasks / Skills / Reports console over fifteen skills. Routing is
   deterministic against a code-defined registry and re-checks the actor's role, so chat grants no
-  authority the actor did not already have and no skill can deploy or approve.
+  authority the actor did not already have and no skill can deploy or approve. Every routine kind
+  can be put on a schedule from chat ("run a crawl and audit every day"); without a named cadence a
+  request queues a single run instead.
 - **Report delivery**: weekly digests to https-only, public-address-checked webhooks, carrying
   headline counts rather than page-level evidence. Behind `NOTIFICATIONS_ENABLED`, default off.
 

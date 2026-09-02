@@ -18,7 +18,7 @@ from app.api.schemas import RoutineUpsert
 from app.core.context import Role, TenantContext
 from app.db.models import AgentMessage, AgentSession, AgentTask, Routine, Site
 from app.domain.routines import Cadence, RoutineSchedule, initial_run_at
-from app.domain.skills import SKILLS, Skill, SkillEffect, route
+from app.domain.skills import SKILLS, RequestedCadence, Skill, SkillEffect, parse_cadence, route
 from app.services.briefs import ContentBriefService
 from app.services.competitors import CompetitorService
 from app.services.keywords import KeywordService
@@ -27,6 +27,8 @@ from app.services.reports import ReportService
 from app.services.routines import RoutineService
 
 MAX_SESSIONS_PER_SITE = 100
+# Early enough to have finished before a working day starts in most timezones.
+DEFAULT_SCHEDULE_HOUR_UTC = 6
 MAX_MESSAGE_PAGE_SIZE = 200
 SUMMARY_LIMIT = 5
 
@@ -181,7 +183,7 @@ class AgentService:
         skill, answer = await self._resolve(body, forced_skill_key)
         task: AgentTask | None = None
         if skill is not None:
-            task, answer = await self._execute(skill, site, session_id, answer)
+            task, answer = await self._execute(skill, site, session_id, answer, body)
 
         agent_message = AgentMessage(
             tenant_id=self.context.tenant_id,
@@ -235,7 +237,7 @@ class AgentService:
         )
 
     async def _execute(
-        self, skill: Skill, site: Site, session_id: UUID, answer: SkillAnswer
+        self, skill: Skill, site: Site, session_id: UUID, answer: SkillAnswer, message: str
     ) -> tuple[AgentTask, SkillAnswer]:
         if self.context.role not in skill.allowed_roles:
             raise HTTPException(
@@ -254,7 +256,9 @@ class AgentService:
 
         try:
             if skill.effect is SkillEffect.SCHEDULE:
-                answer, routine_run_id = await self._schedule(skill, site)
+                answer, routine_run_id = await self._schedule(
+                    skill, site, parse_cadence(message)
+                )
                 task.routine_run_id = routine_run_id
             else:
                 answer = await self._read(skill, site)
@@ -271,9 +275,48 @@ class AgentService:
         task.result_json = {"evidence_count": len(answer.evidence)}
         return task, answer
 
-    async def _schedule(self, skill: Skill, site: Site) -> tuple[SkillAnswer, UUID]:
+    async def _schedule(
+        self, skill: Skill, site: Site, cadence: RequestedCadence | None
+    ) -> tuple[SkillAnswer, UUID | None]:
+        """Queue one run, or put the routine on a repeating schedule.
+
+        A cadence is honoured only when the request actually named one, so
+        asking to run something once never starts a recurring schedule.
+        """
         assert skill.routine_kind is not None
         routines = RoutineService(self.session, self.context)
+
+        if cadence is not None:
+            routine = await routines.upsert(
+                site.id,
+                RoutineUpsert(
+                    kind=skill.routine_kind,  # type: ignore[arg-type]
+                    cadence=cadence.cadence,  # type: ignore[arg-type]
+                    schedule_hour_utc=DEFAULT_SCHEDULE_HOUR_UTC,
+                    schedule_isodow=cadence.isodow,
+                    schedule_dom=cadence.dom,
+                    enabled=True,
+                ),
+            )
+            return (
+                SkillAnswer(
+                    f"Scheduled **{skill.name}** {cadence.cadence}. The next run is "
+                    f"{routine.next_run_at:%Y-%m-%d %H:%M} UTC. It is skipped while the site "
+                    "is unverified or frozen, and it cannot deploy anything. Ask me to stop "
+                    f"it, or disable the `{skill.routine_kind}` routine, to end the schedule.",
+                    [
+                        {
+                            "kind": "routine",
+                            "id": str(routine.id),
+                            "routine_kind": skill.routine_kind,
+                            "cadence": routine.cadence,
+                            "next_run_at": routine.next_run_at.isoformat(),
+                        }
+                    ],
+                ),
+                None,
+            )
+
         routine = await self.session.scalar(
             select(Routine).where(
                 Routine.tenant_id == self.context.tenant_id,
@@ -282,15 +325,15 @@ class AgentService:
             )
         )
         if routine is None:
-            # An ad-hoc invocation creates the routine parked, never enabled:
+            # A one-off invocation creates the routine parked, never enabled:
             # asking for one run must not silently start a recurring schedule.
-            schedule = RoutineSchedule(cadence=Cadence.DAILY, hour_utc=6)
+            schedule = RoutineSchedule(cadence=Cadence.DAILY, hour_utc=DEFAULT_SCHEDULE_HOUR_UTC)
             routine = Routine(
                 tenant_id=self.context.tenant_id,
                 site_id=site.id,
                 kind=skill.routine_kind,
                 cadence=Cadence.DAILY.value,
-                schedule_hour_utc=6,
+                schedule_hour_utc=DEFAULT_SCHEDULE_HOUR_UTC,
                 schedule_minute_utc=0,
                 enabled=False,
                 next_run_at=initial_run_at(schedule),
@@ -302,10 +345,10 @@ class AgentService:
         run = await routines.trigger(routine.id)
         return (
             SkillAnswer(
-                f"Queued **{skill.name}**. It runs in the worker under the same checks as a "
-                "scheduled run: it is skipped if the site is unverified or frozen, and it "
-                f"cannot deploy anything. This routine is not on a schedule yet — enable "
-                f"the `{skill.routine_kind}` routine if you want it to repeat.",
+                f"Queued **{skill.name}** to run once. It runs in the worker under the same "
+                "checks as a scheduled run: it is skipped if the site is unverified or "
+                "frozen, and it cannot deploy anything. Say \"every day\" or \"every "
+                "Monday\" if you want it on a repeating schedule.",
                 [{"kind": "routine_run", "id": str(run.id), "routine_kind": skill.routine_kind}],
             ),
             run.id,

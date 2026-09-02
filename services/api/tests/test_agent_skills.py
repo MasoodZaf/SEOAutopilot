@@ -2,11 +2,14 @@ import pytest
 
 from app.core.context import Role
 from app.domain.skills import (
+    ACTION_TRIGGERS,
     READ_MIN_SCORE,
     SCHEDULE_MIN_SCORE,
     SKILLS,
     SKILLS_BY_KEY,
+    RequestedCadence,
     SkillEffect,
+    parse_cadence,
     route,
 )
 
@@ -28,11 +31,66 @@ def test_each_intent_routes_to_its_own_skill() -> None:
 
 
 def test_scheduling_requires_a_clearly_imperative_request() -> None:
-    assert routed("Run a new crawl of the site") == "run_site_audit"
-    assert routed("scan the competitors now") == "run_competitor_scan"
-    assert routed("recluster our keywords") == "run_keyword_research"
+    assert routed("run a crawl and audit every day") == "run_site_audit"
+    assert routed("scan the competitors we track every week") == "run_competitor_scan"
+    assert routed("recluster our keywords every week") == "run_keyword_research"
     # Scheduling work is held to a higher bar than answering a question.
     assert SCHEDULE_MIN_SCORE > READ_MIN_SCORE
+
+
+def test_naming_a_topic_is_a_question_not_an_instruction() -> None:
+    """A scheduling skill needs a word asking for the work to happen."""
+    for question, expected in [
+        ("How is our sitemap coverage?", "sitemap_review"),
+        ("What is our AI search visibility readiness?", "ai_visibility"),
+        ("Show me the latest weekly report", "weekly_report"),
+        ("How do we compare to competitors?", "competitor_pages"),
+        ("What content briefs are queued?", "content_briefs"),
+    ]:
+        assert routed(question) == expected
+
+
+def cadence_of(message: str) -> RequestedCadence:
+    parsed = parse_cadence(message)
+    assert parsed is not None, message
+    return parsed
+
+
+def test_a_cadence_is_read_only_when_the_request_names_one() -> None:
+    assert cadence_of("run a crawl and audit every day").cadence == "daily"
+    assert cadence_of("schedule a daily site audit").cadence == "daily"
+    monthly = cadence_of("check the sitemap every month")
+    assert monthly.cadence == "monthly"
+    assert monthly.dom == 1
+    monday = cadence_of("send me the weekly report every Monday")
+    assert monday.cadence == "weekly"
+    assert monday.isodow == 1
+    friday = cadence_of("send the report every Friday")
+    assert friday.cadence == "weekly"
+    assert friday.isodow == 5
+    # A one-off request must not become a recurring schedule.
+    assert parse_cadence("run the weekly report") is None
+    assert parse_cadence("regenerate the content briefs") is None
+
+
+def test_weekly_is_not_an_action_word() -> None:
+    """It is part of the weekly report's own name, not a request to run one."""
+    assert "weekly" not in ACTION_TRIGGERS
+    assert routed("show me the weekly report") == "weekly_report"
+    assert routed("run the weekly report") == "run_weekly_report"
+
+
+def test_every_routine_kind_can_be_scheduled_from_chat() -> None:
+    scheduled = {skill.routine_kind for skill in SKILLS if skill.effect is SkillEffect.SCHEDULE}
+    assert scheduled == {
+        "site_audit",
+        "keyword_refresh",
+        "sitemap_coverage",
+        "content_briefs",
+        "competitor_scan",
+        "ai_visibility_scan",
+        "weekly_report",
+    }
 
 
 def test_an_unclear_request_starts_nothing_and_offers_choices() -> None:
@@ -42,8 +100,7 @@ def test_an_unclear_request_starts_nothing_and_offers_choices() -> None:
         assert result.alternatives
 
 
-def test_an_explicit_imperative_breaks_a_tie_toward_doing_the_work() -> None:
-    """"Regenerate" ties on score with "show me the briefs", but says which one."""
+def test_an_explicit_imperative_selects_the_scheduling_skill() -> None:
     assert routed("regenerate the content briefs") == "run_content_briefs"
     assert routed("rebuild the briefs") == "run_content_briefs"
     # Without the imperative the same topic words read as a question.
@@ -57,10 +114,11 @@ def test_a_tie_with_no_imperative_stays_ambiguous_rather_than_guessed() -> None:
 
 
 def test_an_imperative_never_promotes_a_skill_the_role_cannot_invoke() -> None:
-    # An editor may regenerate briefs; a viewer may not, and the imperative
-    # tie-break must not hand them the scheduling skill instead.
+    # An editor may regenerate briefs; a viewer may not, and must not be handed
+    # the scheduling skill instead.
     assert routed("regenerate the content briefs", Role.EDITOR) == "run_content_briefs"
     assert routed("regenerate the content briefs", Role.VIEWER) == "content_briefs"
+    assert routed("run a crawl every day", Role.VIEWER) is None
 
 
 def test_a_role_can_never_reach_a_skill_it_is_not_allowed() -> None:

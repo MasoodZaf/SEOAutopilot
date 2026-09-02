@@ -37,14 +37,53 @@ class Skill:
     # Terms that select this skill, weighted by how specific they are.
     strong_triggers: frozenset[str] = field(default_factory=frozenset)
     weak_triggers: frozenset[str] = field(default_factory=frozenset)
+    # Words that ask for the work to actually happen. A scheduling skill needs
+    # one of these before it is even a candidate: naming a topic is a question,
+    # not an instruction, so "how is our sitemap coverage?" must never start a
+    # scan.
+    action_triggers: frozenset[str] = field(default_factory=frozenset)
     # Routine kind queued when effect is SCHEDULE.
     routine_kind: str | None = None
     example: str = ""
 
 
+# Words that ask for work to happen, shared by every scheduling skill. They
+# cannot pick a subject on their own, so each scheduling skill also carries its
+# own topic terms and must clear SCHEDULE_MIN_SCORE on the combination.
+# "weekly" is deliberately absent: it is part of the weekly report's own name,
+# so treating it as an action would turn "show me the weekly report" into a
+# request to run one.
+ACTION_TRIGGERS = frozenset(
+    {"schedule", "scheduled", "every", "each", "daily", "monthly", "run", "start"}
+)
+
 ALL_ROLES = frozenset(Role)
 ACTING_ROLES = frozenset({Role.OWNER, Role.ADMIN, Role.SEO_MANAGER})
 CONTENT_ROLES = frozenset({Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR})
+
+def scheduling(
+    key: str,
+    name: str,
+    description: str,
+    routine_kind: str,
+    topic: set[str],
+    extra: set[str],
+    roles: frozenset[Role],
+    example: str,
+) -> Skill:
+    """A scheduling skill scores on its subject plus any scheduling verb."""
+    return Skill(
+        key=key,
+        name=name,
+        description=description,
+        effect=SkillEffect.SCHEDULE,
+        allowed_roles=roles,
+        strong_triggers=frozenset(topic),
+        action_triggers=frozenset(extra | ACTION_TRIGGERS),
+        routine_kind=routine_kind,
+        example=example,
+    )
+
 
 SKILLS: tuple[Skill, ...] = (
     Skill(
@@ -62,16 +101,11 @@ SKILLS: tuple[Skill, ...] = (
         ),
         example="Audit the site and show the top issues.",
     ),
-    Skill(
-        key="run_site_audit",
-        name="Run a new crawl",
-        description="Queue a fresh crawl so the next audit reads current evidence.",
-        effect=SkillEffect.SCHEDULE,
-        allowed_roles=ACTING_ROLES,
-        routine_kind="site_audit",
-        strong_triggers=frozenset({"recrawl", "crawl", "rescan"}),
-        weak_triggers=frozenset({"run", "start", "new", "again", "now", "refresh"}),
-        example="Run a new crawl of the site.",
+    scheduling(
+        "run_site_audit", "Crawl and audit",
+        "Crawl the site so the next audit reads current evidence.",
+        "site_audit", {"audit", "crawl"}, {"recrawl", "rescan"}, ACTING_ROLES,
+        "Run a crawl and audit every day.",
     ),
     Skill(
         key="keyword_research",
@@ -82,20 +116,16 @@ SKILLS: tuple[Skill, ...] = (
         ),
         effect=SkillEffect.READ,
         allowed_roles=ALL_ROLES,
-        strong_triggers=frozenset({"keyword", "keywords", "cluster", "clusters", "queries", "intent"}),
-        weak_triggers=frozenset({"search", "demand", "ranking", "terms", "topics"}),
+        strong_triggers=frozenset({"keyword", "keywords", "cluster", "clusters", "queries"}),
+        weak_triggers=frozenset({"search", "demand", "ranking", "terms", "topics", "intent"}),
         example="What keyword opportunities do we have?",
     ),
-    Skill(
-        key="run_keyword_research",
-        name="Recluster keyword demand",
-        description="Rebuild keyword clusters from the most recent search evidence.",
-        effect=SkillEffect.SCHEDULE,
-        allowed_roles=ACTING_ROLES,
-        routine_kind="keyword_refresh",
-        strong_triggers=frozenset({"recluster", "recompute"}),
-        weak_triggers=frozenset({"keyword", "keywords", "refresh", "update", "rebuild"}),
-        example="Recluster our keywords with the latest data.",
+    scheduling(
+        "run_keyword_research", "Recluster keyword demand",
+        "Rebuild keyword clusters from the most recent search evidence.",
+        "keyword_refresh", {"keyword", "keywords", "cluster", "clusters"},
+        {"recluster", "recompute"}, ACTING_ROLES,
+        "Recluster our keywords every week.",
     ),
     Skill(
         key="content_briefs",
@@ -106,20 +136,15 @@ SKILLS: tuple[Skill, ...] = (
         ),
         effect=SkillEffect.READ,
         allowed_roles=ALL_ROLES,
-        strong_triggers=frozenset({"brief", "briefs", "refresh queue", "content plan", "rewrite"}),
-        weak_triggers=frozenset({"content", "queue", "plan", "write", "page"}),
+        strong_triggers=frozenset({"brief", "briefs", "refresh queue", "content plan"}),
+        weak_triggers=frozenset({"content", "queue", "plan", "write", "rewrite", "page"}),
         example="What content briefs are queued?",
     ),
-    Skill(
-        key="run_content_briefs",
-        name="Regenerate content briefs",
-        description="Rebuild briefs from the latest keyword clusters and page evidence.",
-        effect=SkillEffect.SCHEDULE,
-        allowed_roles=CONTENT_ROLES,
-        routine_kind="content_briefs",
-        strong_triggers=frozenset({"regenerate", "rebuild"}),
-        weak_triggers=frozenset({"brief", "briefs", "generate", "again"}),
-        example="Regenerate the content briefs.",
+    scheduling(
+        "run_content_briefs", "Regenerate content briefs",
+        "Rebuild briefs from the latest keyword clusters and page evidence.",
+        "content_briefs", {"brief", "briefs"}, {"regenerate", "rebuild"}, CONTENT_ROLES,
+        "Regenerate the content briefs every week.",
     ),
     Skill(
         key="sitemap_review",
@@ -134,6 +159,12 @@ SKILLS: tuple[Skill, ...] = (
         weak_triggers=frozenset({"urls", "pages", "declared", "missing"}),
         example="How is our sitemap coverage?",
     ),
+    scheduling(
+        "run_sitemap_coverage", "Recheck sitemap coverage",
+        "Recompute declared-versus-crawled-versus-indexable from the latest crawl.",
+        "sitemap_coverage", {"sitemap", "sitemaps", "coverage"}, {"recheck"}, ACTING_ROLES,
+        "Check sitemap coverage every week.",
+    ),
     Skill(
         key="competitor_pages",
         name="SEO competitor pages",
@@ -147,16 +178,11 @@ SKILLS: tuple[Skill, ...] = (
         weak_triggers=frozenset({"gap", "gaps", "versus", "against", "them"}),
         example="How do we compare to the competitors we track?",
     ),
-    Skill(
-        key="run_competitor_scan",
-        name="Scan tracked competitors",
-        description="Refetch the competitor pages already on record. No new URLs are discovered.",
-        effect=SkillEffect.SCHEDULE,
-        allowed_roles=ACTING_ROLES,
-        routine_kind="competitor_scan",
-        strong_triggers=frozenset({"scan", "refetch"}),
-        weak_triggers=frozenset({"competitor", "competitors", "check", "monitor", "now"}),
-        example="Scan the competitors we track.",
+    scheduling(
+        "run_competitor_scan", "Scan tracked competitors",
+        "Refetch the competitor pages already on record. No new URLs are discovered.",
+        "competitor_scan", {"competitor", "competitors"}, {"scan", "refetch", "monitor"},
+        ACTING_ROLES, "Scan the competitors we track every week.",
     ),
     Skill(
         key="ai_visibility",
@@ -167,9 +193,18 @@ SKILLS: tuple[Skill, ...] = (
         ),
         effect=SkillEffect.READ,
         allowed_roles=ALL_ROLES,
-        strong_triggers=frozenset({"ai visibility", "answer engine", "aeo", "geo", "llm", "chatgpt"}),
-        weak_triggers=frozenset({"ai", "visibility", "citation", "citations", "readiness"}),
+        strong_triggers=frozenset(
+            {"visibility", "answer engine", "aeo", "geo", "llm", "chatgpt"}
+        ),
+        weak_triggers=frozenset({"ai", "citation", "citations", "readiness"}),
         example="What is our AI search visibility readiness?",
+    ),
+    scheduling(
+        "run_ai_visibility_scan", "Recheck answer-engine readiness",
+        "Recompute answer-engine readiness from the latest crawl and search evidence.",
+        "ai_visibility_scan", {"visibility", "answer engine", "aeo"},
+        {"recheck"}, ACTING_ROLES,
+        "Check our AI search visibility every week.",
     ),
     Skill(
         key="weekly_report",
@@ -177,9 +212,15 @@ SKILLS: tuple[Skill, ...] = (
         description="Show the latest weekly digest: what changed, what opened, what resolved.",
         effect=SkillEffect.READ,
         allowed_roles=ALL_ROLES,
-        strong_triggers=frozenset({"report", "digest", "summary", "weekly"}),
-        weak_triggers=frozenset({"week", "changed", "progress", "update"}),
+        strong_triggers=frozenset({"report", "digest", "summary"}),
+        weak_triggers=frozenset({"week", "weekly", "changed", "progress", "update"}),
         example="Show me the latest weekly report.",
+    ),
+    scheduling(
+        "run_weekly_report", "Send the weekly report",
+        "Generate the weekly digest, and deliver it to any configured channel.",
+        "weekly_report", {"report", "digest"}, {"send"}, ACTING_ROLES,
+        "Send me the weekly report every Monday.",
     ),
     Skill(
         key="routines",
@@ -187,8 +228,8 @@ SKILLS: tuple[Skill, ...] = (
         description="Show which routines are scheduled, when they next run, and how the last run ended.",
         effect=SkillEffect.READ,
         allowed_roles=ALL_ROLES,
-        strong_triggers=frozenset({"routine", "routines", "schedule", "scheduled", "cron"}),
-        weak_triggers=frozenset({"automation", "recurring", "next", "when"}),
+        strong_triggers=frozenset({"routine", "routines", "cron", "automation"}),
+        weak_triggers=frozenset({"schedule", "scheduled", "recurring", "next", "when"}),
         example="What routines are scheduled?",
     ),
 )
@@ -205,6 +246,46 @@ WEAK_WEIGHT = 1.0
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
+WEEKDAYS = {
+    "monday": 1, "tuesday": 2, "wednesday": 3, "thursday": 4,
+    "friday": 5, "saturday": 6, "sunday": 7,
+}
+
+# Phrases that ask for a repeating schedule rather than a single run.
+DAILY_PHRASES = ("daily", "every day", "each day", "every morning", "each morning")
+# "weekly" alone is excluded: it is part of the weekly report's own name, so it
+# would turn "run the weekly report" into a recurring schedule nobody asked for.
+WEEKLY_PHRASES = ("every week", "each week")
+MONTHLY_PHRASES = ("monthly", "every month", "each month")
+
+
+@dataclass(frozen=True, slots=True)
+class RequestedCadence:
+    cadence: str
+    isodow: int | None = None
+    dom: int | None = None
+
+
+def parse_cadence(message: str) -> RequestedCadence | None:
+    """Read a repeating cadence out of the request, if one was asked for.
+
+    Absent a cadence phrase the caller queues a single run, so "run an audit"
+    never quietly becomes a recurring schedule.
+    """
+    lowered = message.lower()
+    for day, isodow in WEEKDAYS.items():
+        if f"every {day}" in lowered or f"each {day}" in lowered:
+            return RequestedCadence("weekly", isodow=isodow)
+    if any(phrase in lowered for phrase in MONTHLY_PHRASES):
+        return RequestedCadence("monthly", dom=1)
+    if any(phrase in lowered for phrase in WEEKLY_PHRASES):
+        # Default to Monday when a weekday is not named.
+        return RequestedCadence("weekly", isodow=1)
+    if any(phrase in lowered for phrase in DAILY_PHRASES):
+        return RequestedCadence("daily")
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class RoutingResult:
     skill: Skill | None
@@ -219,45 +300,76 @@ def normalize(message: str) -> tuple[str, set[str]]:
     return lowered, set(TOKEN_PATTERN.findall(lowered))
 
 
-def score_skill(
-    skill: Skill, lowered: str, tokens: set[str]
-) -> tuple[float, list[str], bool]:
-    """Return (score, matched terms, whether a strong trigger matched)."""
+@dataclass(frozen=True, slots=True)
+class SkillScore:
+    score: float
+    matched: tuple[str, ...]
+    strong_hit: bool
+    action_hit: bool
+
+
+def score_skill(skill: Skill, lowered: str, tokens: set[str]) -> SkillScore:
+    def hits(trigger: str) -> bool:
+        # Multi-word triggers are matched as phrases, single words as tokens.
+        return trigger in lowered if " " in trigger else trigger in tokens
+
     score = 0.0
     matched: list[str] = []
     strong_hit = False
+    action_hit = False
     for trigger in sorted(skill.strong_triggers):
-        # Multi-word triggers are matched as phrases, single words as tokens.
-        hit = trigger in lowered if " " in trigger else trigger in tokens
-        if hit:
+        if hits(trigger):
             score += STRONG_WEIGHT
             matched.append(trigger)
             strong_hit = True
+    for trigger in sorted(skill.action_triggers):
+        if hits(trigger):
+            score += STRONG_WEIGHT
+            matched.append(trigger)
+            action_hit = True
     for trigger in sorted(skill.weak_triggers):
-        hit = trigger in lowered if " " in trigger else trigger in tokens
-        if hit:
+        if hits(trigger):
             score += WEAK_WEIGHT
             matched.append(trigger)
-    return score, matched, strong_hit
+    return SkillScore(score, tuple(matched), strong_hit, action_hit)
 
 
 def route(message: str, role: Role) -> RoutingResult:
     """Select at most one skill. Ties and weak matches resolve to no skill."""
     lowered, tokens = normalize(message)
-    scored: list[tuple[float, Skill, list[str], bool]] = []
+    scored: list[tuple[float, Skill, tuple[str, ...], bool]] = []
     for skill in SKILLS:
         if role not in skill.allowed_roles:
             continue
-        score, matched, strong_hit = score_skill(skill, lowered, tokens)
-        if score > 0:
-            scored.append((score, skill, matched, strong_hit))
-    if not scored:
-        return RoutingResult(None, 0.0, (), tuple(s for s in SKILLS if role in s.allowed_roles))
+        result = score_skill(skill, lowered, tokens)
+        scheduling_skill = skill.effect is SkillEffect.SCHEDULE
+        # Naming a topic is a question. A scheduling skill additionally needs a
+        # word asking for the work to happen, and must clear the higher bar.
+        if scheduling_skill and not (result.action_hit and result.strong_hit):
+            continue
+        threshold = SCHEDULE_MIN_SCORE if scheduling_skill else READ_MIN_SCORE
+        if result.score >= threshold:
+            scored.append((result.score, skill, result.matched, result.strong_hit))
 
-    # A strong trigger on a scheduling skill is an explicit imperative
-    # ("regenerate", "recrawl", "scan"), so it breaks a tie against a read
-    # skill that only matched shared topic vocabulary. Everything else keeps
-    # the read skill, and a genuine tie stays ambiguous.
+    if not scored:
+        near = sorted(
+            (
+                (score_skill(skill, lowered, tokens).score, skill)
+                for skill in SKILLS
+                if role in skill.allowed_roles
+            ),
+            key=lambda entry: (-entry[0], entry[1].key),
+        )
+        suggestions = tuple(skill for score, skill in near if score > 0)[:3]
+        return RoutingResult(
+            None,
+            near[0][0] if near else 0.0,
+            (),
+            suggestions or tuple(s for s in SKILLS if role in s.allowed_roles)[:4],
+        )
+
+    # An explicit imperative on a scheduling skill breaks a tie against a read
+    # skill that only matched shared topic vocabulary.
     scored.sort(
         key=lambda entry: (
             -entry[0],
@@ -266,13 +378,6 @@ def route(message: str, role: Role) -> RoutingResult:
         )
     )
     best_score, best_skill, matched, best_strong = scored[0]
-    threshold = (
-        SCHEDULE_MIN_SCORE if best_skill.effect is SkillEffect.SCHEDULE else READ_MIN_SCORE
-    )
-    if best_score < threshold:
-        return RoutingResult(
-            None, best_score, tuple(matched), tuple(entry[1] for entry in scored[:3])
-        )
     if len(scored) > 1 and scored[1][0] == best_score:
         runner_up = scored[1]
         imperative_wins = (
@@ -283,6 +388,6 @@ def route(message: str, role: Role) -> RoutingResult:
         if not imperative_wins:
             # An exact tie is ambiguous, not a coin flip.
             return RoutingResult(
-                None, best_score, tuple(matched), tuple(entry[1] for entry in scored[:3])
+                None, best_score, matched, tuple(entry[1] for entry in scored[:3])
             )
-    return RoutingResult(best_skill, best_score, tuple(matched))
+    return RoutingResult(best_skill, best_score, matched)

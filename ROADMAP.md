@@ -166,9 +166,12 @@ every other recurring capability depends on it.
 - Routing is deterministic scored token overlap against a code-defined registry, not a model call.
   A message cannot name a capability that is not in the registry, a role cannot reach a skill it is
   not allowed, and an unclear request starts nothing and offers choices instead.
-- Read skills answer from stored records and return the references used. Scheduling skills queue a
-  routine run and create the routine parked, so asking for one run never starts a recurring
-  schedule. No skill can deploy, approve, or write site content.
+- Read skills answer from stored records and return the references used. No skill can deploy,
+  approve, or write site content.
+- Scheduling skills cover all seven routine kinds, so any recurring workflow can be set up from
+  chat. They require a word asking for the work to happen, not merely the topic, and honour a named
+  cadence ("every day", "every Monday", "every month"). Without a cadence they queue one run and
+  leave the routine parked.
 - An LLM classifier remains a possible future addition behind the existing adapter's schema, cost,
   and evidence-validation controls. It is not required and is not wired in: the deterministic
   router is the shipped behaviour.
