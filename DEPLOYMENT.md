@@ -1,6 +1,6 @@
 # Deployment & Pilot Status
 
-Operational record for the hosted pilot. Last updated **2026-08-29**.
+Operational record for the hosted pilot. Last updated **2026-09-02**.
 
 This file is the follow-up point: where the system runs, how to operate it, what
 the first crawl found, and what is still open. No secrets are recorded here —
@@ -70,7 +70,9 @@ Services: `postgres`, `redis`, `api`, `worker`, `crawler`, `web`, `caddy`.
 All carry `restart: unless-stopped`. Only `caddy` listens publicly; `web` and
 `api` are bound to loopback (`127.0.0.1:3001` and `127.0.0.1:8001`).
 
-Migrations are plain SQL, applied in order:
+Migrations are plain SQL, applied in order. **The loop below is for a fresh
+database only** — the files are not idempotent, so re-running an applied one
+fails on the first `CREATE TABLE`:
 
 ```bash
 for f in infra/migrations/*.sql; do
@@ -79,7 +81,24 @@ for f in infra/migrations/*.sql; do
 done
 ```
 
-19 migrations are applied; the database holds 32 tables.
+For an incremental deploy, name only the new range:
+
+```bash
+for f in infra/migrations/00{20,21,22,23,24,25,26}_*.sql; do
+  $DC exec -T postgres psql -q -U seo_autopilot -d seo_autopilot \
+    -v ON_ERROR_STOP=1 -f - < "$f" || break
+done
+```
+
+Back up first; the dump is small enough to be routine:
+
+```bash
+mkdir -p backups
+$DC exec -T postgres pg_dump -U seo_autopilot -d seo_autopilot --format=custom \
+  > "backups/seo_autopilot_$(date -u +%Y%m%dT%H%M%SZ).dump"
+```
+
+26 migrations are applied; the database holds 52 tables.
 
 ## 4. Secrets
 
@@ -138,6 +157,31 @@ All three verified by DNS TXT (`_seo-autopilot.<host>`), all Cloudflare-hosted.
 Tenant `codearc-pilot`, mode **observe**. `DEPLOYMENTS_ENABLED` and
 `AUTOPILOT_ENABLED` are both `false`.
 
+## 6a. Always-on workflows (deployed 2026-09-02)
+
+Migrations `0020`–`0026` added scheduled routines, the keyword workspace,
+sitemap coverage, content briefs, competitor tracking, answer-engine readiness,
+and the agent workspace at `/pilot/workspace`.
+
+| Flag | Value | Effect |
+|---|---|---|
+| `ROUTINES_ENABLED` | `true` | Starts the scheduler and routine consumer loops in the worker |
+| `NOTIFICATIONS_ENABLED` | `false` | No outbound webhook configured yet |
+
+**No individual routine is enabled.** The flag only starts the loops; work
+happens when a routine is enabled per site, from the workspace Skills tab or by
+asking the agent ("run a crawl and audit every day"). Routines gather evidence
+and produce reports; they hold no deployment authority and are skipped while a
+site is unverified or frozen.
+
+Backup taken immediately before this deploy:
+`backups/seo_autopilot_20260902T144526Z.dump` (1.1 MB, pre-0020 schema).
+
+Verified after deploy: 52 tables with row-level security on all twenty new ones,
+`sites=3 pages=545 opportunities=2541` unchanged, API healthy, 15 agent skills
+listed, the agent answering from real production evidence with citations, and
+`/pilot/workspace` gated by the same basic-auth rule as `/pilot`.
+
 ## 7. Audit findings (2026-08-29)
 
 Full report: https://claude.ai/code/artifact/2e4f154d-700c-4754-a997-aea9ebb83b17
@@ -190,3 +234,10 @@ Genuine findings, in priority order:
   dev machine must be 3.2-compatible or use a newer bash explicitly.
 - **Verification challenges expire after 30 minutes.** Reissue rather than reusing
   stale TXT values; leftovers from earlier local runs will not match.
+- **The migration loop in §3 only works on a fresh database.** The files use bare
+  `CREATE TABLE`, so re-running an applied migration aborts the loop. Name the new
+  range explicitly on an incremental deploy.
+- **`rsync --delete` is the documented sync, but it is destructive on the remote.**
+  When a deploy only adds files, dropping `--delete` is equivalent and safer.
+  Keep it for a deploy that removes or renames files, and check what it would
+  remove first with `--dry-run`.
