@@ -209,6 +209,17 @@ against pages from another would mix a stale declaration with a fresh page set. 
 indexable when the crawl saw a 200, no `noindex` directive, and a canonical that is absent or
 self-referential. Both tables enable row-level security with the standard `app.tenant_id` policy.
 
+### Content briefs
+
+- `content_brief(id, tenant_id, site_id, keyword_cluster_id, analysis_run_id, routine_run_id, kind,
+  status, target_page_id, cluster_label, intent, answer_engine_candidate, priority_score,
+  sections_json, evidence_json, query_hashes, content_hash, dismissed_reason, dismissed_by,
+  dismissed_at, version)` — unique on `(tenant_id, keyword_cluster_id)`, so regenerating updates a
+  brief in place and bumps its version rather than accumulating duplicates. A check constraint ties
+  `kind='refresh'` to a target page and `kind='new_page'` to none, and another ties `dismissed`
+  status to a stored reason. `query_hashes` references members; no readable term is persisted here.
+  Row-level security uses the standard `app.tenant_id` policy.
+
 ## State machines
 
 - Crawl: `queued -> running -> completed | partial | failed | cancelled`.
@@ -225,6 +236,12 @@ Invalid transitions return conflict errors and create security/audit signals whe
 A run is `skipped` with a recorded reason when the site is unverified, frozen, the routine is
 parked after repeated failures, a crawl is already active, or the kind is not implemented yet. A
 skip is a first-class outcome, not a silent success.
+
+### Content brief lifecycle
+
+`queued -> in_progress -> done`, with `dismissed` reachable from `queued` or `in_progress` and
+reopenable to `queued`. `done` reopens only to `in_progress`. A brief never enters the deployment
+path: it is advice, and any change it motivates is authored as a proposal.
 
 ## Isolation and retention
 

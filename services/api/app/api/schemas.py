@@ -680,6 +680,7 @@ class RoutineKindName(StrEnum):
     SITE_AUDIT = "site_audit"
     KEYWORD_REFRESH = "keyword_refresh"
     SITEMAP_COVERAGE = "sitemap_coverage"
+    CONTENT_BRIEFS = "content_briefs"
     COMPETITOR_SCAN = "competitor_scan"
     AI_VISIBILITY_SCAN = "ai_visibility_scan"
     WEEKLY_REPORT = "weekly_report"
@@ -934,3 +935,60 @@ class KeywordMemberRead(BaseModel):
 class KeywordMemberCollection(BaseModel):
     data: list[KeywordMemberRead]
     meta: dict[str, str | int]
+
+
+class ContentBriefKind(StrEnum):
+    REFRESH = "refresh"
+    NEW_PAGE = "new_page"
+
+
+class ContentBriefStatus(StrEnum):
+    QUEUED = "queued"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    DISMISSED = "dismissed"
+
+
+class ContentBriefSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    keyword_cluster_id: UUID
+    kind: ContentBriefKind
+    status: ContentBriefStatus
+    target_page_id: UUID | None
+    cluster_label: str
+    intent: KeywordIntent
+    answer_engine_candidate: bool
+    priority_score: float
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContentBriefRead(ContentBriefSummary):
+    sections_json: list[dict[str, object]]
+    evidence_json: dict[str, object]
+    content_hash: str
+    dismissed_reason: str | None
+
+
+class ContentBriefCollection(BaseModel):
+    data: list[ContentBriefSummary]
+    meta: dict[str, str | int]
+
+
+class ContentBriefEnvelope(BaseModel):
+    data: ContentBriefRead
+    meta: dict[str, str]
+
+
+class ContentBriefStatusUpdate(BaseModel):
+    status: ContentBriefStatus
+    reason: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def require_dismissal_reason(self) -> "ContentBriefStatusUpdate":
+        if self.status is ContentBriefStatus.DISMISSED and not self.reason.strip():
+            raise ValueError("a dismissal reason is required")
+        return self

@@ -867,3 +867,37 @@ class KeywordClusterMember(Base):
     ctr: Mapped[float] = mapped_column(Float, default=0.0)
     position: Mapped[float] = mapped_column(Float, default=0.0)
     best_page_id: Mapped[UUID | None] = mapped_column()
+
+
+class ContentBrief(Base):
+    __tablename__ = "content_brief"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "keyword_cluster_id"),
+        Index("content_brief_queue_idx", "tenant_id", "site_id", "status", "priority_score", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    keyword_cluster_id: Mapped[UUID] = mapped_column(nullable=False)
+    analysis_run_id: Mapped[UUID] = mapped_column(nullable=False)
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    target_page_id: Mapped[UUID | None] = mapped_column()
+    cluster_label: Mapped[str] = mapped_column(String(200))
+    intent: Mapped[str] = mapped_column(String(20))
+    answer_engine_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority_score: Mapped[float] = mapped_column(Float)
+    sections_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    query_hashes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    dismissed_reason: Mapped[str | None] = mapped_column(String(200))
+    dismissed_by: Mapped[UUID | None] = mapped_column()
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

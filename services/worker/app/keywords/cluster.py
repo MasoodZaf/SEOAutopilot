@@ -49,6 +49,12 @@ INTENT_PRECEDENCE = ("transactional", "commercial", "navigational", "information
 SIMILARITY_THRESHOLD = 0.34
 SUBSET_MIN_TOKENS = 2
 
+# Suffixes stripped, in order, when comparing tokens. Longer forms come first so
+# "guides" reduces through "es" rather than "s".
+STEM_SUFFIXES = ("ing", "ed", "es", "s", "or", "er", "e")
+MIN_STEM_LENGTH = 4
+MAX_STEM_PASSES = 6
+
 # Tokens naming at least this share of a cluster's members become its label.
 LABEL_SHARE = 0.5
 LABEL_MAX_TOKENS = 3
@@ -132,6 +138,31 @@ def tokenize(term: str) -> list[str]:
 
 def significant_tokens(term: str) -> list[str]:
     return [token for token in tokenize(term) if token not in STOPWORDS]
+
+
+def stem(token: str) -> str:
+    """Conservative suffix stripping used only to compare tokens.
+
+    "calculator", "calculate" and "calculating" all reduce to "calculat", which
+    is what keeps those phrasings in one cluster. Stripping stops whenever the
+    remaining stem would fall below MIN_STEM_LENGTH, so short words such as
+    "error", "tuning" and "seo" survive intact rather than being mangled.
+
+    Labels are built from the original tokens, so this never reaches the reader.
+    """
+    current = token
+    for _ in range(MAX_STEM_PASSES):
+        for suffix in STEM_SUFFIXES:
+            if current.endswith(suffix) and len(current) - len(suffix) >= MIN_STEM_LENGTH:
+                current = current[: -len(suffix)]
+                break
+        else:
+            return current
+    return current
+
+
+def similarity_tokens(term: str) -> frozenset[str]:
+    return frozenset(stem(token) for token in significant_tokens(term))
 
 
 def is_question(term: str) -> bool:
@@ -248,7 +279,10 @@ def build_clusters(queries: list[QueryMetrics]) -> list[KeywordCluster]:
     if not queries:
         return []
     ordered_queries = sorted(queries, key=lambda item: item.query_hash)[:MAX_QUERIES_PER_RUN]
-    token_sets = [frozenset(significant_tokens(item.term)) for item in ordered_queries]
+    # The graph compares stemmed tokens; the label is built from the words the
+    # searcher actually used.
+    token_sets = [similarity_tokens(item.term) for item in ordered_queries]
+    label_sets = [frozenset(significant_tokens(item.term)) for item in ordered_queries]
 
     # Only queries sharing at least one token can possibly be linked, so the
     # inverted index keeps this far below a full pairwise scan.
@@ -278,7 +312,7 @@ def build_clusters(queries: list[QueryMetrics]) -> list[KeywordCluster]:
             (ordered_queries[index] for index in indexes),
             key=lambda item: (-item.impressions, item.query_hash),
         )
-        key, label = cluster_label([token_sets[index] for index in indexes if token_sets[index]])
+        key, label = cluster_label([label_sets[index] for index in indexes if label_sets[index]])
         used_keys[key] += 1
         if used_keys[key] > 1:
             # Two distinct components can share a label; keep the key unique

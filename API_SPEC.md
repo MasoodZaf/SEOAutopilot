@@ -256,6 +256,25 @@ one path that decrypts stored terms. It requires Owner, Admin, SEO Manager, or E
 `403 insufficient_permissions_for_terms` otherwise, and writes a `keyword_terms.read` audit event
 naming the cluster and the number of terms revealed.
 
+### Content briefs and the refresh queue
+
+- `GET /v1/sites/{site_id}/content-briefs` (`status`, `kind`, `answer_engine_only`, `limit`)
+- `GET /v1/content-briefs/{brief_id}`
+- `PATCH /v1/content-briefs/{brief_id}`
+
+A brief is a governed advisory artifact built deterministically from a keyword cluster and the page
+evidence for its target. It contains no diff, carries no deployment authority, and cannot reach an
+adapter; turning a brief into a change still goes through the proposal lifecycle. Each section
+states a finding, a recommendation, and the observation it came from, and the whole brief is
+content-hashed so identical evidence reproduces an identical brief.
+
+`kind` is `refresh` when a page already ranks for the cluster and `new_page` when none does. The
+refresh queue is the collection filtered to `kind=refresh`, ordered by priority. `PATCH` moves a
+brief between `queued`, `in_progress`, `done`, and `dismissed`; a dismissal requires a reason, an
+out-of-order transition returns `409 content_brief_transition_not_allowed`, and every change writes
+a `content_brief.status_changed` audit event. Briefs carry query hashes, never readable terms, so
+listing them does not widen who can read what people searched for.
+
 ## Minimal resource examples
 
 ```json

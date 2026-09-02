@@ -15,6 +15,7 @@ from uuid import UUID
 
 from redis.exceptions import ResponseError
 
+from app.briefs.generate import generate_briefs
 from app.keywords.analysis import run_keyword_analysis
 from app.routines.reports import build_weekly_digest, content_hash
 from app.routines.sitemap_coverage import build_sitemap_coverage
@@ -209,6 +210,26 @@ async def _run_keyword_refresh(
     return "completed", summary, None
 
 
+async def _run_content_briefs(
+    connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID
+) -> tuple[str, dict[str, Any], str | None]:
+    """Regenerate briefs from the site's most recent keyword analysis."""
+    analysis_run_id = await connection.fetchval(
+        """
+        SELECT id FROM keyword_analysis_run
+        WHERE tenant_id=$1 AND site_id=$2 AND status='completed'
+        ORDER BY created_at DESC, id DESC LIMIT 1
+        """,
+        tenant_id, site_id,
+    )
+    if analysis_run_id is None:
+        return "skipped", {}, "no_keyword_analysis"
+    summary = await generate_briefs(connection, tenant_id, site_id, analysis_run_id, run_id)
+    if summary["briefs_written"] == 0:
+        return "skipped", summary, "no_cluster_met_threshold"
+    return "completed", summary, None
+
+
 async def _run_sitemap_coverage(
     connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -347,6 +368,10 @@ async def process_run(
                 status, summary, skip = await _run_keyword_refresh(
                     connection, tenant_id, site_id, run_id,
                     today or datetime.now(UTC).date(), encryption_key,
+                )
+            elif kind == "content_briefs":
+                status, summary, skip = await _run_content_briefs(
+                    connection, tenant_id, site_id, run_id
                 )
             elif kind == "sitemap_coverage":
                 status, summary, skip = await _run_sitemap_coverage(

@@ -20,6 +20,7 @@ class RoutineKind(StrEnum):
     SITE_AUDIT = "site_audit"
     KEYWORD_REFRESH = "keyword_refresh"
     SITEMAP_COVERAGE = "sitemap_coverage"
+    CONTENT_BRIEFS = "content_briefs"
     COMPETITOR_SCAN = "competitor_scan"
     AI_VISIBILITY_SCAN = "ai_visibility_scan"
     WEEKLY_REPORT = "weekly_report"

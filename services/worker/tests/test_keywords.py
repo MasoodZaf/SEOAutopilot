@@ -157,3 +157,39 @@ def test_query_envelope_is_bound_to_its_site() -> None:
 
 def test_empty_input_produces_no_clusters() -> None:
     assert build_clusters([]) == []
+
+
+def test_stemming_merges_word_forms_without_mangling_short_words() -> None:
+    from app.keywords.cluster import stem
+
+    # The forms that matter for grouping reduce to one stem.
+    assert stem("calculator") == stem("calculate") == stem("calculating")
+    assert stem("percentage") == stem("percentages")
+    assert stem("agents") == stem("agent")
+    assert stem("guides") == stem("guide")
+    assert stem("pricing") == stem("price")
+    # Stripping stops before it would destroy a short word.
+    assert stem("error") == "error"
+    assert stem("tuning") == "tuning"
+    assert stem("seo") == "seo"
+    assert stem("ai") == "ai"
+
+
+def test_verb_and_noun_phrasings_of_one_topic_cluster_together() -> None:
+    clusters = build_clusters(
+        [
+            query("percentage calculator", 200, 9000, 7.5, PAGE_A),
+            query("how to calculate percentage", 20, 3000, 13.0, PAGE_A),
+            query("what is a percentage calculator", 4, 900, 16.0, PAGE_A),
+        ]
+    )
+    assert len(clusters) == 1
+    assert clusters[0].member_count == 3
+    # The label uses the words searchers typed, not the stems.
+    assert "calculat" not in clusters[0].label.split()
+
+
+def test_labels_never_expose_a_stem() -> None:
+    for cluster in build_clusters(SAMPLE):
+        for token in cluster.label.split():
+            assert token.isalnum()

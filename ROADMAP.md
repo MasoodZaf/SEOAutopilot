@@ -145,6 +145,12 @@ every other recurring capability depends on it.
 - Sitemap coverage: the crawler now records which sitemaps it considered, how it found each one,
   and every in-scope URL declared, so declared-versus-crawled-versus-indexable is measured rather
   than inferred.
+- Content briefs and the refresh queue: each cluster above the demand threshold produces a
+  deterministic brief naming every gap it found in the target page's stored evidence, with a
+  priority that rises with gap count. Briefs are advisory artifacts with no deployment authority.
+- Keyword clustering now stems tokens before comparing them, so "percentage calculator", "how to
+  calculate percentage", and "what is a percentage calculator" form one cluster. Labels are built
+  from the original words, so a stem never reaches the reader.
 - Still open: competitor and answer-engine visibility need a provider decision on terms and
   economics before any external SERP data is fetched.
 
