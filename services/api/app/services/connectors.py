@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ConnectorSyncCreate
@@ -169,8 +170,24 @@ class ConnectorService:
             counts_json={"days_completed": 0, "rows_seen": 0, "rows_upserted": 0},
             requested_by=self.context.actor_id,
         )
-        self.session.add(sync)
-        await self.session.flush()
+        # The lookup above only serialises retries that arrive one after
+        # another. Let the unique constraint decide between two that overlap,
+        # and hand the loser the sync its twin created rather than a 500.
+        try:
+            async with self.session.begin_nested():
+                self.session.add(sync)
+                await self.session.flush()
+        except IntegrityError:
+            concurrent = await self.session.scalar(
+                select(ConnectorSync).where(
+                    ConnectorSync.tenant_id == self.context.tenant_id,
+                    ConnectorSync.connector_id == connector.id,
+                    ConnectorSync.idempotency_key == idempotency_key,
+                )
+            )
+            if concurrent is None:
+                raise
+            return concurrent
         self.site_service._stage_event(
             "connector.sync_requested",
             "connector_sync",
