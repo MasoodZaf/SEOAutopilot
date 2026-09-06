@@ -14,21 +14,40 @@ bearer = HTTPBearer(auto_error=False)
 def resolve_local_pilot_context(
     settings: Settings, credentials: HTTPAuthorizationCredentials | None
 ) -> TenantContext | None:
+    """Resolve one of the pilot's named operators, or nobody.
+
+    Two tokens, two actor ids. Separation of duties was enforceable but never
+    exercisable with a single identity: the author of a proposal cannot approve
+    it, so a medium-risk change could be refused forever and approved never.
+    Each token is compared in full so that failing to match the first does not
+    reveal anything about the second.
+    """
     if (
         not settings.local_pilot_auth_enabled
         or settings.app_env != "development"
         or not settings.local_pilot_auth_token
         or credentials is None
         or credentials.scheme.lower() != "bearer"
-        or not hmac.compare_digest(
-            credentials.credentials,
-            settings.local_pilot_auth_token.get_secret_value(),
-        )
     ):
         return None
+
+    presented = credentials.credentials
+    operators = [(settings.local_pilot_auth_token, settings.local_pilot_actor_id)]
+    if settings.local_pilot_reviewer_token is not None:
+        operators.append((settings.local_pilot_reviewer_token, settings.local_pilot_reviewer_id))
+
+    actor_id = None
+    for secret, candidate in operators:
+        # No early exit: every token is compared on every request, so timing
+        # cannot say which operator a near-miss was close to.
+        if hmac.compare_digest(presented, secret.get_secret_value()):
+            actor_id = candidate
+    if actor_id is None:
+        return None
+
     return TenantContext(
         tenant_id=settings.local_pilot_tenant_id,
-        actor_id=settings.local_pilot_actor_id,
+        actor_id=actor_id,
         role=Role.OWNER,
         trace_id=f"local-pilot-{secrets.token_hex(12)}",
     )

@@ -1,3 +1,4 @@
+import hmac
 from functools import lru_cache
 from typing import Literal
 from uuid import UUID
@@ -8,6 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 LOCAL_CURSOR_KEY = "local-development-cursor-signing-key-change-me"
 LOCAL_PILOT_TENANT_ID = UUID("019d0000-0000-7000-8000-00000000c001")
 LOCAL_PILOT_ACTOR_ID = UUID("019d0000-0000-7000-8000-00000000c002")
+# A second named operator, so an author-then-approve cycle can involve two
+# people during the pilot. This is not identity: it is two bearer tokens
+# held by two humans, and it retires with the rest of the local pilot when
+# OIDC lands. It exists because separation of duties was enforceable but
+# never exercisable — one actor could be refused, two could not proceed.
+LOCAL_PILOT_REVIEWER_ID = UUID("019d0000-0000-7000-8000-00000000c003")
 
 
 class Settings(BaseSettings):
@@ -52,6 +59,8 @@ class Settings(BaseSettings):
     local_pilot_auth_token: SecretStr | None = None
     local_pilot_tenant_id: UUID = LOCAL_PILOT_TENANT_ID
     local_pilot_actor_id: UUID = LOCAL_PILOT_ACTOR_ID
+    local_pilot_reviewer_token: SecretStr | None = None
+    local_pilot_reviewer_id: UUID = LOCAL_PILOT_REVIEWER_ID
 
     @model_validator(mode="after")
     def require_production_cursor_key(self) -> "Settings":
@@ -101,6 +110,19 @@ class Settings(BaseSettings):
                 or len(self.local_pilot_auth_token.get_secret_value()) < 32
             ):
                 raise ValueError("LOCAL_PILOT_AUTH_TOKEN must contain at least 32 characters")
+            if self.local_pilot_reviewer_token is not None:
+                reviewer = self.local_pilot_reviewer_token.get_secret_value()
+                if len(reviewer) < 32:
+                    raise ValueError(
+                        "LOCAL_PILOT_REVIEWER_TOKEN must contain at least 32 characters"
+                    )
+                if hmac.compare_digest(reviewer, self.local_pilot_auth_token.get_secret_value()):
+                    # One token behind two actor ids would let a single holder
+                    # satisfy a two-approver rule, which is the whole point of
+                    # the rule.
+                    raise ValueError("The reviewer token must differ from the operator token")
+                if self.local_pilot_reviewer_id == self.local_pilot_actor_id:
+                    raise ValueError("The reviewer must be a different actor from the operator")
         if self.mock_deployments_enabled and self.app_env not in {"development", "test"}:
             raise ValueError("Mock deployments are development and test only")
         return self

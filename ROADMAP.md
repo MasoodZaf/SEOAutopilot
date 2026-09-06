@@ -495,6 +495,17 @@ adapter.
 
 ### H5 — Multi-user identity
 
+**A second pilot operator exists (2026-09-06).** The first real proposal on TheCalcHive was refused
+twice, correctly: `author_cannot_approve_own_proposal`, and `github_file` is medium risk so it needs
+two distinct approvers. With one bearer token the author could never be joined by an approver, so a
+medium-risk change was refusable forever and approvable never — separation of duties was enforceable
+but not exercisable, exactly as the exit criterion below says. `LOCAL_PILOT_REVIEWER_TOKEN` adds a
+second named operator with its own actor id. The validator refuses a reviewer token equal to the
+operator's, a reviewer id equal to the operator's, and either shorter than 32 characters; both tokens
+are compared on every request so timing cannot say which one a near-miss was close to. This is two
+humans holding two bearer tokens, not identity, and it retires with the rest of the local pilot.
+
+
 - OIDC, sessions, real accounts and role assignment; retire the local-pilot bearer token.
 - Separation of duties is currently only provable in the negative — one actor can be refused, but two
   distinct humans approving in sequence cannot be exercised at all.
