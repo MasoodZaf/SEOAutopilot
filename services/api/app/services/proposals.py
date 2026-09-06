@@ -245,8 +245,13 @@ class ProposalService:
                 detail="prohibited_proposal_cannot_be_approved",
             )
 
-        # Separation of duties: author cannot approve their own proposal
-        if self.context.actor_id == proposal.author_id:
+        # Separation of duties: an author cannot approve their own proposal.
+        # Withdrawing one is a different act. It ends the proposal, can never
+        # put a change on a live site, and is the only way for whoever wrote a
+        # bad draft to clear it without spending a reviewer on a change nobody
+        # wants. Holding a withdrawal to the approval rule protects nothing and
+        # leaves the wrong change sitting in the queue.
+        if self.context.actor_id == proposal.author_id and command.decision != "rejected":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="author_cannot_approve_own_proposal",

@@ -190,3 +190,53 @@ async def test_author_is_still_refused_before_any_counting_happens() -> None:
 
     assert exc.value.detail == "author_cannot_approve_own_proposal"
     assert proposal.status == "review_required"
+
+
+@pytest.mark.asyncio
+async def test_an_author_may_withdraw_their_own_proposal() -> None:
+    """Separation of duties guards the deploy, not the bin.
+
+    Seventeen title repairs were drafted on the pilot site and one of them was
+    wrong. Before this, the only way to clear it was to spend a second person's
+    approval on a change nobody wanted -- so the wrong change sat in the queue.
+    """
+    tenant_id = uuid4()
+    author_id = uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    session = AutoflushingSession(proposal)
+    context = TenantContext(
+        tenant_id=tenant_id, actor_id=author_id, role=Role.SEO_MANAGER, trace_id="tr-approval"
+    )
+
+    await service(session, context).approve_proposal(
+        proposal.id, ProposalApprovalCreate(decision="rejected", notes="stutters")
+    )
+
+    assert proposal.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_a_withdrawal_cannot_be_walked_back_into_an_approval() -> None:
+    """The whole safety of the above rests on rejection being terminal.
+
+    If an author could withdraw and then approve, they would have written and
+    cleared their own change alone -- exactly what the rule exists to stop.
+    """
+    tenant_id = uuid4()
+    author_id = uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    session = AutoflushingSession(proposal)
+    context = TenantContext(
+        tenant_id=tenant_id, actor_id=author_id, role=Role.SEO_MANAGER, trace_id="tr-approval"
+    )
+
+    await service(session, context).approve_proposal(
+        proposal.id, ProposalApprovalCreate(decision="rejected", notes="withdrawn")
+    )
+    with pytest.raises(HTTPException) as exc:
+        await service(session, context).approve_proposal(
+            proposal.id, ProposalApprovalCreate(decision="approved", notes="mine")
+        )
+
+    assert exc.value.detail == "proposal_already_rejected"
+    assert proposal.status == "rejected"
