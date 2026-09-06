@@ -332,18 +332,31 @@ them. The system is confidently describing problems that do not exist on the pri
 
 **Work:**
 
-- Add an evidence-integrity guard before analysis: a crawl whose distinct `content_hash` count
-  collapses against its page count is a rendering or authentication failure, not a site with
-  identical pages. `content_hash` is already recorded, so the check is cheap. Fail the crawl with a
-  distinct error code rather than analysing it, and cover it in the hostile fixture.
-- Quarantine the existing CodeArc findings, opportunities and calibration set rather than leaving
-  them queryable as if they were real.
-- Only then open CodeArc to the crawler (crawler-UA allowlist, signed bypass token, or server-side
-  rendering for the crawler) and re-crawl. The current latest crawl is also `cancelled`.
-- Run the crawl scenarios against the in-repo hostile fixture rather than only production sites.
+- ~~Add an evidence-integrity guard before analysis.~~ **Done.** `completeCrawl` measures the
+  observations it is about to finish with; a crawl where one body covers 80% of successful fetches,
+  or where distinct bodies fall to a tenth of the page count, is marked `failed` with
+  `error_code='content_collapse'` and emits no `crawl.completed` event, so analysis never sees it.
+  Terminal rather than requeued — refetching the same wall produces the same wall. Small crawls are
+  exempt, since a three-page site sharing a body is a plausible site. Verified against the live site:
+  a fresh 60-page CodeArc crawl returned 10 distinct bodies at a 0.85 top share and was refused,
+  where the old code would have produced roughly 180 more fictitious findings.
+- ~~Quarantine the existing CodeArc findings, opportunities and calibration set.~~ **Done** in
+  migration `0028`, which derives the affected crawls from the stored hashes with the same thresholds
+  rather than naming a site. On the dev database it suppressed 1534 findings and 1534 opportunities,
+  cancelled the open calibration run, and deleted 2500 page scores, leaving the 124 real ones and the
+  two honest findings untouched. Statuses are reversible and observations are kept.
+- Still open: give CodeArc a way to be crawled (crawler-UA allowlist, signed bypass token, or
+  server-side rendering for the crawler) and re-crawl. Until then the site has no valid evidence, and
+  the guard now says so out loud instead of inventing some.
+- Still open: run the crawl scenarios against the in-repo hostile fixture rather than only production
+  sites, including a shell-serving fixture that exercises the guard end to end.
 
 **Exit:** a completed CodeArc crawl whose distinct content hashes track its page count, and a
 findings count that survives the integrity guard.
+
+**Note on the pilot choice.** Until CodeArc is crawlable, it cannot serve as the measurement subject
+— its baseline measures a login wall, not the site. TheCalcHive is the usable before/after signal in
+the meantime.
 
 ### H3 — Close the change loop
 
