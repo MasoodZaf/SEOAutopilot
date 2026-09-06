@@ -93,6 +93,7 @@ async def run_analysis_consumer(
                 tenant_id = UUID(fields["tenant_id"])
                 crawl_id = UUID(fields["aggregate_id"])
                 async with pool.acquire() as connection:
+                    # analyze_crawl sets the scope itself, inside its transaction.
                     await analyze_crawl(cast(AnalysisConnection, connection), tenant_id, crawl_id)
                 await streams.xack(STREAM, GROUP, message_id)
             except (KeyError, ValueError):

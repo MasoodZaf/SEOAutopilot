@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import CalibrationReviewCreate
@@ -198,8 +199,24 @@ class CalibrationService:
             request_hash=request_hash,
             created_by=self.context.actor_id,
         )
-        self.session.add(run)
-        await self.session.flush()
+        # As above, the lookup only serialises retries that do not overlap.
+        # Two that do would both reach here, and the loser would surface the
+        # unique violation as a 500 rather than as the run it already made.
+        try:
+            async with self.session.begin_nested():
+                self.session.add(run)
+                await self.session.flush()
+        except IntegrityError:
+            concurrent = await self.session.scalar(
+                select(CalibrationRun).where(
+                    CalibrationRun.tenant_id == self.context.tenant_id,
+                    CalibrationRun.site_id == site_id,
+                    CalibrationRun.idempotency_key == idempotency_key,
+                )
+            )
+            if concurrent is None:
+                raise
+            return await self._serialize_run(concurrent)
         items: list[CalibrationItem] = []
         for ordinal, opportunity in enumerate(opportunities, start=1):
             page = pages.get(opportunity.page_id)
@@ -351,8 +368,21 @@ class CalibrationService:
             request_hash=request_hash,
             idempotency_key=idempotency_key,
         )
-        self.session.add(review)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                self.session.add(review)
+                await self.session.flush()
+        except IntegrityError:
+            concurrent = await self.session.scalar(
+                select(CalibrationReview).where(
+                    CalibrationReview.tenant_id == self.context.tenant_id,
+                    CalibrationReview.reviewer_id == self.context.actor_id,
+                    CalibrationReview.idempotency_key == idempotency_key,
+                )
+            )
+            if concurrent is None:
+                raise
+            return concurrent
         event_payload = {
             "calibration_item_id": str(item.id),
             "accuracy_label": review.accuracy_label,

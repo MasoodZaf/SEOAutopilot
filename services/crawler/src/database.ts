@@ -2,6 +2,7 @@ import {createHash} from "node:crypto";
 
 import {Pool, type PoolClient} from "pg";
 
+import {assessContentCollapse} from "./evidence-guard.js";
 import type {PageObservation} from "./types.js";
 import type {CrawlResult} from "./crawl-engine.js";
 
@@ -119,10 +120,16 @@ async function persistSitemaps(client: PoolClient, crawl: ClaimedCrawl, result: 
 export async function completeCrawl(pool: Pool, crawl: ClaimedCrawl, result: CrawlResult): Promise<void> {
   await tenantTransaction(pool,crawl.tenantId,async client=>{
     await persistSitemaps(client,crawl,result);
+    const collapse=assessContentCollapse(result.observations);
     const partial=result.observations.length>=crawl.maxPages||result.discoveryTruncated||result.fetchErrors>0;
-    const finalStatus=partial?"partial":"completed";
-    const summary={pages_observed:result.observations.length,skipped_by_robots:result.skippedByRobots,fetch_errors:result.fetchErrors,discovery_truncated:result.discoveryTruncated,truncated_link_pages:result.observations.filter(item=>item.linksTruncated).length,max_pages:crawl.maxPages,max_depth:crawl.maxDepth,sitemaps_found:result.sitemaps.length,sitemap_urls_declared:result.sitemaps.reduce((total,item)=>total+item.inScopeUrls.length,0)};
-    await client.query("UPDATE crawl_job SET status=$3,finished_at=now(),lease_until=null,error_code=null,result_summary=$4::jsonb WHERE id=$1 AND tenant_id=$2",[crawl.id,crawl.tenantId,finalStatus,JSON.stringify(summary)]);
+    const finalStatus=collapse.collapsed?"failed":partial?"partial":"completed";
+    const summary={pages_observed:result.observations.length,skipped_by_robots:result.skippedByRobots,fetch_errors:result.fetchErrors,discovery_truncated:result.discoveryTruncated,truncated_link_pages:result.observations.filter(item=>item.linksTruncated).length,max_pages:crawl.maxPages,max_depth:crawl.maxDepth,sitemaps_found:result.sitemaps.length,sitemap_urls_declared:result.sitemaps.reduce((total,item)=>total+item.inScopeUrls.length,0),distinct_content_hashes:collapse.distinctHashes,content_top_share:Number(collapse.topShare.toFixed(4))};
+    // A collapsed crawl is terminal rather than requeued: refetching the same
+    // wall produces the same wall. The observations stay so the shell can be
+    // inspected, but no crawl.completed event is emitted, so analysis never
+    // turns the shell into findings.
+    await client.query("UPDATE crawl_job SET status=$3,finished_at=now(),lease_until=null,error_code=$5,result_summary=$4::jsonb WHERE id=$1 AND tenant_id=$2",[crawl.id,crawl.tenantId,finalStatus,JSON.stringify(summary),collapse.collapsed?"content_collapse":null]);
+    if(collapse.collapsed)return;
     await client.query(`INSERT INTO outbox_event(tenant_id,event_type,event_version,aggregate_type,aggregate_id,payload)
       VALUES($1,'crawl.completed',1,'crawl_job',$2,$3::jsonb)`,[crawl.tenantId,crawl.id,JSON.stringify({crawl_id:crawl.id,site_id:crawl.siteId,status:finalStatus,summary})]);
   });

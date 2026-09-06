@@ -26,9 +26,17 @@ function fields(values:unknown):Record<string,string>{const result:Record<string
 export function parseReadReply(reply:unknown):StreamMessage[]{if(!Array.isArray(reply)||!Array.isArray(reply[0]))return[];const messages=(reply[0] as unknown[])[1];if(!Array.isArray(messages))return[];return messages.flatMap(item=>Array.isArray(item)&&typeof item[0]==="string"?[{id:item[0],fields:fields(item[1])}]:[])}
 export function parseClaimReply(reply:unknown):StreamMessage[]{if(!Array.isArray(reply)||!Array.isArray(reply[1]))return[];return (reply[1] as unknown[]).flatMap(item=>Array.isArray(item)&&typeof item[0]==="string"?[{id:item[0],fields:fields(item[1])}]:[])}
 
+/** Every service reads one DATABASE_URL. The Python services need the
+ * `+asyncpg` driver suffix that node-postgres cannot parse, so stripping it
+ * here lets all four share a single credential from env_file instead of
+ * keeping a second copy of the same secret under a different key. */
+export function normalizeDatabaseUrl(value:string|undefined):string|undefined{
+  return value?.replace("postgresql+asyncpg://","postgresql://");
+}
+
 export async function runConsumer():Promise<void>{
   const redis=createClient({url:process.env.REDIS_URL});await redis.connect();
-  const pool=new Pool({connectionString:process.env.DATABASE_URL,max:4});const consumer=`${hostname()}-${process.pid}`;
+  const pool=new Pool({connectionString:normalizeDatabaseUrl(process.env.DATABASE_URL),max:4});const consumer=`${hostname()}-${process.pid}`;
   try{await redis.sendCommand(["XGROUP","CREATE",STREAM,GROUP,"0","MKSTREAM"])}catch(error){if(!(error instanceof Error)||!error.message.includes("BUSYGROUP"))throw error}
   for(;;){
     const claimed=parseClaimReply(await redis.sendCommand(["XAUTOCLAIM",STREAM,GROUP,consumer,"60000","0-0","COUNT","1"]));

@@ -20,6 +20,8 @@ from app.pagespeed.client import PageSpeedClient
 from app.pagespeed.consumer import Pool as PageSpeedPool
 from app.pagespeed.consumer import Stream as PageSpeedStream
 from app.pagespeed.consumer import run_pagespeed_consumer
+from app.reaper import Pool as ReaperPool
+from app.reaper import run_reaper
 from app.routines.runner import Pool as RoutinePool
 from app.routines.runner import Stream as RoutineStream
 from app.routines.runner import run_routine_consumer
@@ -55,7 +57,28 @@ async def run() -> None:
     query_hash_key = require_secret_bytes(
         os.environ.get("SEARCH_QUERY_HASH_KEY"), "search_query_hash_key_too_short"
     )
+    # Two identities, because the worker does two different kinds of work.
+    #
+    # `pool` is the tenant-scoped application role. Every consumer that borrows
+    # it declares whose data it is touching, and row-level security enforces it.
+    #
+    # `relay_pool` is for the sweeps that claim work across tenants before any
+    # tenant scope exists -- the outbox dispatcher, the routine scheduler, the
+    # notification dispatcher, and the lease reaper. They cannot run under a
+    # scoped role, so they get an identity that is explicit about the exemption
+    # instead of reaching for the superuser. It falls back to `pool` when unset
+    # so a local stack without the second credential still starts.
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
+    relay_url = os.environ.get("RELAY_DATABASE_URL", "").replace(
+        "postgresql+asyncpg://", "postgresql://"
+    )
+    relay_pool = (
+        await asyncpg.create_pool(relay_url, min_size=1, max_size=2) if relay_url else pool
+    )
+    if relay_pool is pool:
+        logger.warning(
+            "RELAY_DATABASE_URL unset; cross-tenant sweeps share the application pool"
+        )
     streams = redis.from_url(redis_url, decode_responses=True)
     pagespeed = PageSpeedClient(api_key=os.environ.get("PAGESPEED_API_KEY") or None)
     routines_enabled = os.environ.get("ROUTINES_ENABLED", "false").lower() == "true"
@@ -72,7 +95,10 @@ async def run() -> None:
     )
 
     background = [
-        run_dispatcher(pool, streams),
+        run_dispatcher(relay_pool, streams),
+        # Nothing else re-reads the work tables, so without this a run whose
+        # stream message was lost stays 'running' until someone notices.
+        run_reaper(cast(ReaperPool, relay_pool)),
         run_analysis_consumer(
             cast(AnalysisPool, pool),
             cast(AnalysisStream, streams),
@@ -94,7 +120,7 @@ async def run() -> None:
         ),
     ]
     if routines_enabled:
-        background.append(run_scheduler(cast(SchedulerPool, pool)))
+        background.append(run_scheduler(cast(SchedulerPool, relay_pool)))
         background.append(
             run_routine_consumer(
                 cast(RoutinePool, pool),
@@ -106,7 +132,9 @@ async def run() -> None:
         )
     if notifications_enabled:
         background.append(
-            run_notification_dispatcher(pool, notification_client, connector_key, app_base_url)
+            run_notification_dispatcher(
+                relay_pool, notification_client, connector_key, app_base_url
+            )
         )
 
     try:
@@ -116,6 +144,8 @@ async def run() -> None:
         await notification_client.aclose()
         await pagespeed.close()
         await streams.aclose()
+        if relay_pool is not pool:
+            await relay_pool.close()
         await pool.close()
 
 

@@ -11,20 +11,19 @@ services:
   redis:
     restart: unless-stopped
 
+  # None of the services override DATABASE_URL any more. They read it, and the
+  # worker's RELAY_DATABASE_URL, from .env.local, where it names a non-superuser
+  # role. The migration role that owns the tables is a superuser and so bypasses
+  # every row-level security policy; overriding the key here would put the
+  # services back on it and silently switch tenant isolation off again.
   api:
     restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+asyncpg://seo_autopilot:${POSTGRES_PASSWORD}@postgres:5432/seo_autopilot
 
   worker:
     restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+asyncpg://seo_autopilot:${POSTGRES_PASSWORD}@postgres:5432/seo_autopilot
 
   crawler:
     restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql://seo_autopilot:${POSTGRES_PASSWORD}@postgres:5432/seo_autopilot
 
   web:
     restart: unless-stopped

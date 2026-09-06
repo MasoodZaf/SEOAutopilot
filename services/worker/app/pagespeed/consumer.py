@@ -7,6 +7,7 @@ from uuid import UUID
 from redis.exceptions import ResponseError
 
 from app.pagespeed.client import PageSpeedError, PageSpeedProvider
+from app.tenancy import tenant_scope
 
 STREAM = "seo-autopilot:events"
 GROUP = "pagespeed"
@@ -60,7 +61,7 @@ async def process_run(connection: Any, tenant_id: UUID, run_id: UUID, provider: 
     try:
         result = await provider.analyze(row["target_url"], row["strategy"])
     except (PageSpeedError, ValueError) as error:
-        code = str(error) if str(error) in {"provider_rate_limited", "provider_unavailable", "provider_request_rejected", "provider_response_too_large", "provider_response_invalid", "invalid_pagespeed_target", "invalid_pagespeed_strategy"} else "provider_failure"
+        code = str(error) if str(error) in {"provider_rate_limited", "provider_timeout", "provider_unavailable", "provider_request_rejected", "provider_response_too_large", "provider_response_invalid", "invalid_pagespeed_target", "invalid_pagespeed_strategy"} else "provider_failure"
         await connection.execute("UPDATE performance_run SET status='failed',finished_at=now(),lease_until=NULL,error_code=$3 WHERE id=$1 AND tenant_id=$2", run_id, tenant_id, code)
         return
     async with connection.transaction():
@@ -90,8 +91,14 @@ async def run_pagespeed_consumer(pool: Pool, streams: Stream, consumer: str, pro
                 await streams.xack(STREAM, GROUP, message_id)
                 continue
             try:
-                async with pool.acquire() as connection:
-                    await process_run(connection, UUID(fields["tenant_id"]), UUID(fields["aggregate_id"]), provider)
+                tenant_id = UUID(fields["tenant_id"])
+                async with (
+                    pool.acquire() as connection,
+                    tenant_scope(connection, tenant_id),
+                ):
+                    await process_run(
+                        connection, tenant_id, UUID(fields["aggregate_id"]), provider
+                    )
                 await streams.xack(STREAM, GROUP, message_id)
             except (KeyError, ValueError):
                 logger.exception("invalid performance event", extra={"event_id": message_id})

@@ -14,6 +14,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # Ephemeral database for the integration suite. Kept separate from the dev
+  # volume so tests can create, wipe and recreate schemas freely, and tmpfs-backed
+  # because nothing in it needs to survive a restart.
+  postgres-test:
+    image: postgres:17.6-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: seo_autopilot_test
+      POSTGRES_USER: seo_autopilot
+      POSTGRES_PASSWORD: seo_autopilot
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    ports: ["127.0.0.1:5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seo_autopilot -d seo_autopilot_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   redis:
     image: redis:8.2-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -28,7 +47,12 @@ services:
     build: {context: ., dockerfile: services/api/Dockerfile}
     env_file: [.env.local]
     environment:
-      DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      # DATABASE_URL deliberately comes from env_file, not from here. The API
+      # connects as seo_autopilot_app, a NOSUPERUSER NOBYPASSRLS role, so that
+      # row-level security is actually enforced -- the owning role is a
+      # superuser and bypasses every policy. Repeating the key here would
+      # override the env_file value with the owner's connection and silently
+      # switch isolation back off.
       REDIS_URL: redis://redis:6379/0
     ports: ["127.0.0.1:8001:8000"]
     depends_on:
@@ -39,8 +63,14 @@ services:
     build: {context: ., dockerfile: services/worker/Dockerfile}
     env_file: [.env.local]
     environment:
-      DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
       REDIS_URL: redis://redis:6379/0
+      # DATABASE_URL and RELAY_DATABASE_URL come from env_file, like the API's.
+      # The worker holds two identities: the tenant-scoped application role for
+      # per-tenant consumers, and seo_autopilot_relay for the three sweeps that
+      # claim work across tenants before any scope exists. Repeating either key
+      # here would override the env_file value and silently put the worker back
+      # on a role that bypasses row-level security.
+      #
       # ROUTINES_ENABLED, NOTIFICATIONS_ENABLED and APP_BASE_URL come from
       # env_file. Repeating them here would override it with the shell's
       # (usually empty) value and silently disable the scheduler.
@@ -50,8 +80,12 @@ services:
 
   crawler:
     build: {context: ., dockerfile: services/crawler/Dockerfile}
+    env_file: [.env.local]
     environment:
-      DATABASE_URL: postgresql://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      # DATABASE_URL comes from env_file, like the API's and the worker's. Every
+      # crawler write goes through tenantTransaction, which sets the tenant GUC,
+      # so it runs correctly as the tenant-scoped application role; the client
+      # strips the +asyncpg suffix the Python services need.
       REDIS_URL: redis://redis:6379/0
     read_only: true
     tmpfs: [/tmp]

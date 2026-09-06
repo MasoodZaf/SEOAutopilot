@@ -39,8 +39,16 @@ TenantSession = Annotated[AsyncSession, Depends(get_tenant_session)]
 
 
 async def get_system_session() -> AsyncIterator[AsyncSession]:
-    """Narrow unauthenticated callback session; service must derive tenant from one-time state."""
+    """Narrow unauthenticated callback session; service must derive tenant from one-time state.
+
+    The OAuth callback carries no tenant, because the tenant is what the state
+    row establishes. Rather than run unscoped, this sets `app.oauth_callback`,
+    which a single SELECT-only policy on `connector_oauth_state` accepts. Every
+    other table stays closed, and the service sets `app.tenant_id` from the row
+    it resolves before it reads or writes anything else.
+    """
     async with session_factory() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.oauth_callback', 'on', true)"))
         yield session
 
 

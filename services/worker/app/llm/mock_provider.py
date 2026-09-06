@@ -3,8 +3,8 @@ import json
 from typing import Any, TypeVar
 
 from app.llm.base import PolicyContext, StructuredRequest, StructuredResult
-from app.llm.sanitizer import detect_and_guard_injection
-from app.llm.validator import enforce_cost_budget, validate_evidence_citations
+from app.llm.guardrails import GuardedLLMProvider
+from app.llm.validator import validate_evidence_citations
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
@@ -15,34 +15,26 @@ def stable_hash(*parts: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-class MockLLMProvider:
+class MockLLMProvider(GuardedLLMProvider):
     """Deterministic mock provider for reproducible test runs and offline evaluations."""
 
     def __init__(
         self,
         default_cost_micros: int = 500,
         fixed_output: dict[str, Any] | None = None,
-        simulate_injection_check: bool = True,
     ) -> None:
         self.default_cost_micros = default_cost_micros
         self.fixed_output = fixed_output
-        self.simulate_injection_check = simulate_injection_check
 
-    async def generate_structured(
+    def estimated_cost_micros(self, request: StructuredRequest) -> int:
+        return self.default_cost_micros
+
+    async def _generate_structured(
         self,
         request: StructuredRequest,
         response_schema: type[T],
         policy: PolicyContext | None = None,
     ) -> StructuredResult:
-        # Check budget limits
-        budget_limit = policy.max_cost_micros_ceiling if policy else request.max_cost_micros
-        enforce_cost_budget(self.default_cost_micros, budget_limit)
-
-        # Check prompt injection on user and system inputs if configured
-        if self.simulate_injection_check:
-            detect_and_guard_injection(request.user_prompt, strict=True)
-            detect_and_guard_injection(request.system_instructions, strict=True)
-
         input_hash = stable_hash(
             request.task,
             request.prompt_version,

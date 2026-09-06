@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import DeploymentCreate, ProposalApprovalCreate, ProposalCreate
@@ -253,6 +254,25 @@ class ProposalService:
                 detail="insufficient_permissions_to_approve_proposal",
             )
 
+        # Read the prior approvers before staging this one. `session.add()`
+        # followed by a query autoflushes the pending row into that query's
+        # result, so counting afterwards and adding one for "this approval"
+        # counts the same person twice and lets a single approver satisfy a
+        # two-approver requirement. Distinct approver ids also make the count
+        # independent of how many times a row was written.
+        prior_approver_ids: set[UUID] = set()
+        if command.decision == "approved":
+            prior_approver_ids = set(
+                await self.session.scalars(
+                    select(ProposalApproval.approver_id).where(
+                        ProposalApproval.tenant_id == self.context.tenant_id,
+                        ProposalApproval.proposal_id == proposal.id,
+                        ProposalApproval.proposal_version == proposal.version,
+                        ProposalApproval.decision == "approved",
+                    )
+                )
+            )
+
         approval = ProposalApproval(
             tenant_id=self.context.tenant_id,
             proposal_id=proposal.id,
@@ -266,17 +286,11 @@ class ProposalService:
         if command.decision == "rejected":
             proposal.status = "rejected"
         else:
-            # Check policy required approvers
-            required_count = int(proposal.policy_evaluation_json.get("required_approver_count", 1))
-            existing_approvals = await self.session.scalars(
-                select(ProposalApproval).where(
-                    ProposalApproval.proposal_id == proposal.id,
-                    ProposalApproval.proposal_version == proposal.version,
-                    ProposalApproval.decision == "approved",
-                )
-            )
-            count = len(list(existing_approvals)) + 1
-            if count >= required_count:
+            # A proposal whose policy record lost this key fails closed to the
+            # two-person rule rather than to a single approver.
+            required_count = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
+            distinct_approvers = prior_approver_ids | {self.context.actor_id}
+            if len(distinct_approvers) >= required_count:
                 proposal.status = "approved"
             else:
                 proposal.status = "review_required"
@@ -433,6 +447,45 @@ class ProposalService:
             current_live_content=command.current_live_content,
         )
 
+        # Claim the idempotency key before calling the adapter, not after.
+        #
+        # The check at the top of this method only serialises retries that
+        # arrive one after another. Two concurrent requests carrying the same
+        # key both pass it, both call the adapter -- opening two pull requests
+        # for one deployment -- and only then does the unique constraint reject
+        # the second, so the caller gets a 500 and the second change to the
+        # customer's site has no receipt pointing at it.
+        #
+        # Inserting the row first turns the constraint into the lock. A second
+        # request blocks on the index until this transaction ends: if it commits
+        # the second sees the violation and returns this receipt, and if it
+        # rolls back the second proceeds and does the work itself.
+        receipt = DeploymentReceipt(
+            tenant_id=self.context.tenant_id,
+            site_id=proposal.site_id,
+            proposal_id=proposal.id,
+            connector_type=command.connector_type,
+            idempotency_key=idempotency_key,
+            external_ref="",
+            manifest_json=manifest.to_dict(),
+            status="pending",
+            deployed_at=now,
+        )
+        try:
+            async with self.session.begin_nested():
+                self.session.add(receipt)
+                await self.session.flush()
+        except IntegrityError:
+            concurrent = await self.session.scalar(
+                select(DeploymentReceipt).where(
+                    DeploymentReceipt.tenant_id == self.context.tenant_id,
+                    DeploymentReceipt.idempotency_key == idempotency_key,
+                )
+            )
+            if concurrent is None:
+                raise
+            return concurrent
+
         try:
             result = await adapter.deploy(request)
         except DriftDetectedError as drift_err:
@@ -441,18 +494,10 @@ class ProposalService:
                 detail=str(drift_err),
             ) from drift_err
 
-        receipt = DeploymentReceipt(
-            tenant_id=self.context.tenant_id,
-            site_id=proposal.site_id,
-            proposal_id=proposal.id,
-            connector_type=result.connector_type,
-            idempotency_key=idempotency_key,
-            external_ref=result.external_ref,
-            manifest_json=result.manifest_json,
-            status=result.status,
-            deployed_at=now,
-        )
-        self.session.add(receipt)
+        receipt.connector_type = result.connector_type
+        receipt.external_ref = result.external_ref
+        receipt.manifest_json = result.manifest_json
+        receipt.status = result.status
         proposal.status = "deployed"
         proposal.updated_at = now
 

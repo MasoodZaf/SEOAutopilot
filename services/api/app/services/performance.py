@@ -109,6 +109,22 @@ class PerformanceService:
                 self.session.add(run)
                 await self.session.flush()
         except IntegrityError as error:
+            # Two constraints can fire here and they mean opposite things. The
+            # one-active index means another run really is in flight. The
+            # idempotency key means this caller is retrying their own request,
+            # concurrently with their first attempt, and is owed its result --
+            # and a retry that races itself trips the one-active index first,
+            # so the constraint name is not what distinguishes the two. Whether
+            # a run under this key exists is.
+            concurrent = await self.session.scalar(
+                select(PerformanceRun).where(
+                    PerformanceRun.tenant_id == self.context.tenant_id,
+                    PerformanceRun.site_id == site.id,
+                    PerformanceRun.idempotency_key == idempotency_key,
+                )
+            )
+            if concurrent is not None:
+                return concurrent
             raise HTTPException(status_code=409, detail="performance_run_already_active") from error
         event_payload = {"performance_run_id": str(run.id), "site_id": str(site.id)}
         event_digest = request_hash({**event_payload, "actor_id": str(self.context.actor_id)})

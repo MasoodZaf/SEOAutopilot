@@ -1,7 +1,7 @@
 "use server";
 
 import {cookies} from "next/headers";
-import {redirect} from "next/navigation";
+import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
 
@@ -71,6 +71,9 @@ export async function onboardPortfolioSite(formData: FormData): Promise<never> {
       await storeChallenge(site.id, challenge.data);
     }
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(target.host));
@@ -87,6 +90,9 @@ export async function refreshDnsChallenge(formData: FormData): Promise<never> {
     );
     await storeChallenge(site.id, challenge.data);
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host));
@@ -109,6 +115,9 @@ export async function verifyPortfolioDns(formData: FormData): Promise<never> {
     });
     (await cookies()).delete(challengeCookie);
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {verified: "true"}));
@@ -129,6 +138,9 @@ export async function connectSearchConsole(formData: FormData): Promise<never> {
     );
     authorizationUrl = result.data.authorization_url;
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(authorizationUrl);
@@ -150,6 +162,9 @@ export async function connectDnsProvider(formData: FormData): Promise<never> {
       body: JSON.stringify({zone_id: zoneId.toLowerCase(), api_token: apiToken}),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {dns_provider: "connected"}));
@@ -169,6 +184,9 @@ export async function createDnsProviderVerification(formData: FormData): Promise
       body: JSON.stringify({token: challenge.token}),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {dns_provider: "record-created"}));
@@ -196,6 +214,9 @@ export async function startFirstCrawl(formData: FormData): Promise<never> {
       maxAge: 24 * 60 * 60,
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {crawl: "queued"}));
@@ -213,6 +234,9 @@ export async function startPerformanceRun(formData: FormData): Promise<never> {
       body: "{}",
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {performance: "queued"}));
@@ -230,6 +254,9 @@ export async function createCalibrationSet(formData: FormData): Promise<never> {
       body: JSON.stringify({target_size: 20}),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {calibration: "created"}));
@@ -252,6 +279,9 @@ export async function submitCalibrationReview(formData: FormData): Promise<never
       }),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     const code = error instanceof ApiError ? error.code : "unexpected-error";
     redirect(`/pilot/review/${safeItemId}?error=${encodeURIComponent(code)}`);
   }
@@ -273,6 +303,9 @@ export async function toggleEmergencyFreezeAction(formData: FormData): Promise<n
       });
     }
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {governance: "updated"}));
@@ -285,6 +318,9 @@ export async function runPolicySimulationAction(formData: FormData): Promise<nev
     if (!site) redirect(pilotPath(host));
     await apiJson(`/v1/sites/${site.id}/simulation`, {method: "POST"});
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {simulation: "completed"}));
@@ -299,6 +335,9 @@ export async function approveProposalAction(formData: FormData): Promise<never> 
       body: JSON.stringify({decision: "approved", notes: "Approved from web dashboard"}),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {proposal: "approved"}));
@@ -315,6 +354,9 @@ export async function deployProposalAction(formData: FormData): Promise<never> {
       body: JSON.stringify({connector_type: "github"}),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {proposal: "deployed"}));
@@ -329,6 +371,9 @@ export async function rollbackProposalAction(formData: FormData): Promise<never>
       body: JSON.stringify({notes: "Rollback triggered from web dashboard"}),
     });
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirect(pilotPath(host, {proposal: "rolled_back"}));

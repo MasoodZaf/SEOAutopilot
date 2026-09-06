@@ -48,3 +48,35 @@ async def test_client_sends_bounded_contract_and_maps_rate_limit() -> None:
         client = PageSpeedClient(client=http)
         with pytest.raises(PageSpeedError, match="provider_rate_limited"):
             await client.analyze("https://example.com/", "mobile")
+
+
+@pytest.mark.asyncio
+async def test_a_transport_timeout_arrives_as_a_provider_error() -> None:
+    """The consumer only releases a run's lease for PageSpeedError.
+
+    A bare httpx timeout escaped that handler, so a run stayed 'running' until
+    its lease expired instead of being marked failed.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = PageSpeedClient(client=http)
+        with pytest.raises(PageSpeedError) as exc:
+            await client.analyze("https://codearc.net/", "mobile")
+    assert str(exc.value) == "provider_timeout"
+
+
+@pytest.mark.asyncio
+async def test_a_connection_failure_arrives_as_a_provider_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = PageSpeedClient(client=http)
+        with pytest.raises(PageSpeedError) as exc:
+            await client.analyze("https://codearc.net/", "mobile")
+    assert str(exc.value) == "provider_unavailable"
