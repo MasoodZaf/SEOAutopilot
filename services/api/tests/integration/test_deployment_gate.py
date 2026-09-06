@@ -14,6 +14,7 @@ These cases seed a real proposal chain, run the real service against the real
 `seo_autopilot_app` role, and assert on what the database actually holds.
 """
 
+import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -462,3 +463,115 @@ async def test_row_level_security_backstops_a_mismatched_tenant_context(
                 MockDeploymentAdapter("mock"),
             )
         assert error.value.detail == "proposal_not_found"
+
+
+class CountingAdapter(MockDeploymentAdapter):
+    """Counts deploys and holds each one open long enough for a second to race it."""
+
+    def __init__(self) -> None:
+        super().__init__("mock")
+        self.calls = 0
+
+    async def deploy(self, request):
+        self.calls += 1
+        # Stands in for the network round trip a real connector makes. Without
+        # it both callers finish before either can observe the other.
+        await asyncio.sleep(0.2)
+        return await super().deploy(request)
+
+
+async def test_two_concurrent_deployments_sharing_a_key_deploy_once(
+    app_engine, chain
+) -> None:
+    """Idempotency has to hold when the retry is concurrent, not just sequential.
+
+    The existence check at the top of `deploy_proposal` only serialises requests
+    that arrive one after another. Two that overlap both pass it, and before
+    this was fixed both called the adapter -- opening two pull requests for one
+    deployment -- after which the unique constraint rejected the second write,
+    so the caller got a 500 and the second change to the customer's site had no
+    receipt pointing at it.
+
+    These sessions commit rather than roll back, because the property under test
+    is what one transaction sees of another's uncommitted write.
+    """
+    factory = async_sessionmaker(app_engine, expire_on_commit=False)
+    adapter = CountingAdapter()
+
+    async def attempt():
+        async with factory() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(chain.tenant_id)},
+            )
+            return await service(session, chain).deploy_proposal(
+                chain.proposal_id,
+                DeploymentCreate(connector_type="mock"),
+                "concurrent-key-01",
+                adapter,
+            )
+
+    first, second = await asyncio.gather(attempt(), attempt())
+
+    assert adapter.calls == 1, "the adapter ran twice, so the site was changed twice"
+    assert first.id == second.id
+    assert first.status == "applied"
+
+    async with factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(chain.tenant_id)},
+        )
+        assert (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM deployment_receipt"
+                    " WHERE tenant_id=:tenant_id AND idempotency_key='concurrent-key-01'"
+                ),
+                {"tenant_id": chain.tenant_id},
+            )
+        ).scalar_one() == 1
+
+
+async def test_a_receipt_is_never_left_pending_when_the_adapter_fails(
+    app_engine, chain
+) -> None:
+    """Claiming the key before deploying must not strand the key on failure.
+
+    The claim row is written first, so a failing adapter has to take it back
+    out; otherwise a transient provider error would burn that idempotency key
+    and leave a receipt claiming a deployment that never happened.
+    """
+
+    class FailingAdapter(MockDeploymentAdapter):
+        async def deploy(self, request):
+            raise RuntimeError("provider exploded")
+
+    factory = async_sessionmaker(app_engine, expire_on_commit=False)
+    with pytest.raises(RuntimeError):
+        async with factory() as session, session.begin():
+            await session.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(chain.tenant_id)},
+            )
+            await service(session, chain).deploy_proposal(
+                chain.proposal_id,
+                DeploymentCreate(connector_type="mock"),
+                "failing-key-0001",
+                FailingAdapter("mock"),
+            )
+
+    async with factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(chain.tenant_id)},
+        )
+        assert (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM deployment_receipt"
+                    " WHERE tenant_id=:tenant_id AND idempotency_key='failing-key-0001'"
+                ),
+                {"tenant_id": chain.tenant_id},
+            )
+        ).scalar_one() == 0

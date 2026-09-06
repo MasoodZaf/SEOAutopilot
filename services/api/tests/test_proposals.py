@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -9,6 +10,23 @@ from app.core.context import Role, TenantContext
 from app.db.models import Opportunity, Page, Proposal, Site
 from app.domain.deployments import MockDeploymentAdapter
 from app.services.proposals import ProposalService
+
+
+def savepoint() -> MagicMock:
+    """A stand-in for `session.begin_nested()`.
+
+    It returns an async context manager, and an `AsyncMock` attribute returns a
+    coroutine, so the real call fails against a bare mock. The savepoint here
+    never rolls anything back -- what it guards is only observable against a
+    real database, which is what
+    `tests/integration/test_deployment_gate.py` is for.
+    """
+
+    @asynccontextmanager
+    async def _savepoint():
+        yield None
+
+    return MagicMock(side_effect=lambda: _savepoint())
 
 
 def make_context(role: Role = Role.SEO_MANAGER, actor_id: UUID | None = None) -> TenantContext:
@@ -137,6 +155,7 @@ async def test_deploy_proposal_detects_drift_and_blocks() -> None:
     )
     session = AsyncMock()
     session.scalar.side_effect = [None, mock_site, 0]
+    session.begin_nested = savepoint()
     service = ProposalService(session, context, deployments_enabled=True)
     service.get_proposal = AsyncMock(return_value=mock_proposal)  # type: ignore[method-assign]
 
@@ -194,6 +213,7 @@ async def test_deploy_proposal_happy_path_with_manifest_and_receipt() -> None:
     session.scalar.side_effect = [None, mock_site, 0]
     session.scalars.return_value = [uuid4()]  # 1 approver
     session.add = MagicMock()
+    session.begin_nested = savepoint()
 
     service = ProposalService(session, context, deployments_enabled=True)
     service.get_proposal = AsyncMock(return_value=mock_proposal)  # type: ignore[method-assign]
