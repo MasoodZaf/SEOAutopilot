@@ -299,7 +299,15 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
   readiness, the open-run check, idempotency including the concurrent case, review recording, and
   tenant isolation of the frozen set. Its idempotency guard is now verified rather than asserted:
   reverting it fails the concurrency case.
-- **Still on mocks:** cursor scoping.
+- ~~Cursor scoping.~~ **Done.** `tests/integration/test_page_cursor.py` walks a real inventory whose
+  pages all share a `last_seen_at`, as a crawl leaves them, and proves no page is lost or repeated;
+  dropping the `page_id` tiebreak leaves 7 of 25 pages reachable while the three existing cursor
+  tests stay green. It also shows a signed cursor being accepted by the token and refused by the
+  service for another tenant, since the token binds to a site and not to who holds it.
+
+With that, every control named in `AGENTS.md` has a test against real PostgreSQL, and the second half
+of H1's exit condition is met. The first half — no service connecting as a superuser in production —
+is still waiting on the deploy.
 
 **Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
 has a test that runs against real PostgreSQL.
