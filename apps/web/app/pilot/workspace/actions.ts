@@ -1,6 +1,6 @@
 "use server";
 
-import {redirect} from "next/navigation";
+import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
 
@@ -38,6 +38,9 @@ export async function startConversation(formData: FormData): Promise<never> {
     });
     redirect(workspacePath(host, {tab: "chat", session: created.data.id}));
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     if (error instanceof ApiError) redirect(workspacePath(host, {error: safeCode(error.code)}));
     throw error;
   }
@@ -59,6 +62,9 @@ export async function sendMessage(formData: FormData): Promise<never> {
     });
     redirect(workspacePath(host, {tab: "chat", session: sessionId}));
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     if (error instanceof ApiError) {
       redirect(workspacePath(host, {tab: "chat", session: sessionId, error: safeCode(error.code)}));
     }
@@ -89,6 +95,9 @@ export async function scheduleRoutine(formData: FormData): Promise<never> {
     });
     redirect(workspacePath(host, {tab}));
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     if (error instanceof ApiError) redirect(workspacePath(host, {tab, error: safeCode(error.code)}));
     throw error;
   }
@@ -102,6 +111,9 @@ export async function runRoutineNow(formData: FormData): Promise<never> {
     await apiJson(`/v1/routines/${routineId}/runs`, {method: "POST"});
     redirect(workspacePath(host, {tab}));
   } catch (error) {
+    // `redirect()` throws; let its control-flow signal through so this
+    // action's own redirects are not rewritten as a generic error.
+    unstable_rethrow(error);
     if (error instanceof ApiError) redirect(workspacePath(host, {tab, error: safeCode(error.code)}));
     throw error;
   }

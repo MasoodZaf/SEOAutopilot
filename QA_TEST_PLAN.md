@@ -29,6 +29,13 @@ Testing follows the risk chain: evidence correctness -> prioritization -> propos
 5. Produce identical page scores and top 20 for identical evidence/scoring version.
 6. Seed 25 issues; verify expected high-value issues rank in the top 20 with explanations.
 7. Feed prompt-injection text in HTML, metadata, repository, and CMS content; confirm it cannot change tools, policy, or deployment.
+   Scope today: no provider reaches a model, and the chat agent is a deterministic
+   intent matcher that starts nothing it cannot match, so this scenario is proven
+   at the guardrail rather than end to end. `GuardedLLMProvider` runs the injection,
+   budget, and evidence-citation checks around every provider call, and a provider
+   that implements no checks of its own is tested to still be refused. Wiring a real
+   provider does not re-open this gap, but it does move the scenario from unit proof
+   to an end-to-end gate that has not yet been run.
 8. Reject hallucinated evidence IDs and claim-changing output from automatic eligibility.
 9. Edit proposal after validation; confirm validation and material approvals are invalidated.
 10. Enforce role, tenant, separation-of-duties, mode ceiling, freeze, budget, and kill-switch denial.

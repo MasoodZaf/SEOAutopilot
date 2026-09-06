@@ -1,8 +1,10 @@
 import difflib
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import unquote
 from uuid import UUID
 
 
@@ -41,6 +43,63 @@ PROHIBITED_CLAIM_PATTERNS = [
     "hack search algorithms",
     "manipulate google",
 ]
+
+CONTROL_DIRECTIVE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "canonical": re.compile(r"<link\b[^>]*\brel\s*=\s*[\"']?\s*canonical\b[^>]*>", re.IGNORECASE),
+    "meta_robots": re.compile(r"<meta\b[^>]*\bname\s*=\s*[\"']?\s*robots\b[^>]*>", re.IGNORECASE),
+    "meta_refresh": re.compile(
+        r"<meta\b[^>]*\bhttp-equiv\s*=\s*[\"']?\s*refresh\b[^>]*>", re.IGNORECASE
+    ),
+    "x_robots_tag": re.compile(r"\bx-robots-tag\b[^\r\n]*", re.IGNORECASE),
+}
+
+
+def detect_control_directive_changes(before_content: str, after_content: str) -> list[str]:
+    """Names the indexing-control directives a proposal introduces, edits, or removes.
+
+    Canonical, robots, and refresh-redirect directives decide whether a page is
+    indexed at all and where its authority points. A change to one is never a
+    routine metadata edit however small the diff looks, so it is reported here
+    and classified as high risk rather than being sized by character count.
+    """
+    changed: list[str] = []
+    for name, pattern in CONTROL_DIRECTIVE_PATTERNS.items():
+        before = [match.group(0).strip().lower() for match in pattern.finditer(before_content)]
+        after = [match.group(0).strip().lower() for match in pattern.finditer(after_content)]
+        if before != after:
+            changed.append(name)
+    return changed
+
+
+def _check_target_path(target_type: str, target_path: str) -> ValidationCheck:
+    """Rejects traversal and malformed targets, including percent-encoded forms.
+
+    Decoding twice matters: a single decode turns `%252e%252e` into `%2e%2e`,
+    which a naive `".." in path` test still reads as safe.
+    """
+    name = "target_path_safety"
+    if not target_path:
+        return ValidationCheck(name, False, "Target path is empty.")
+
+    decoded = unquote(unquote(target_path))
+    if "\x00" in decoded:
+        return ValidationCheck(name, False, "Target path contains a null byte.")
+    if "\\" in decoded:
+        return ValidationCheck(name, False, "Target path contains a backslash separator.")
+    if any(segment == ".." for segment in decoded.split("/")):
+        return ValidationCheck(
+            name, False, "Target path contains a traversal segment, including encoded forms."
+        )
+    if target_type == "github_file":
+        if decoded.startswith("/"):
+            return ValidationCheck(
+                name, False, "Repository file paths must be relative to the repository root."
+            )
+    elif decoded.startswith("//"):
+        return ValidationCheck(
+            name, False, "URL target path must not begin with a protocol-relative prefix."
+        )
+    return ValidationCheck(name, True, "Target path is safe and well-formed.")
 
 
 def validate_proposal_content(
@@ -82,10 +141,7 @@ def validate_proposal_content(
     else:
         checks.append(ValidationCheck("prohibited_claim_safety", True, "No prohibited ranking claims detected."))
 
-    if not target_path or ".." in target_path or target_path.startswith("//"):
-        checks.append(ValidationCheck("target_path_safety", False, "Target path contains unsafe traversal or malformed format."))
-    else:
-        checks.append(ValidationCheck("target_path_safety", True, "Target path is safe and well-formed."))
+    checks.append(_check_target_path(target_type, target_path))
 
     return checks
 
@@ -99,6 +155,7 @@ class PolicyDecision:
     separation_of_duties_enforced: bool
     can_auto_deploy: bool
     rejection_reasons: list[str]
+    control_directive_changes: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -120,9 +177,14 @@ def evaluate_proposal_policy(
         if not val.passed:
             rejection_reasons.append(f"Validation failed: {val.name} ({val.message})")
 
+    directive_changes = detect_control_directive_changes(before_content, after_content)
+
     if any(val.name == "prohibited_claim_safety" and not val.passed for val in validations):
         risk = "prohibited"
     elif "robots.txt" in target_path.lower() or "sitemap" in target_path.lower():
+        risk = "high"
+    elif directive_changes:
+        # Canonical, robots, and redirect directives are never a low-risk edit.
         risk = "high"
     elif target_type in {"html_meta", "json_ld_schema", "link_insertion"}:
         risk = "low"
@@ -135,10 +197,18 @@ def evaluate_proposal_policy(
         rejection_reasons.append("Prohibited change class cannot be deployed.")
 
     requires_approval = True
-    required_approver_count = 2 if risk in {"medium", "high"} else 1
+    required_approver_count = 2 if risk in {"medium", "high", "prohibited"} else 1
     allowed_roles = ["owner", "admin", "seo_manager", "editor"] if risk == "low" else ["owner", "admin", "seo_manager"]
     separation_of_duties_enforced = True
-    can_auto_deploy = tenant_mode == "autopilot" and risk == "low" and not rejection_reasons
+    # `not directive_changes` is redundant while they force high risk, and is
+    # kept so that a later change to the risk ladder cannot quietly make an
+    # indexing-control change auto-deployable.
+    can_auto_deploy = (
+        tenant_mode == "autopilot"
+        and risk == "low"
+        and not rejection_reasons
+        and not directive_changes
+    )
 
     return PolicyDecision(
         risk=risk,
@@ -148,4 +218,5 @@ def evaluate_proposal_policy(
         separation_of_duties_enforced=separation_of_duties_enforced,
         can_auto_deploy=can_auto_deploy,
         rejection_reasons=rejection_reasons,
+        control_directive_changes=directive_changes,
     )

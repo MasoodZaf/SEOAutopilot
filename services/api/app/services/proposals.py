@@ -253,6 +253,25 @@ class ProposalService:
                 detail="insufficient_permissions_to_approve_proposal",
             )
 
+        # Read the prior approvers before staging this one. `session.add()`
+        # followed by a query autoflushes the pending row into that query's
+        # result, so counting afterwards and adding one for "this approval"
+        # counts the same person twice and lets a single approver satisfy a
+        # two-approver requirement. Distinct approver ids also make the count
+        # independent of how many times a row was written.
+        prior_approver_ids: set[UUID] = set()
+        if command.decision == "approved":
+            prior_approver_ids = set(
+                await self.session.scalars(
+                    select(ProposalApproval.approver_id).where(
+                        ProposalApproval.tenant_id == self.context.tenant_id,
+                        ProposalApproval.proposal_id == proposal.id,
+                        ProposalApproval.proposal_version == proposal.version,
+                        ProposalApproval.decision == "approved",
+                    )
+                )
+            )
+
         approval = ProposalApproval(
             tenant_id=self.context.tenant_id,
             proposal_id=proposal.id,
@@ -266,17 +285,11 @@ class ProposalService:
         if command.decision == "rejected":
             proposal.status = "rejected"
         else:
-            # Check policy required approvers
-            required_count = int(proposal.policy_evaluation_json.get("required_approver_count", 1))
-            existing_approvals = await self.session.scalars(
-                select(ProposalApproval).where(
-                    ProposalApproval.proposal_id == proposal.id,
-                    ProposalApproval.proposal_version == proposal.version,
-                    ProposalApproval.decision == "approved",
-                )
-            )
-            count = len(list(existing_approvals)) + 1
-            if count >= required_count:
+            # A proposal whose policy record lost this key fails closed to the
+            # two-person rule rather than to a single approver.
+            required_count = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
+            distinct_approvers = prior_approver_ids | {self.context.actor_id}
+            if len(distinct_approvers) >= required_count:
                 proposal.status = "approved"
             else:
                 proposal.status = "review_required"
