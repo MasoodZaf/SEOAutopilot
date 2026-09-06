@@ -388,6 +388,8 @@ async def test_rolling_back_an_open_pull_request_just_closes_it() -> None:
         number = deployed.manifest_json["pull_request_number"]
         result = await adapter.rollback(rollback_request(number))
 
+    # Applied, and it is the only rollback shape that has earned the word: the
+    # adapter itself put the site back, with nobody left to act.
     assert result.status == "applied"
     assert result.detail == "pull_request_closed_before_merge"
     assert result.restored_hash == compute_content_hash(LIVE)
@@ -407,7 +409,11 @@ async def test_rolling_back_a_merged_pull_request_opens_a_revert() -> None:
         fake.merge(number)
         result = await adapter.rollback(rollback_request(number, notes="canary failed"))
 
-    assert result.status == "applied"
+    # Pending, not applied. The deployed change is still in the base branch and
+    # stays there until a person merges this. Calling it applied is how a
+    # deployment receipt came to read `rolled_back` for a change still live on
+    # the pilot site, next to a revert pull request that was closed unmerged.
+    assert result.status == "pending"
     assert result.detail == "revert_pull_request_opened_not_merged"
     assert result.restored_hash == compute_content_hash(LIVE)
     assert len(fake.pulls) == 2
@@ -449,6 +455,8 @@ async def test_rolling_back_twice_reuses_the_open_revert() -> None:
 
     assert first.external_ref == second.external_ref
     assert second.detail == "revert_pull_request_already_open"
+    # Asking twice does not merge anything either.
+    assert (first.status, second.status) == ("pending", "pending")
     assert len(fake.pulls) == 2
 
 

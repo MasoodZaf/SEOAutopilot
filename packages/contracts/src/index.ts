@@ -58,7 +58,10 @@ export const DeploymentReceiptSchema = z.object({
   connector_type: z.enum(["github", "cms_staging", "mock"]),
   idempotency_key: z.string().min(8).max(200),
   external_ref: z.string(),
-  status: z.enum(["pending", "applied", "failed", "rolled_back"]),
+  // `rollback_pending` is a rollback that has been asked for but not carried
+  // out: a revert pull request is open and the deployed change is still live.
+  // It is deliberately not `rolled_back`, which means the change is gone.
+  status: z.enum(["pending", "applied", "failed", "rollback_pending", "rolled_back"]),
   deployed_at: z.string().datetime(),
 });
 export type DeploymentReceipt = z.infer<typeof DeploymentReceiptSchema>;

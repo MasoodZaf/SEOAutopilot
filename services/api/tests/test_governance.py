@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from app.api.schemas import GovernanceSettingsUpdate
 from app.core.context import Role, TenantContext
-from app.db.models import DeploymentReceipt, Proposal, Site
+from app.db.models import AuditEvent, DeploymentReceipt, Proposal, Site
+from app.domain.deployments import RollbackResult
 from app.domain.governance import (
     check_autopilot_execution_eligibility,
     simulate_policy_on_proposals,
@@ -232,6 +233,129 @@ async def test_rollback_fails_closed_until_connector_is_configured() -> None:
     assert mock_receipt.status == "applied"
     assert mock_proposal.status == "deployed"
     session.flush.assert_not_awaited()
+
+
+def _deployed_pair(context, site_id, proposal_id):
+    """A proposal that really is live, and the receipt that says so."""
+    proposal = Proposal(
+        id=proposal_id,
+        tenant_id=context.tenant_id,
+        site_id=site_id,
+        opportunity_id=uuid4(),
+        page_id=uuid4(),
+        author_id=uuid4(),
+        title="Title change",
+        rationale="Improve SEO",
+        target_type="html_meta",
+        target_path="/page",
+        before_content="<title>Old</title>",
+        after_content="<title>New</title>",
+        diff_unified="diff",
+        base_hash="f" * 64,
+        proposal_hash="b" * 64,
+        risk="low",
+        status="deployed",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    receipt = DeploymentReceipt(
+        id=uuid4(),
+        tenant_id=context.tenant_id,
+        site_id=site_id,
+        proposal_id=proposal_id,
+        connector_type="github",
+        idempotency_key="deploy-12345",
+        external_ref="https://github.com/org/repo/pull/1",
+        manifest_json={"pull_request_number": 1},
+        status="applied",
+        deployed_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    return proposal, receipt
+
+
+class _Adapter:
+    """Returns whichever of the two rollback outcomes the test is about."""
+
+    def __init__(self, status: str, detail: str) -> None:
+        self._result = RollbackResult(
+            status=status,
+            external_ref="https://github.com/org/repo/pull/2",
+            restored_hash="a" * 64,
+            detail=detail,
+        )
+
+    async def rollback(self, request):
+        return self._result
+
+
+async def _rollback(context, proposal, receipt, adapter):
+    session = AsyncMock()
+    session.scalar.side_effect = [proposal, receipt, None]
+    session.add = MagicMock()
+    await GovernanceService(session, context).rollback_deployment(
+        proposal.id, notes="drill", adapter=adapter
+    )
+    return session
+
+
+@pytest.mark.asyncio
+async def test_an_unmerged_revert_leaves_the_change_deployed() -> None:
+    """The receipt must not claim an undo that is waiting on a person.
+
+    On the pilot site this receipt read `rolled_back` and the proposal read
+    `failed`, while the page still served the deployed content and the revert
+    pull request sat open, then closed, never merged. Every structured field
+    said the change was gone; only a free-text detail string said otherwise.
+    """
+    context = make_context(role=Role.ADMIN)
+    proposal, receipt = _deployed_pair(context, uuid4(), uuid4())
+
+    await _rollback(
+        context,
+        proposal,
+        receipt,
+        _Adapter("pending", "revert_pull_request_opened_not_merged"),
+    )
+
+    assert receipt.status == "rollback_pending"
+    # Still deployed, because it still is.
+    assert proposal.status == "deployed"
+
+
+@pytest.mark.asyncio
+async def test_a_reversal_the_adapter_performed_itself_is_a_rollback() -> None:
+    """Closing a pull request that never merged really does undo it."""
+    context = make_context(role=Role.ADMIN)
+    proposal, receipt = _deployed_pair(context, uuid4(), uuid4())
+
+    await _rollback(
+        context,
+        proposal,
+        receipt,
+        _Adapter("applied", "pull_request_closed_before_merge"),
+    )
+
+    assert receipt.status == "rolled_back"
+    assert proposal.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_the_audit_trail_distinguishes_the_two() -> None:
+    """Whoever reconstructs this later reads the log, not the receipt."""
+    context = make_context(role=Role.ADMIN)
+    proposal, receipt = _deployed_pair(context, uuid4(), uuid4())
+
+    session = await _rollback(
+        context,
+        proposal,
+        receipt,
+        _Adapter("pending", "revert_pull_request_opened_not_merged"),
+    )
+
+    events = [call.args[0] for call in session.add.call_args_list]
+    audit = [event for event in events if isinstance(event, AuditEvent)]
+    assert [event.action for event in audit] == ["proposal.rollback_requested"]
+    assert audit[0].metadata_json["change_reversed"] is False
+    assert audit[0].metadata_json["receipt_status"] == "rollback_pending"
 
 
 @pytest.mark.asyncio

@@ -65,6 +65,28 @@ test("validates deployment receipt", () => {
   assert.equal(result.success, true);
 });
 
+test("a rollback that is only requested is not rolled_back", () => {
+  // The two are a receipt away from each other and mean opposite things about
+  // whether the change is still on the site.
+  const base = {
+    id: "019d0000-0000-7000-8000-000000000001",
+    site_id: "019d0000-0000-7000-8000-000000000002",
+    proposal_id: "019d0000-0000-7000-8000-000000000003",
+    connector_type: "github",
+    idempotency_key: "deploy-test-12345",
+    external_ref: "https://github.com/org/repo/pull/1",
+    deployed_at: new Date().toISOString(),
+  };
+  assert.equal(
+    DeploymentReceiptSchema.safeParse({ ...base, status: "rollback_pending" }).success,
+    true,
+  );
+  assert.equal(
+    DeploymentReceiptSchema.safeParse({ ...base, status: "rollback_requested" }).success,
+    false,
+  );
+});
+
 test("validates post-deploy verification record", () => {
   const result = PostDeployVerificationSchema.safeParse({
     id: "019d0000-0000-7000-8000-000000000001",

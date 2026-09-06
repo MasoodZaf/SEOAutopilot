@@ -376,7 +376,7 @@ class GitHubDeploymentAdapter:
         existing = await self._existing_pull_request(head)
         if existing is not None:
             return RollbackResult(
-                status="applied",
+                status="pending",
                 external_ref=str(existing.get("html_url") or ""),
                 restored_hash=compute_content_hash(request.before_content),
                 detail="revert_pull_request_already_open",
@@ -422,8 +422,12 @@ class GitHubDeploymentAdapter:
         )
         if opened.status_code != 201:
             raise GitHubDeploymentError(f"github_revert_pull_failed:{opened.status_code}:{head}")
+        # Not `applied`. Opening this pull request changed nothing on the site;
+        # the deployed content is still live and stays live until a person
+        # merges. Reporting it as applied is how a receipt came to claim an undo
+        # that had not happened.
         return RollbackResult(
-            status="applied",
+            status="pending",
             external_ref=str(opened.json().get("html_url") or ""),
             restored_hash=compute_content_hash(request.before_content),
             detail="revert_pull_request_opened_not_merged",

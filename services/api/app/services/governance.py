@@ -426,10 +426,16 @@ class GovernanceService:
         )
         self.session.add(rollback)
 
-        # The deployment receipt has to stop reading 'applied', or the site's
-        # history shows a change that is no longer in force.
-        receipt.status = "rolled_back"
-        proposal.status = "failed"
+        # Two different outcomes, and conflating them is what let a receipt
+        # claim an undo nobody performed. An adapter that reversed the change
+        # itself -- closing a pull request that had never merged -- really has
+        # put the site back. An adapter that opened a revert pull request has
+        # changed nothing yet: the deployed content is still live, and stays
+        # live until a person merges. That receipt is waiting, not finished,
+        # and the proposal is still deployed.
+        rolled_back = result.status == "applied"
+        receipt.status = "rolled_back" if rolled_back else "rollback_pending"
+        proposal.status = "failed" if rolled_back else proposal.status
         proposal.updated_at = datetime.now(UTC)
 
         event_payload = {
@@ -438,13 +444,19 @@ class GovernanceService:
             "deployment_receipt_id": str(receipt.id),
             "external_ref": result.external_ref,
             "detail": result.detail,
+            # The audit log is where somebody reconstructs what was actually
+            # true at the time, so it says which of the two happened rather
+            # than leaving it to be inferred from a free-text detail string.
+            "receipt_status": receipt.status,
+            "change_reversed": rolled_back,
         }
+        action = "proposal.rolled_back" if rolled_back else "proposal.rollback_requested"
         self.session.add(
             AuditEvent(
                 tenant_id=self.context.tenant_id,
                 actor_type="user",
                 actor_id=str(self.context.actor_id),
-                action="proposal.rolled_back",
+                action=action,
                 resource_type="proposal",
                 resource_id=str(proposal.id),
                 trace_id=self.context.trace_id,
@@ -455,7 +467,7 @@ class GovernanceService:
         self.session.add(
             OutboxEvent(
                 tenant_id=self.context.tenant_id,
-                event_type="proposal.rolled_back.v1",
+                event_type=f"{action}.v1",
                 event_version=1,
                 aggregate_type="proposal",
                 aggregate_id=proposal.id,
