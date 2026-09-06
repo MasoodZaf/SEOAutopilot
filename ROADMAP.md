@@ -286,13 +286,21 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
 - Provision both role passwords in deployment and document the step in `DEPLOYMENT.md`. Production
   is still entirely unpatched: applying 0027 alone changes nothing, because forcing row security
   does not constrain a superuser.
-- Move the remaining safety controls off `AsyncMock`. **Done for the deployment path** —
-  `tests/integration/test_deployment_gate.py` covers the mode ceiling, emergency freeze, scheduled
-  freeze window, daily change budget, idempotency, role check and global switch against real
-  PostgreSQL on the `seo_autopilot_app` role. The value was measured, not assumed: removing the
-  tenant and day scoping from the budget count — so one tenant's deployments consume another's, and
-  the budget counts all of history — leaves all 31 mocked proposal tests green, and fails the new
-  ones. **Still on mocks:** calibration idempotency and cursor scoping.
+- Move the remaining safety controls off `AsyncMock`. **Done for deployment, connector sync and
+  performance** — `tests/integration/test_deployment_gate.py` and `test_idempotency_races.py` cover
+  the mode ceiling, emergency freeze, scheduled freeze window, daily change budget, idempotency under
+  concurrency, role check and global switch against real PostgreSQL on the `seo_autopilot_app` role.
+  The value was measured, not assumed: removing the tenant and day scoping from the budget count — so
+  one tenant's deployments consume another's, and the budget counts all of history — leaves all 31
+  mocked proposal tests green, and fails the new ones. Writing them also turned up a live defect on
+  the deployment path, since fixed.
+- **Calibration has no real coverage at all.** `CalibrationService` has exactly one test, and it
+  asserts that a viewer gets a 403. Everything `create_run` does after the role check — evidence
+  readiness, the idempotency and open-run checks, and item construction from findings and
+  observations — has never been executed by a test, so its idempotency guard is written but
+  unverified. This is the workflow that produces the product's precision evidence, so it needs the
+  same PostgreSQL-backed chain the deployment gate has.
+- **Still on mocks:** cursor scoping.
 
 **Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
 has a test that runs against real PostgreSQL.
