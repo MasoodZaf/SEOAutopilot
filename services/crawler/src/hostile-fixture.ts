@@ -96,3 +96,58 @@ export function createHostileFixture(): HostileFixture {
     },
   };
 }
+
+export const SHELL_ORIGIN = "https://shell.example";
+
+/** The body every URL of a client-rendered site returns before its JavaScript runs. */
+const SHELL_BODY = `<html><head><title>Shell — Learn Everything, Everywhere</title>
+  <meta name="description" content="Shell is a place to learn things.">
+  <link rel="canonical" href="${SHELL_ORIGIN}/"></head>
+  <body><div id="root"></div>
+  <noscript>You need JavaScript to run this app. Sign in to continue.</noscript>
+  <script src="/static/app.js"></script></body></html>`;
+
+export type ShellWallFixture = {
+  fetchResource: FetchResource;
+  declaredUrls: string[];
+};
+
+/**
+ * A site that answers every URL with the same body under HTTP 200.
+ *
+ * This is the shape that made 1534 findings out of nothing: a login wall or an
+ * unrendered app shell, discovered through the sitemap, served with a success
+ * status on every path. Nothing in a crawl distinguishes it from a real site
+ * except that the bodies do not differ, which is what `assessContentCollapse`
+ * measures.
+ */
+export function createShellWallFixture(pageCount = 120): ShellWallFixture {
+  const declaredUrls = Array.from(
+    {length: pageCount},
+    (_, offset) => `${SHELL_ORIGIN}/tutorials/lesson-${offset}`,
+  );
+  const responses = new Map<string, FetchedResource>();
+  responses.set(
+    `${SHELL_ORIGIN}/robots.txt`,
+    resource(`${SHELL_ORIGIN}/robots.txt`, `User-agent: *\nSitemap: ${SHELL_ORIGIN}/sitemap.xml`, "text/plain"),
+  );
+  responses.set(
+    `${SHELL_ORIGIN}/sitemap.xml`,
+    resource(
+      `${SHELL_ORIGIN}/sitemap.xml`,
+      `<urlset>${declaredUrls.map(url => `<url><loc>${url}</loc></url>`).join("")}</urlset>`,
+      "application/xml",
+    ),
+  );
+  for (const url of [`${SHELL_ORIGIN}/`, ...declaredUrls]) {
+    responses.set(url, resource(url, SHELL_BODY, "text/html"));
+  }
+  return {
+    declaredUrls,
+    fetchResource: async url => {
+      const found = responses.get(url.toString());
+      if (!found) throw new Error(`fixture_scope_escape:${url.toString()}`);
+      return found;
+    },
+  };
+}
