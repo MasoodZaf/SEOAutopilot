@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.context import Role, TenantContext
 from app.services.proposal_drafts import ProposalDraftService
+from app.services.proposals import ProposalService
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.asyncio, requires_database]
@@ -175,6 +176,7 @@ async def _seed(session, ids: dict[str, UUID]) -> None:
 
 async def _teardown(session, tenant_id: UUID) -> None:
     for table in (
+        "proposal_approval", "proposal",
         "opportunity_finding", "opportunity", "finding", "page_score", "analysis_run",
         "page_observation", "page", "crawl_job", "outbox_event", "audit_event", "site",
     ):
@@ -207,6 +209,18 @@ def drafts(session, ids: dict[str, UUID], tenant_id: UUID | None = None) -> Prop
             trace_id="integration",
         ),
         PATH_TEMPLATE,
+    )
+
+
+def proposals(session, ids: dict[str, UUID]) -> ProposalService:
+    return ProposalService(
+        session,
+        TenantContext(
+            tenant_id=ids["tenant_id"],
+            actor_id=ids["actor_id"],
+            role=Role.OWNER,
+            trace_id="integration",
+        ),
     )
 
 
@@ -342,3 +356,46 @@ async def test_the_same_opportunity_drafts_the_same_change_twice(app_engine, evi
         )
 
     assert first == second
+
+
+async def test_an_opportunity_that_already_has_a_live_proposal_is_refused(
+    app_engine, evidence
+) -> None:
+    """Drafting twice would write the same file twice in one branch.
+
+    The second write wins silently and the first receipt then claims an effect
+    that never happened. Deployed apart, they are two pull requests undoing each
+    other. This surfaced by drafting every open opportunity on a site where one
+    had already been deployed.
+    """
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        site_id, command = await drafts(session, evidence).draft_from_opportunity(
+            evidence["opportunity_calculator"], read_repository
+        )
+        await proposals(session, evidence).create_proposal(site_id, command)
+
+        with pytest.raises(HTTPException) as raised:
+            await drafts(session, evidence).draft_from_opportunity(
+                evidence["opportunity_calculator"], read_repository
+            )
+
+    assert raised.value.status_code == 409
+    assert str(raised.value.detail).startswith("opportunity_already_has_a_live_proposal")
+
+
+async def test_a_rejected_proposal_does_not_block_a_new_one(app_engine, evidence) -> None:
+    """A finished proposal is not a live one: the page still needs the change."""
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        site_id, command = await drafts(session, evidence).draft_from_opportunity(
+            evidence["opportunity_calculator"], read_repository
+        )
+        first = await proposals(session, evidence).create_proposal(site_id, command)
+        await session.execute(
+            text("UPDATE proposal SET status='rejected' WHERE id=:id"), {"id": first.id}
+        )
+
+        _, again = await drafts(session, evidence).draft_from_opportunity(
+            evidence["opportunity_calculator"], read_repository
+        )
+
+    assert again.target_path == "CalcHive/emi-calculator.html"

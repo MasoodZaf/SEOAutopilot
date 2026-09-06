@@ -30,6 +30,7 @@ from app.db.models import (
     OpportunityFinding,
     Page,
     PageObservation,
+    Proposal,
 )
 from app.domain.h1_repair import H1Repair, H1RepairError, is_site_root, plan_repair
 
@@ -40,6 +41,10 @@ ReadFile = Callable[[str], Awaitable[str | None]]
 # Both rules describe the same broken heading from different angles, and both
 # are repaired the same way.
 REPAIRABLE_RULES = frozenset({"content.title_h1_mismatch", "h1.duplicate_across_site"})
+
+# A proposal in any of these is still on its way somewhere, so a second one for
+# the same opportunity would be a duplicate rather than a replacement.
+LIVE_PROPOSAL_STATUSES = ("draft", "validated", "review_required", "approved", "deployed")
 
 RATIONALE = (
     "The heading is taken from this page's own <title>, so it names the page's "
@@ -64,6 +69,7 @@ class ProposalDraftService:
     ) -> tuple[UUID, ProposalCreate]:
         """Return the site the change belongs to, and the change itself."""
         opportunity = await self._load_opportunity(opportunity_id)
+        await self._refuse_if_already_proposed(opportunity_id)
         page = await self._load_page(opportunity.page_id)
         rule_key = await self._repairable_rule(opportunity_id)
 
@@ -98,6 +104,27 @@ class ProposalDraftService:
             before_content=repair.before_content,
             after_content=repair.after_content,
         )
+
+    async def _refuse_if_already_proposed(self, opportunity_id: UUID) -> None:
+        """One opportunity, one live proposal.
+
+        Drafting the same opportunity twice produces two proposals for one page.
+        Deployed together they write the same file twice in one branch, where
+        the second silently wins and the first receipt claims an effect that
+        never happened; deployed apart they are two pull requests undoing each
+        other. A proposal that is finished — deployed, rejected or expired —
+        does not block a new one, because the opportunity being open again
+        means the page still needs the change.
+        """
+        live = await self.session.scalar(
+            select(Proposal.id).where(
+                Proposal.tenant_id == self.context.tenant_id,
+                Proposal.opportunity_id == opportunity_id,
+                Proposal.status.in_(LIVE_PROPOSAL_STATUSES),
+            )
+        )
+        if live is not None:
+            raise self._refuse(f"opportunity_already_has_a_live_proposal:{live}")
 
     def _repair(self, document: str, title: str, normalized_url: str) -> H1Repair:
         try:

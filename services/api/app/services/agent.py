@@ -10,19 +10,25 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.proposals import github_target
 from app.api.schemas import RoutineUpsert
+from app.core.config import Settings, get_settings
 from app.core.context import Role, TenantContext
 from app.db.models import AgentMessage, AgentSession, AgentTask, Routine, Site
+from app.domain.github_adapter import GitHubDeploymentAdapter
 from app.domain.routines import Cadence, RoutineSchedule, initial_run_at
 from app.domain.skills import SKILLS, RequestedCadence, Skill, SkillEffect, parse_cadence, route
 from app.services.briefs import ContentBriefService
 from app.services.competitors import CompetitorService
 from app.services.keywords import KeywordService
 from app.services.opportunities import OpportunityService
+from app.services.proposal_drafts import ProposalDraftService
+from app.services.proposals import ProposalService
 from app.services.reports import ReportService
 from app.services.routines import RoutineService
 
@@ -31,6 +37,11 @@ MAX_SESSIONS_PER_SITE = 100
 DEFAULT_SCHEDULE_HOUR_UTC = 6
 MAX_MESSAGE_PAGE_SIZE = 200
 SUMMARY_LIMIT = 5
+# How many opportunities one request will consider, and how many drafts it will
+# list back. Bounded so a single message cannot open an unbounded number of
+# proposals, which is the closest a skill can come to acting at scale.
+PROPOSE_LIMIT = 50
+PROPOSE_REPORT_LIMIT = 10
 
 
 class SkillAnswer:
@@ -56,10 +67,16 @@ class AgentService:
         context: TenantContext,
         *,
         keyword_encryption_key: bytes | None = None,
+        settings: "Settings | None" = None,
     ) -> None:
         self.session = session
         self.context = context
         self.keyword_encryption_key = keyword_encryption_key
+        self._settings = settings
+
+    @property
+    def settings(self) -> "Settings":
+        return self._settings if self._settings is not None else get_settings()
 
     # --- sessions -----------------------------------------------------------
 
@@ -260,6 +277,8 @@ class AgentService:
                     skill, site, parse_cadence(message)
                 )
                 task.routine_run_id = routine_run_id
+            elif skill.effect is SkillEffect.PROPOSE:
+                answer = await self._propose(skill, site)
             else:
                 answer = await self._read(skill, site)
         except HTTPException as error:
@@ -352,6 +371,82 @@ class AgentService:
                 [{"kind": "routine_run", "id": str(run.id), "routine_kind": skill.routine_kind}],
             ),
             run.id,
+        )
+
+    async def _propose(self, skill: Skill, site: Site) -> SkillAnswer:
+        """Draft proposals for every open opportunity that has a safe repair.
+
+        The connector is needed because a proposal's diff must be built against
+        the file as it stands on the base branch; anything else would fail its
+        own drift check at deploy time. Nothing here approves or deploys, and a
+        proposal that already exists for an opportunity is left alone rather
+        than duplicated.
+        """
+        if skill.key != "draft_fixes":
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="skill_not_implemented"
+            )
+
+        target = github_target(self.settings)
+        token = self.settings.github_token
+        if target is None or token is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="deployment_connector_not_configured",
+            )
+
+        opportunities = await OpportunityService(self.session, self.context).list_top(
+            site.id, PROPOSE_LIMIT, "open"
+        )
+        if not opportunities:
+            return _no_evidence(
+                "open opportunity", "Run a crawl and an audit first, then ask again."
+            )
+
+        drafted: list[str] = []
+        skipped: dict[str, int] = {}
+        async with httpx.AsyncClient(
+            follow_redirects=False, timeout=httpx.Timeout(30.0)
+        ) as client:
+            adapter = GitHubDeploymentAdapter(client, target, token.get_secret_value())
+            drafts = ProposalDraftService(
+                self.session, self.context, self.settings.github_path_template
+            )
+            proposals = ProposalService(self.session, self.context)
+            for opportunity in opportunities:
+                try:
+                    site_id, command = await drafts.draft_from_opportunity(
+                        opportunity.id, adapter.read_file
+                    )
+                except HTTPException as refusal:
+                    # Every refusal is a reason a person would want to know, so
+                    # they are counted and reported rather than swallowed.
+                    reason = str(refusal.detail).split(":", 1)[0]
+                    skipped[reason] = skipped.get(reason, 0) + 1
+                    continue
+                proposal = await proposals.create_proposal(site_id, command)
+                drafted.append(f"`{proposal.target_path}` — {proposal.title}")
+
+        if not drafted:
+            summary = ", ".join(f"{count} {reason}" for reason, count in sorted(skipped.items()))
+            return SkillAnswer(
+                f"I drafted nothing. Every open opportunity was skipped: {summary}."
+            )
+
+        lines = "\n".join(f"- {row}" for row in drafted[:PROPOSE_REPORT_LIMIT])
+        more = (
+            f"\n- …and {len(drafted) - PROPOSE_REPORT_LIMIT} more"
+            if len(drafted) > PROPOSE_REPORT_LIMIT
+            else ""
+        )
+        skipped_note = ""
+        if skipped:
+            summary = ", ".join(f"{count} {reason}" for reason, count in sorted(skipped.items()))
+            skipped_note = f"\n\nSkipped: {summary}."
+        return SkillAnswer(
+            f"I drafted **{len(drafted)}** proposals. None of them is approved and none "
+            f"is deployed — each one needs a reviewer who is not its author.\n\n"
+            f"{lines}{more}{skipped_note}"
         )
 
     async def _read(self, skill: Skill, site: Site) -> SkillAnswer:

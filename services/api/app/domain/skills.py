@@ -24,6 +24,12 @@ class SkillEffect(StrEnum):
     READ = "read"
     # Queues a routine run; the work happens in the worker under its own gates.
     SCHEDULE = "schedule"
+    # Writes proposals and nothing else. A proposal is a request for a change,
+    # not a change: it still has to pass classification, approval and the
+    # deployment gate, none of which a skill can reach. This keeps the rule that
+    # no skill can deploy, approve, or write site content, while letting the
+    # agent do the preparation a person would otherwise do by hand.
+    PROPOSE = "propose"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +92,26 @@ def scheduling(
 
 
 SKILLS: tuple[Skill, ...] = (
+    Skill(
+        key="draft_fixes",
+        name="Draft fixes for open opportunities",
+        description=(
+            "Turn the site's open opportunities into proposals a human can review, "
+            "for the rules that have a deterministic repair. Deploys nothing, approves "
+            "nothing, and skips anything it cannot fix safely."
+        ),
+        effect=SkillEffect.PROPOSE,
+        allowed_roles=ACTING_ROLES,
+        # Topics only. A word that is both the subject and the imperative would
+        # let the skill satisfy its own action gate, which is how "draft" alone
+        # started it.
+        strong_triggers=frozenset({"proposal", "proposals", "fixes"}),
+        weak_triggers=frozenset({"fix", "changes", "headings", "h1", "repair", "opportunities"}),
+        # Naming a problem is a report request; a proposal is written only when
+        # the message asks for one to be written.
+        action_triggers=frozenset({"draft", "propose", "prepare", "write"}),
+        example="Draft fixes for the duplicate headings.",
+    ),
     Skill(
         key="site_audit",
         name="Website SEO audit",
@@ -366,13 +392,17 @@ def route(message: str, role: Role) -> RoutingResult:
         if role not in skill.allowed_roles:
             continue
         result = score_skill(skill, lowered, tokens)
-        scheduling_skill = skill.effect is SkillEffect.SCHEDULE
-        # Naming a topic is a question. A scheduling skill additionally needs a
-        # word asking for the work to happen, must clear the higher bar, and
-        # must not be a question about work that already happened.
-        if scheduling_skill and (asking or not (result.action_hit and result.strong_hit)):
+        # The distinction that matters is reading versus acting, not scheduling
+        # versus everything else. A skill that writes proposals is an action on
+        # the tenant's behalf just as much as one that queues a routine, so it
+        # answers to the same gate: naming a topic is a question, and a skill
+        # that does something needs a word asking for the work to happen, must
+        # clear the higher bar, and must not be a question about work that
+        # already happened.
+        acting_skill = skill.effect in {SkillEffect.SCHEDULE, SkillEffect.PROPOSE}
+        if acting_skill and (asking or not (result.action_hit and result.strong_hit)):
             continue
-        threshold = SCHEDULE_MIN_SCORE if scheduling_skill else READ_MIN_SCORE
+        threshold = SCHEDULE_MIN_SCORE if acting_skill else READ_MIN_SCORE
         if result.score >= threshold:
             scored.append((result.score, skill, result.matched, result.strong_hit))
 
@@ -393,12 +423,15 @@ def route(message: str, role: Role) -> RoutingResult:
             suggestions or tuple(s for s in SKILLS if role in s.allowed_roles)[:4],
         )
 
-    # An explicit imperative on a scheduling skill breaks a tie against a read
+    # An explicit imperative on a skill that acts breaks a tie against a read
     # skill that only matched shared topic vocabulary.
     scored.sort(
         key=lambda entry: (
             -entry[0],
-            not (entry[1].effect is SkillEffect.SCHEDULE and entry[3]),
+            not (
+                entry[1].effect in {SkillEffect.SCHEDULE, SkillEffect.PROPOSE}
+                and entry[3]
+            ),
             entry[1].key,
         )
     )

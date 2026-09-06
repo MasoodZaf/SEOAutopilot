@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import pytest
 
+import app.services.agent as agent_module
 from app.core.context import Role
 from app.domain.skills import (
     ACTION_TRIGGERS,
@@ -132,10 +135,48 @@ def test_a_role_can_never_reach_a_skill_it_is_not_allowed() -> None:
                 assert result.skill is None or result.skill.key != candidate.key
 
 
-def test_no_skill_can_deploy_or_approve() -> None:
-    """The registry is the whole surface; nothing in it touches the change path."""
+def test_the_agent_never_calls_deployment_or_approval() -> None:
+    """The guard that outlives any list of effects.
+
+    A skill that could deploy would be a change made with no reviewer, and one
+    that could approve would be a change reviewed by its own author. Neither
+    call may appear anywhere the agent can reach.
+    """
+    source = Path(agent_module.__file__ or "").read_text()
+
+    for forbidden in ("deploy_proposal", "deploy_proposals", "approve_proposal", "rollback_"):
+        assert forbidden not in source, f"the agent must not be able to call {forbidden}"
+
+
+def test_a_skill_that_acts_needs_more_than_a_topic() -> None:
+    """Writing a proposal is an action, so it answers the same gate as scheduling."""
     for skill in SKILLS:
-        assert skill.effect in {SkillEffect.READ, SkillEffect.SCHEDULE}
+        if skill.effect is SkillEffect.READ:
+            continue
+        # A word cannot be both the subject and the imperative, or the skill
+        # satisfies its own action gate from a bare topic.
+        assert not (skill.strong_triggers & skill.action_triggers), (
+            f"{skill.key} has a trigger that is both topic and action"
+        )
+        # A bare topic word must not be enough to start it.
+        for topic in sorted(skill.strong_triggers):
+            result = route(topic, Role.OWNER)
+            assert result.skill is None or result.skill.key != skill.key, (
+                f"{skill.key} started from the bare topic {topic!r}"
+            )
+
+
+def test_no_skill_can_deploy_or_approve() -> None:
+    """The registry is the whole surface; nothing in it touches the change path.
+
+    A skill may now write proposals, which is a request for a change rather
+    than a change: it still has to pass classification, approval by someone who
+    is not its author, and the deployment gate. So enumerating effects is no
+    longer the invariant. The invariant is that no skill's execution reaches
+    deployment or approval, which the source is checked for below.
+    """
+    for skill in SKILLS:
+        assert skill.effect in {SkillEffect.READ, SkillEffect.SCHEDULE, SkillEffect.PROPOSE}
         if skill.effect is SkillEffect.SCHEDULE:
             # A scheduling skill can only queue a routine kind, and routines
             # hold no deployment authority.
