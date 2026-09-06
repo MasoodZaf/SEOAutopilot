@@ -7,9 +7,11 @@ from fastapi import HTTPException
 
 from app.db.models import AuditEvent, Connector, ConnectorOauthState, OutboxEvent, Site
 from app.services.connectors import (
+    ANALYTICS_READONLY_SCOPE,
     GSC_READONLY_SCOPE,
     ConnectorOAuthCallbackService,
 )
+from app.services.google_analytics import AnalyticsProperty
 from app.services.google_oauth import GoogleProperty, GoogleTokenGrant
 
 TENANT_ID = UUID("019d0000-0000-7000-8000-000000000011")
@@ -93,7 +95,7 @@ async def test_callback_consumes_state_binds_property_and_never_audits_tokens() 
     provider = FakeProvider()
     secrets = FakeSecretStore()
 
-    result = await ConnectorOAuthCallbackService(session, provider, secrets).complete_gsc(
+    result = await ConnectorOAuthCallbackService(session, provider, secrets).complete_authorization(
         "state-value-not-persisted-1234567890", "authorization-code", "trace"
     )
 
@@ -127,7 +129,7 @@ async def test_callback_rejects_replayed_state_before_provider_call() -> None:
     provider = FakeProvider()
 
     with pytest.raises(HTTPException) as captured:
-        await ConnectorOAuthCallbackService(session, provider, FakeSecretStore()).complete_gsc(
+        await ConnectorOAuthCallbackService(session, provider, FakeSecretStore()).complete_authorization(
             "replayed-state-value-123456789012", "code", "trace"
         )
     assert captured.value.detail == "oauth_state_invalid"
@@ -150,7 +152,7 @@ async def test_callback_rejects_broader_scope_without_storing_secret() -> None:
     secrets = FakeSecretStore()
 
     with pytest.raises(HTTPException) as captured:
-        await ConnectorOAuthCallbackService(session, provider, secrets).complete_gsc(
+        await ConnectorOAuthCallbackService(session, provider, secrets).complete_authorization(
             "state-value-for-scope-test-123456", "code", "trace"
         )
     assert captured.value.detail == "oauth_scope_mismatch"
@@ -171,7 +173,178 @@ async def test_callback_rejects_unverified_or_unrequested_property() -> None:
     )
 
     with pytest.raises(HTTPException) as captured:
-        await ConnectorOAuthCallbackService(session, provider, FakeSecretStore()).complete_gsc(
+        await ConnectorOAuthCallbackService(session, provider, FakeSecretStore()).complete_authorization(
             "state-value-property-test-123456789", "code", "trace"
         )
     assert captured.value.detail == "search_console_property_not_authorized"
+
+
+# --- Google Analytics -------------------------------------------------------
+#
+# The GA4 flow reuses every security-critical step of the Search Console one --
+# the unscoped state read, the tenant adoption, the locking re-read, the
+# single-use consume. What differs is the only thing that binds the credential
+# to a site, so that is what these pin.
+
+
+def analytics_records(
+    *, property_ref: str = "properties/123456789", host: str = "wordkitapp.com"
+) -> tuple[ConnectorOauthState, Connector, Site]:
+    oauth_state, connector, site = callback_records()
+    oauth_state.requested_scopes = [ANALYTICS_READONLY_SCOPE]
+    oauth_state.requested_property_ref = property_ref
+    connector.type = "google_analytics"
+    site.normalized_host = host
+    site.canonical_origin = f"https://{host}"
+    return oauth_state, connector, site
+
+
+class FakeAnalytics:
+    def __init__(self, *properties: AnalyticsProperty) -> None:
+        self.list_properties = AsyncMock(return_value=list(properties))
+
+
+class AnalyticsSecretStore(FakeSecretStore):
+    async def store(self, tenant_id, connector_id, provider, payload):
+        assert provider == "google_analytics"
+        self.payload = payload
+        return "managed-secret://analytics"
+
+
+async def complete_analytics(session, provider, analytics, secrets=None):
+    return await ConnectorOAuthCallbackService(
+        session, provider, secrets or AnalyticsSecretStore(), analytics
+    ).complete_authorization("state-value-not-persisted-1234567890", "authorization-code", "trace")
+
+
+def analytics_session(oauth_state, connector, site) -> MagicMock:
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[oauth_state, oauth_state, connector, site])
+    session.execute = AsyncMock()
+    session.add_all = MagicMock()
+    return session
+
+
+@pytest.mark.asyncio
+async def test_a_property_whose_stream_is_the_site_is_connected() -> None:
+    oauth_state, connector, site = analytics_records()
+    session = analytics_session(oauth_state, connector, site)
+    provider = FakeProvider(scopes=frozenset({ANALYTICS_READONLY_SCOPE}))
+    analytics = FakeAnalytics(
+        AnalyticsProperty("properties/123456789", "WordKit", ("wordkitapp.com",))
+    )
+
+    result = await complete_analytics(session, provider, analytics)
+
+    assert result is connector
+    assert connector.status == "active"
+    assert connector.external_account_ref == "properties/123456789"
+    assert connector.granted_scopes == [ANALYTICS_READONLY_SCOPE]
+    # Search Console must not have been consulted for a GA4 state.
+    provider.list_properties.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_property_measuring_someone_elses_site_is_refused() -> None:
+    """The whole reason this connector reads data streams.
+
+    `properties/123456789` names nothing, so without this an authorized account
+    could attach any property in it to any site they had verified.
+    """
+    oauth_state, connector, site = analytics_records()
+    session = analytics_session(oauth_state, connector, site)
+    analytics = FakeAnalytics(
+        AnalyticsProperty("properties/123456789", "Somebody Else", ("example.com",))
+    )
+
+    with pytest.raises(HTTPException) as captured:
+        await complete_analytics(
+            session, FakeProvider(scopes=frozenset({ANALYTICS_READONLY_SCOPE})), analytics
+        )
+
+    assert captured.value.detail == "analytics_property_site_mismatch"
+    assert connector.status == "pending_authorization"
+    assert connector.external_account_ref is None
+
+
+@pytest.mark.asyncio
+async def test_a_property_outside_the_grant_is_refused() -> None:
+    oauth_state, connector, site = analytics_records()
+    session = analytics_session(oauth_state, connector, site)
+    analytics = FakeAnalytics(
+        AnalyticsProperty("properties/999", "Another", ("wordkitapp.com",))
+    )
+
+    with pytest.raises(HTTPException) as captured:
+        await complete_analytics(
+            session, FakeProvider(scopes=frozenset({ANALYTICS_READONLY_SCOPE})), analytics
+        )
+
+    assert captured.value.detail == "analytics_property_not_authorized"
+    assert connector.status == "pending_authorization"
+
+
+@pytest.mark.asyncio
+async def test_a_grant_carrying_the_wrong_scope_is_refused() -> None:
+    """Google grants what the user consented to, not what was requested.
+
+    A GA4 state redeemed against a Search Console grant would otherwise store a
+    credential that cannot read the property it was connected for.
+    """
+    oauth_state, connector, site = analytics_records()
+    session = analytics_session(oauth_state, connector, site)
+
+    with pytest.raises(HTTPException) as captured:
+        await complete_analytics(
+            session,
+            FakeProvider(scopes=frozenset({GSC_READONLY_SCOPE})),
+            FakeAnalytics(AnalyticsProperty("properties/123456789", "W", ("wordkitapp.com",))),
+        )
+
+    assert captured.value.detail == "oauth_scope_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_a_search_console_state_still_takes_the_search_console_path() -> None:
+    """The dispatch must not have changed the flow that already worked."""
+    oauth_state, connector, site = callback_records()
+    session = analytics_session(oauth_state, connector, site)
+    provider = FakeProvider()
+    analytics = FakeAnalytics()
+
+    result = await ConnectorOAuthCallbackService(
+        session, provider, FakeSecretStore(), analytics
+    ).complete_authorization("state-value-not-persisted-1234567890", "authorization-code", "trace")
+
+    assert result.external_account_ref == "sc-domain:example.com"
+    provider.list_properties.assert_awaited_once()
+    analytics.list_properties.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_state_asking_for_an_unsupported_scope_is_refused() -> None:
+    """A scope this build cannot bind must not reach a provider at all."""
+    oauth_state, connector, site = analytics_records()
+    oauth_state.requested_scopes = ["https://www.googleapis.com/auth/drive"]
+    session = analytics_session(oauth_state, connector, site)
+    provider = FakeProvider()
+
+    with pytest.raises(HTTPException) as captured:
+        await complete_analytics(session, provider, FakeAnalytics())
+
+    assert captured.value.detail == "oauth_state_invalid"
+    provider.exchange_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_ga4_callback_without_an_analytics_client_fails_closed() -> None:
+    oauth_state, connector, site = analytics_records()
+    session = analytics_session(oauth_state, connector, site)
+
+    with pytest.raises(HTTPException) as captured:
+        await ConnectorOAuthCallbackService(
+            session, FakeProvider(scopes=frozenset({ANALYTICS_READONLY_SCOPE})), FakeSecretStore()
+        ).complete_authorization("state-value-not-persisted-1234567890", "authorization-code", "trace")
+
+    assert captured.value.status_code == 503
+    assert captured.value.detail == "google_analytics_connector_not_configured"

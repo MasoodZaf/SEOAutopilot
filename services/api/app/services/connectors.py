@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlsplit
@@ -23,6 +24,14 @@ from app.db.models import (
 )
 from app.services.connector_secrets import ConnectorSecretReader, ConnectorSecretStore
 from app.services.dns_provider import DnsProvider, DnsProviderError
+from app.services.google_analytics import (
+    ANALYTICS_READONLY_SCOPE,
+    AnalyticsAdminProvider,
+    GoogleAnalyticsError,
+)
+from app.services.google_analytics import (
+    property_matches_site as analytics_property_matches_site,
+)
 from app.services.google_oauth import GoogleOAuthError, GoogleOAuthProvider
 from app.services.sites import SiteService, stable_hash
 
@@ -31,6 +40,14 @@ DNS_PROVIDER_CONNECTOR = "dns_provider"
 GSC_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 MAX_BACKFILL_DAYS = 490
 GSC_PERMITTED_LEVELS = frozenset({"siteOwner", "siteFullUser", "siteRestrictedUser"})
+ANALYTICS_CONNECTOR = "google_analytics"
+
+# The scope sets a callback will act on. A state carrying anything else -- a
+# scope that was widened after the state was written, or one this build does
+# not implement -- is not a state this code knows how to bind, so it is refused
+# rather than guessed at.
+_SUPPORTED_SCOPE_SETS = [[GSC_READONLY_SCOPE], [ANALYTICS_READONLY_SCOPE]]
+_ANALYTICS_PROPERTY_PATTERN = re.compile(r"properties/[0-9]{1,20}")
 
 
 def property_matches_site(property_ref: str, normalized_host: str) -> bool:
@@ -58,6 +75,83 @@ class ConnectorService:
             .order_by(Connector.created_at, Connector.id)
         )
         return list(result)
+
+    async def begin_analytics_authorization(
+        self, site_id: UUID, property_ref: str, settings: Settings
+    ) -> tuple[Connector, str, datetime]:
+        """Start a GA4 consent, without claiming the property is ours yet.
+
+        Deliberately different from the Search Console flow in one respect: a
+        Search Console property ref names its own site, so it can be rejected
+        here, before anyone is sent to Google. A GA4 ref names nothing, so the
+        binding cannot happen until the grant exists and the property's data
+        streams can be read. What is checked here is only its shape.
+        """
+        self.context.require(Role.OWNER, Role.ADMIN)
+        site = await self._verified_site(site_id)
+        if not settings.google_connectors_enabled or not settings.google_client_id:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="google_connector_not_configured",
+            )
+        if not _ANALYTICS_PROPERTY_PATTERN.fullmatch(property_ref):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="analytics_property_ref_invalid",
+            )
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == self.context.tenant_id,
+                Connector.site_id == site.id,
+                Connector.type == ANALYTICS_CONNECTOR,
+            )
+        )
+        if connector is None:
+            connector = Connector(
+                tenant_id=self.context.tenant_id,
+                site_id=site.id,
+                type=ANALYTICS_CONNECTOR,
+                status="pending_authorization",
+            )
+            self.session.add(connector)
+            await self.session.flush()
+        elif connector.status == "active":
+            connector.status = "reauthorization_required"
+            connector.version += 1
+
+        state = secrets.token_urlsafe(32)
+        expires_at = datetime.now(UTC) + timedelta(minutes=10)
+        self.session.add(
+            ConnectorOauthState(
+                tenant_id=self.context.tenant_id,
+                site_id=site.id,
+                connector_id=connector.id,
+                state_hash=hashlib.sha256(state.encode()).hexdigest(),
+                requested_scopes=[ANALYTICS_READONLY_SCOPE],
+                requested_property_ref=property_ref,
+                expires_at=expires_at,
+                created_by=self.context.actor_id,
+            )
+        )
+        self.site_service._stage_event(
+            "connector.authorization_started",
+            "connector",
+            connector.id,
+            {"site_id": str(site.id), "connector_type": ANALYTICS_CONNECTOR},
+        )
+        query = urlencode(
+            {
+                "client_id": settings.google_client_id,
+                "redirect_uri": settings.google_oauth_redirect_uri,
+                "response_type": "code",
+                "scope": ANALYTICS_READONLY_SCOPE,
+                "access_type": "offline",
+                "include_granted_scopes": "false",
+                "prompt": "consent",
+                "state": state,
+            }
+        )
+        return connector, f"https://accounts.google.com/o/oauth2/v2/auth?{query}", expires_at
 
     async def begin_gsc_authorization(
         self, site_id: UUID, property_ref: str, settings: Settings
@@ -364,12 +458,80 @@ class ConnectorOAuthCallbackService:
         session: AsyncSession,
         provider: GoogleOAuthProvider,
         secret_store: ConnectorSecretStore,
+        analytics: AnalyticsAdminProvider | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
         self.secret_store = secret_store
+        self.analytics = analytics
 
-    async def complete_gsc(self, state: str, code: str, trace_id: str) -> Connector:
+    async def _search_console_property(self, grant, oauth_state) -> str:
+        """The requested property, only if this grant actually covers it.
+
+        Search Console returns the properties the authorizing account can see
+        and at what level. A property absent from that list, or present at a
+        level too low to read metrics, is not one this grant can use.
+        """
+        properties = await self.provider.list_properties(grant.access_token)
+        matching = next(
+            (
+                item
+                for item in properties
+                if item.property_ref == oauth_state.requested_property_ref
+                and item.permission_level in GSC_PERMITTED_LEVELS
+            ),
+            None,
+        )
+        if matching is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="search_console_property_not_authorized",
+            )
+        return matching.property_ref
+
+    async def _analytics_property(self, grant, oauth_state, site: Site) -> str:
+        """The requested GA4 property, only if it measures this very site.
+
+        Two separate facts, and both are checked here rather than at request
+        time: the grant covers the property, and one of the property's own data
+        streams collects from the host the tenant already proved they control.
+        A property ref alone claims neither.
+        """
+        if self.analytics is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="google_analytics_connector_not_configured",
+            )
+        properties = await self.analytics.list_properties(grant.access_token)
+        matching = next(
+            (
+                item
+                for item in properties
+                if item.property_ref == oauth_state.requested_property_ref
+            ),
+            None,
+        )
+        if matching is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="analytics_property_not_authorized",
+            )
+        if not analytics_property_matches_site(matching, site.normalized_host):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="analytics_property_site_mismatch",
+            )
+        return matching.property_ref
+
+    async def complete_authorization(self, state: str, code: str, trace_id: str) -> Connector:
+        """Redeem one Google consent, whichever connector asked for it.
+
+        The state row says which: it carries the scopes that were requested, and
+        only those two sets are ones this build knows how to bind to a site.
+        Everything before the exchange is shared deliberately -- the tenant
+        adoption and the single-use consume are the parts that must not be
+        reimplemented once per connector.
+        """
         state_hash = hashlib.sha256(state.encode()).hexdigest()
         # Two steps, deliberately. The first read is the only statement in this
         # request that is not tenant scoped -- it cannot be, because the tenant
@@ -400,7 +562,7 @@ class ConnectorOAuthCallbackService:
             oauth_state is None
             or oauth_state.consumed_at is not None
             or oauth_state.expires_at <= now
-            or oauth_state.requested_scopes != [GSC_READONLY_SCOPE]
+            or sorted(oauth_state.requested_scopes) not in _SUPPORTED_SCOPE_SETS
             or not oauth_state.requested_property_ref
         ):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_state_invalid")
@@ -420,39 +582,35 @@ class ConnectorOAuthCallbackService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="oauth_binding_invalid"
             )
-        if not property_matches_site(oauth_state.requested_property_ref, site.normalized_host):
+        wanted = sorted(oauth_state.requested_scopes)
+        connector_type = GSC_CONNECTOR if wanted == [GSC_READONLY_SCOPE] else ANALYTICS_CONNECTOR
+        if connector_type == GSC_CONNECTOR and not property_matches_site(
+            oauth_state.requested_property_ref, site.normalized_host
+        ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="oauth_binding_invalid"
             )
         try:
             grant = await self.provider.exchange_code(code)
-            if grant.scopes != frozenset({GSC_READONLY_SCOPE}):
+            if sorted(grant.scopes) != wanted:
+                # Google grants what the user consented to, not what we asked
+                # for. A grant carrying a different scope set is not the one
+                # this state authorized.
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT, detail="oauth_scope_mismatch"
                 )
-            properties = await self.provider.list_properties(grant.access_token)
-        except GoogleOAuthError as error:
+            if connector_type == GSC_CONNECTOR:
+                property_ref = await self._search_console_property(grant, oauth_state)
+            else:
+                property_ref = await self._analytics_property(grant, oauth_state, site)
+        except (GoogleOAuthError, GoogleAnalyticsError) as error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
             ) from error
-        matching = next(
-            (
-                item
-                for item in properties
-                if item.property_ref == oauth_state.requested_property_ref
-                and item.permission_level in GSC_PERMITTED_LEVELS
-            ),
-            None,
-        )
-        if matching is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="search_console_property_not_authorized",
-            )
         secret_ref = await self.secret_store.store(
             oauth_state.tenant_id,
             connector.id,
-            GSC_CONNECTOR,
+            connector_type,
             {
                 "access_token": grant.access_token,
                 "refresh_token": grant.refresh_token,
@@ -462,7 +620,7 @@ class ConnectorOAuthCallbackService:
         )
         oauth_state.consumed_at = now
         connector.status = "active"
-        connector.external_account_ref = matching.property_ref
+        connector.external_account_ref = property_ref
         connector.secret_ref = secret_ref
         connector.granted_scopes = sorted(grant.scopes)
         connector.consented_by = oauth_state.created_by
@@ -472,8 +630,8 @@ class ConnectorOAuthCallbackService:
         payload = {
             "connector_id": str(connector.id),
             "site_id": str(site.id),
-            "connector_type": GSC_CONNECTOR,
-            "property_ref": matching.property_ref,
+            "connector_type": connector_type,
+            "property_ref": property_ref,
             "scopes": sorted(grant.scopes),
         }
         self.session.add_all(

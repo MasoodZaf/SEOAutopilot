@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.services.connector_secrets import DatabaseEnvelopeSecretStore
-from app.services.connectors import DNS_PROVIDER_CONNECTOR, GSC_CONNECTOR
+from app.services.connectors import ANALYTICS_CONNECTOR, DNS_PROVIDER_CONNECTOR, GSC_CONNECTOR
 from app.services.github_connector import GITHUB_CONNECTOR, PROVIDER_PAT
 from tests.conftest import requires_database
 
@@ -32,6 +32,7 @@ ENCRYPTION_KEY = b"k" * 32
 # writes it rather than restated by hand.
 PROVIDER_LABELS = [
     (GSC_CONNECTOR, GSC_CONNECTOR, None),
+    (ANALYTICS_CONNECTOR, ANALYTICS_CONNECTOR, None),
     (DNS_PROVIDER_CONNECTOR, f"{DNS_PROVIDER_CONNECTOR}:cloudflare", "cloudflare"),
     (GITHUB_CONNECTOR, PROVIDER_PAT, PROVIDER_PAT),
 ]

@@ -36,6 +36,7 @@ from app.services.github_connector import (
     GitHubInstallationCallbackService,
     GitHubRepositoryHttpProbe,
 )
+from app.services.google_analytics import AnalyticsAdminHttpClient
 from app.services.google_oauth import GoogleOAuthHttpClient
 
 router = APIRouter(prefix="/v1", tags=["connectors"])
@@ -99,6 +100,30 @@ async def authorize_gsc(
     connector, authorization_url, expires_at = await ConnectorService(
         session, context
     ).begin_gsc_authorization(site_id, command.property_ref, get_settings())
+    return ConnectorAuthorizationEnvelope(
+        data=ConnectorAuthorizationRead(
+            connector=ConnectorRead.model_validate(connector),
+            authorization_url=authorization_url,
+            expires_at=expires_at,
+        ),
+        meta={"trace_id": context.trace_id},
+    )
+
+
+@router.post(
+    "/sites/{site_id}/connectors/google_analytics/authorize",
+    response_model=ConnectorAuthorizationEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def authorize_analytics(
+    site_id: UUID,
+    command: ConnectorAuthorizationCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> ConnectorAuthorizationEnvelope:
+    connector, authorization_url, expires_at = await ConnectorService(
+        session, context
+    ).begin_analytics_authorization(site_id, command.property_ref, get_settings())
     return ConnectorAuthorizationEnvelope(
         data=ConnectorAuthorizationRead(
             connector=ConnectorRead.model_validate(connector),
@@ -201,9 +226,9 @@ async def google_oauth_callback(
             client_secret=settings.google_client_secret.get_secret_value(),
             redirect_uri=settings.google_oauth_redirect_uri,
         )
-        await ConnectorOAuthCallbackService(session, provider, secret_store).complete_gsc(
-            state, code, secrets.token_hex(16)
-        )
+        await ConnectorOAuthCallbackService(
+            session, provider, secret_store, AnalyticsAdminHttpClient(http_client)
+        ).complete_authorization(state, code, secrets.token_hex(16))
     return RedirectResponse(
         url=f"{settings.app_base_url.rstrip('/')}/settings/connectors?google=connected",
         status_code=status.HTTP_303_SEE_OTHER,
