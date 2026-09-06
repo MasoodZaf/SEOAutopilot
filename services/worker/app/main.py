@@ -20,6 +20,8 @@ from app.pagespeed.client import PageSpeedClient
 from app.pagespeed.consumer import Pool as PageSpeedPool
 from app.pagespeed.consumer import Stream as PageSpeedStream
 from app.pagespeed.consumer import run_pagespeed_consumer
+from app.reaper import Pool as ReaperPool
+from app.reaper import run_reaper
 from app.routines.runner import Pool as RoutinePool
 from app.routines.runner import Stream as RoutineStream
 from app.routines.runner import run_routine_consumer
@@ -60,12 +62,12 @@ async def run() -> None:
     # `pool` is the tenant-scoped application role. Every consumer that borrows
     # it declares whose data it is touching, and row-level security enforces it.
     #
-    # `relay_pool` is for the three sweeps that claim work across tenants before
-    # any tenant scope exists -- the outbox dispatcher, the routine scheduler,
-    # and the notification dispatcher. They cannot run under a scoped role, so
-    # they get an identity that is explicit about the exemption instead of
-    # reaching for the superuser. It falls back to `pool` when unset so a local
-    # stack without the second credential still starts.
+    # `relay_pool` is for the sweeps that claim work across tenants before any
+    # tenant scope exists -- the outbox dispatcher, the routine scheduler, the
+    # notification dispatcher, and the lease reaper. They cannot run under a
+    # scoped role, so they get an identity that is explicit about the exemption
+    # instead of reaching for the superuser. It falls back to `pool` when unset
+    # so a local stack without the second credential still starts.
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
     relay_url = os.environ.get("RELAY_DATABASE_URL", "").replace(
         "postgresql+asyncpg://", "postgresql://"
@@ -94,6 +96,9 @@ async def run() -> None:
 
     background = [
         run_dispatcher(relay_pool, streams),
+        # Nothing else re-reads the work tables, so without this a run whose
+        # stream message was lost stays 'running' until someone notices.
+        run_reaper(cast(ReaperPool, relay_pool)),
         run_analysis_consumer(
             cast(AnalysisPool, pool),
             cast(AnalysisStream, streams),
