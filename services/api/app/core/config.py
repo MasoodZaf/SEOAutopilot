@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     github_repository: str | None = None
     github_base_branch: str = "main"
     github_token: SecretStr | None = None
+    # Repository path for a crawled URL path, e.g. "CalcHive/{path}.html".
+    # The site's URL layout is not derivable from the repository layout.
+    github_path_template: str = "{path}.html"
+    # The mock adapter fabricates a successful deployment. It must be opted
+    # into explicitly and never inferred from app_env, because a deployment
+    # that reports success without touching a provider is the exact failure
+    # the safety checkpoint exists to prevent.
+    mock_deployments_enabled: bool = False
     local_pilot_auth_enabled: bool = False
     local_pilot_auth_token: SecretStr | None = None
     local_pilot_tenant_id: UUID = LOCAL_PILOT_TENANT_ID
@@ -93,6 +101,8 @@ class Settings(BaseSettings):
                 or len(self.local_pilot_auth_token.get_secret_value()) < 32
             ):
                 raise ValueError("LOCAL_PILOT_AUTH_TOKEN must contain at least 32 characters")
+        if self.mock_deployments_enabled and self.app_env not in {"development", "test"}:
+            raise ValueError("Mock deployments are development and test only")
         return self
 
 

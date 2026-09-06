@@ -408,6 +408,36 @@ the meantime.
 - Post-deploy verification by re-crawling the target URL and diffing against expectation.
 - Rollback with incident and audit records.
 
+**Preparing the first real deployment (2026-09-06).** TheCalcHive is the subject; its source is the
+public `MasoodZaf/mindTools` repository, so the change is a commit in the customer's own repository
+rather than an overlay. Walking the site's 32 findings to a proposal turned up three things.
+
+- **The rule was right about the pages and wrong about the reason.** `content.title_h1_mismatch`
+  fired 32 times because it compared raw tokens: "Free Online Calculators" in the title did not match
+  "Every calculator you'll ever need" in the heading, the same subject in two grammatical numbers.
+  It now compares through `similarity_tokens`, the stemmer the keyword clusterer already uses, and
+  drops from 32 pages to the 18 whose titles genuinely share no subject with the heading.
+- **The defect it was pointing at is site-level.** One hero H1 is copied onto 32 pages, so it
+  identifies none of them; on a calculator page it is also `display:none`, leaving the page with no
+  visible H1 at all. No per-page rule can see that, so `analyze_crawl` now counts H1 text across the
+  crawl and `h1.duplicate_across_site` reports the count in its own summary.
+- **The false positive was on the front page, and it was the dangerous one.** There the shared H1 is
+  the hero headline: correct, deliberate, and the only page where it is visible. A proposal derived
+  from the title would have replaced a hand-written headline with the brand string on the site's most
+  valuable page. `plan_repair` refuses the site root outright.
+
+`app/domain/h1_repair.py` derives the replacement from the page's own `<title>`, so the first real
+change needs no language model and is byte-verifiable: the document must be identical either side of
+the one span, and re-reading the result must return the intended heading. It refuses a page with no
+H1, with several, with an unusable title, or already correct. Nothing yet turns an opportunity into a
+proposal automatically; that is the remaining gap in this track.
+
+**Mock deployments no longer key off `app_env`.** The route admitted the mock adapter whenever
+`app_env` was development or test, and production runs `app_env=development` until H5 lands, so
+enabling deployments there would have made an adapter that fabricates success reachable on the live
+host. It now requires `MOCK_DEPLOYMENTS_ENABLED`, which the settings validator refuses outside
+development and test. Restoring the old condition fails `test_deploy_route_gate.py`.
+
 **Exit:** QA_TEST_PLAN scenarios 11, 12 and 13 pass against a real test repository, not the mock
 adapter.
 

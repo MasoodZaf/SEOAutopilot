@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -48,6 +49,18 @@ def parse_list(value: object) -> list[Any]:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, list) else []
     return []
+
+
+def normalize_heading(text: str) -> str:
+    """Compare headings by the words a reader sees, not by their whitespace."""
+    return " ".join(text.split()).casefold()
+
+
+def _pages_sharing_h1(row: Mapping[str, Any], counts: Mapping[str, int]) -> int:
+    headings = [str(value) for value in parse_list(row["h1_json"])]
+    if len(headings) != 1:
+        return 1
+    return counts.get(normalize_heading(headings[0]), 1)
 
 
 async def analyze_crawl(
@@ -188,6 +201,14 @@ async def analyze_crawl(
         )
         perf_map = {row["page_id"]: row for row in perf_rows}
 
+        # An H1 says nothing on its own; it says something relative to the other
+        # H1s on the site. Counting them once here keeps the per-page rules pure.
+        h1_page_counts: dict[str, int] = defaultdict(int)
+        for observation in observations:
+            headings = [str(value) for value in parse_list(observation["h1_json"])]
+            if len(headings) == 1:
+                h1_page_counts[normalize_heading(headings[0])] += 1
+
         finding_count = 0
         opportunity_count = 0
         for row in observations:
@@ -222,6 +243,7 @@ async def analyze_crawl(
                 canonical_url=row["canonical_url"],
                 robots_directives=[str(value) for value in parse_list(row["robots_directives"])],
                 structured_data=parse_list(row.get("structured_data_json", [])),
+                pages_sharing_h1=_pages_sharing_h1(row, h1_page_counts),
             )
 
             if active_version_code == "multiagent-v1":

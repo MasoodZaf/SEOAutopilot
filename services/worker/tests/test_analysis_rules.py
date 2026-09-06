@@ -130,3 +130,54 @@ def test_geo_visibility_agent_detects_missing_structured_data() -> None:
     codes = [f.code for f in findings]
     assert "geo.missing_structured_data" in codes
     assert score == 90
+
+
+def test_a_plural_in_the_title_is_not_a_mismatch_with_its_singular_in_the_heading() -> None:
+    """TheCalcHive's front page, which the unstemmed rule reported as a mismatch.
+
+    "Free Online Calculators" and "Every calculator you'll ever need" are the
+    same subject. Flagging it invited a proposal to replace a hand-written hero
+    headline with a brand string.
+    """
+    evidence = multiagent_evidence(
+        page=page_evidence(
+            title="CalcHive — Free Online Calculators & Financial Tools",
+            h1=["Every calculator you'll ever need"],
+        )
+    )
+    _, findings = evaluate_multiagent_page(evidence)
+    assert "content.title_h1_mismatch" not in [f.code for f in findings]
+
+
+def test_a_genuine_topical_mismatch_still_fires() -> None:
+    evidence = multiagent_evidence(
+        page=page_evidence(
+            title="Zodiac & Birth Chart — Free Online Tool",
+            h1=["Every calculator you'll ever need"],
+        )
+    )
+    _, findings = evaluate_multiagent_page(evidence)
+    assert "content.title_h1_mismatch" in [f.code for f in findings]
+
+
+def test_a_heading_shared_across_the_site_is_reported_with_its_count() -> None:
+    evidence = multiagent_evidence(
+        page=page_evidence(h1=["Every calculator you'll ever need"], pages_sharing_h1=32)
+    )
+    _, findings = evaluate_multiagent_page(evidence)
+    duplicate = [f for f in findings if f.code == "h1.duplicate_across_site"]
+    assert len(duplicate) == 1
+    # The count is in the summary, so the claim carries its own evidence.
+    assert "32 pages" in duplicate[0].summary
+    assert duplicate[0].severity == "medium"
+
+
+def test_a_heading_shared_by_only_two_pages_is_left_alone() -> None:
+    evidence = multiagent_evidence(page=page_evidence(pages_sharing_h1=2))
+    _, findings = evaluate_multiagent_page(evidence)
+    assert "h1.duplicate_across_site" not in [f.code for f in findings]
+
+
+def test_a_unique_heading_is_never_reported_as_duplicated() -> None:
+    _, findings = evaluate_multiagent_page(multiagent_evidence())
+    assert "h1.duplicate_across_site" not in [f.code for f in findings]

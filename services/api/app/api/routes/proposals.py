@@ -146,7 +146,11 @@ async def deploy_proposal(
                 GitHubDeploymentAdapter(client, target, token.get_secret_value()),
             )
 
-    if command.connector_type != "mock" or settings.app_env not in {"development", "test"}:
+    # The mock adapter reports a deployment nobody performed, so reaching it
+    # takes a deliberate opt-in rather than an inference from app_env. The
+    # production host runs app_env=development until real identity lands, and
+    # inferring from it would put the mock one flag flip away from live.
+    if command.connector_type != "mock" or not settings.mock_deployments_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="deployment_connector_not_configured",

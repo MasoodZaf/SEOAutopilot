@@ -2,6 +2,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from app.keywords.cluster import similarity_tokens
+
 
 @dataclass(frozen=True, slots=True)
 class PageEvidence:
@@ -13,6 +15,10 @@ class PageEvidence:
     canonical_url: str | None
     robots_directives: Sequence[str]
     structured_data: Sequence[object] = field(default_factory=list)
+    # How many pages in this crawl carry the same H1 text, this one included.
+    # An H1 is only meaningful relative to the rest of the site, so the count
+    # has to be measured across the crawl and handed in.
+    pages_sharing_h1: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +84,11 @@ def opportunity_score(finding: Finding) -> float:
         / (0.25 + 0.75 * finding.effort)
     )
     return round(min(100.0, raw * 100 * RISK_ADJUSTMENT[finding.risk]), 2)
+
+
+# One page repeating another's H1 is a coincidence; three or more sharing a
+# heading means the heading belongs to a template rather than to any page.
+DUPLICATE_H1_PAGE_THRESHOLD = 3
 
 
 def tokenize_text(text: str) -> set[str]:
@@ -184,10 +195,23 @@ def evaluate_multiagent_page(evidence: MultiAgentPageEvidence) -> tuple[int, lis
     elif len(page.h1) > 1:
         add("h1.multiple", "low", "The page has multiple H1 headings.", (0.25, 0.95, 0.40, 0.25, "low"), "content")
     elif title and page.h1:
-        title_tokens = tokenize_text(title)
-        h1_tokens = tokenize_text(page.h1[0])
+        # Stemmed, so "calculators" in the title matches "calculator" in the
+        # heading. Comparing raw tokens reported a mismatch between "Free
+        # Online Calculators" and "Every calculator you'll ever need", which is
+        # the same subject in two grammatical numbers.
+        title_tokens = similarity_tokens(title)
+        h1_tokens = similarity_tokens(page.h1[0])
         if title_tokens and h1_tokens and not (title_tokens & h1_tokens):
             add("content.title_h1_mismatch", "low", "Title and H1 share no common thematic keywords.", (0.30, 0.85, 0.45, 0.30, "low"), "content")
+
+    if page.h1 and page.pages_sharing_h1 >= DUPLICATE_H1_PAGE_THRESHOLD:
+        add(
+            "h1.duplicate_across_site",
+            "medium",
+            f"The H1 is the same on {page.pages_sharing_h1} pages, so it identifies none of them.",
+            (0.55, 0.95, 0.60, 0.30, "low"),
+            "content",
+        )
 
     if page.word_count < 150:
         add("content.thin", "low", "The page has fewer than 150 visible words.", (0.35, 0.85, 0.50, 0.60, "low"), "content")
