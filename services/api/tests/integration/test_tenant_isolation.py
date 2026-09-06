@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import requires_database
 
@@ -17,43 +18,15 @@ pytestmark = [pytest.mark.asyncio, requires_database]
 
 TENANT_TABLES_SAMPLE = ["site", "proposal", "proposal_approval", "audit_event", "connector"]
 
-# All 50 tenant tables enable row-level security and every policy is written
-# correctly, but none of them is in effect. There are two independent reasons,
-# and only fixing both restores isolation:
-#
-#   1. No table sets FORCE ROW LEVEL SECURITY, and the application connects as
-#      the role that ran the migrations, so it owns every table. An owner
-#      bypasses its own policies unless they are forced.
-#   2. More fundamentally, that role is a SUPERUSER with BYPASSRLS -- the
-#      postgres image makes POSTGRES_USER a superuser. A superuser ignores row
-#      security unconditionally, and FORCE does not apply to it. Forcing alone
-#      was measured to change nothing.
-#
-# Isolation today therefore rests entirely on the explicit `tenant_id` filters
-# in the service layer. Any query that omits one -- and some rely on RLS rather
-# than filtering -- has no isolation at all.
-#
-# The remedy is verified: a NOSUPERUSER NOBYPASSRLS application role, granted
-# only DML, with FORCE enabled for defence in depth. Under it a tenant sees only
-# its own rows, an unknown scope and an unset scope both see nothing, and a
-# cross-tenant insert is rejected by the WITH CHECK half of the policy.
-#
-# It is not a single migration, which is why this is tracked rather than fixed
-# here: the new role also stops the OAuth callback's deliberately unscoped state
-# lookup and the twelve worker modules that never set the tenant GUC, two of
-# which -- the outbox relay and the routine scheduler -- are cross-tenant by
-# design and need their own BYPASSRLS role. Hardening track H1 in ROADMAP.md.
-#
-# `strict=True` is the point: when RLS is forced these turn from expected
-# failures into unexpected passes, and the suite goes red until the markers
-# come off. The gap cannot be quietly left half-fixed.
-rls_not_yet_enforced = pytest.mark.xfail(
-    strict=True,
-    reason="H1: the application role is a superuser, so every row-security policy is inert",
-)
+# Isolation was inert until migration 0027 for two independent reasons, and both
+# had to be fixed: no table set FORCE ROW LEVEL SECURITY, and the connecting role
+# was a SUPERUSER, which ignores row security unconditionally and which FORCE
+# does not apply to. Forcing alone was measured on a clean schema and changed
+# nothing. These tests run as `seo_autopilot_app`, the NOSUPERUSER NOBYPASSRLS
+# role the services use, because the property is not observable from a role that
+# can bypass it.
 
 
-@rls_not_yet_enforced
 async def test_every_tenant_table_forces_row_level_security(raw_session) -> None:
     """Enabling RLS is not enough: the table owner bypasses it unless it is forced.
 
@@ -78,7 +51,6 @@ async def test_every_tenant_table_forces_row_level_security(raw_session) -> None
     )
 
 
-@rls_not_yet_enforced
 async def test_a_tenant_cannot_read_another_tenants_site(
     tenant_session_factory, seeded_tenants
 ) -> None:
@@ -89,7 +61,6 @@ async def test_a_tenant_cannot_read_another_tenants_site(
     assert visible == ["a.example"], f"tenant A saw {visible}"
 
 
-@rls_not_yet_enforced
 async def test_an_unknown_tenant_scope_sees_nothing(
     tenant_session_factory, seeded_tenants
 ) -> None:
@@ -99,21 +70,43 @@ async def test_an_unknown_tenant_scope_sees_nothing(
     assert count == 0, f"a tenant scope owning nothing saw {count} sites"
 
 
-@pytest.mark.parametrize("table", TENANT_TABLES_SAMPLE)
-async def test_a_tenant_scope_cannot_write_rows_for_another_tenant(
-    tenant_session_factory, seeded_tenants, table: str
+async def test_a_tenant_scope_cannot_write_a_row_labelled_for_another_tenant(
+    tenant_session_factory, seeded_tenants
 ) -> None:
-    """The WITH CHECK half of each policy must reject a mislabelled insert."""
-    tenant_a, _tenant_b = seeded_tenants
+    """The WITH CHECK half of the policy must reject a mislabelled insert.
+
+    Reading is only half of isolation. Without WITH CHECK a tenant could plant
+    rows inside another tenant's scope even while unable to read them back.
+    """
+    tenant_a, tenant_b = seeded_tenants
     async with tenant_session_factory(tenant_a) as session:
-        columns = (
+        with pytest.raises(DBAPIError) as exc:
             await session.execute(
                 text(
+                    "INSERT INTO site"
+                    " (tenant_id, name, canonical_origin, normalized_host, mode, status)"
+                    " VALUES (:tenant_id, 'planted', 'https://x.example', 'x.example',"
+                    " 'observe', 'active')"
+                ),
+                {"tenant_id": tenant_b},
+            )
+    assert "row-level security" in str(exc.value).lower()
+
+
+async def test_every_tenant_table_carries_a_non_null_tenant_id(raw_session) -> None:
+    """A policy can only scope a table that records which tenant owns the row."""
+    missing = []
+    for table in TENANT_TABLES_SAMPLE:
+        columns = (
+            await raw_session.execute(
+                text(
                     "SELECT column_name FROM information_schema.columns"
-                    " WHERE table_name = :t AND is_nullable = 'NO' AND column_default IS NULL"
+                    " WHERE table_name = :t AND column_name = 'tenant_id'"
+                    " AND is_nullable = 'NO'"
                 ),
                 {"t": table},
             )
         ).scalars()
-        required = set(columns)
-        assert "tenant_id" in required, f"{table} has no non-null tenant_id"
+        if not list(columns):
+            missing.append(table)
+    assert missing == [], f"tables without a non-null tenant_id: {missing}"

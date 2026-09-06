@@ -47,7 +47,12 @@ services:
     build: {context: ., dockerfile: services/api/Dockerfile}
     env_file: [.env.local]
     environment:
-      DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      # DATABASE_URL deliberately comes from env_file, not from here. The API
+      # connects as seo_autopilot_app, a NOSUPERUSER NOBYPASSRLS role, so that
+      # row-level security is actually enforced -- the owning role is a
+      # superuser and bypasses every policy. Repeating the key here would
+      # override the env_file value with the owner's connection and silently
+      # switch isolation back off.
       REDIS_URL: redis://redis:6379/0
     ports: ["127.0.0.1:8001:8000"]
     depends_on:
@@ -58,6 +63,11 @@ services:
     build: {context: ., dockerfile: services/worker/Dockerfile}
     env_file: [.env.local]
     environment:
+      # Still the owning role: twelve worker modules never set the tenant GUC,
+      # and the outbox relay and routine scheduler are cross-tenant by design.
+      # Migration 0027 creates seo_autopilot_relay for those; moving the worker
+      # across is the remaining half of hardening track H1. Set here rather than
+      # in env_file so it overrides the API's application-role DATABASE_URL.
       DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
       REDIS_URL: redis://redis:6379/0
       # ROUTINES_ENABLED, NOTIFICATIONS_ENABLED and APP_BASE_URL come from

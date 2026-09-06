@@ -85,7 +85,10 @@ def callback_records() -> tuple[ConnectorOauthState, Connector, Site]:
 async def test_callback_consumes_state_binds_property_and_never_audits_tokens() -> None:
     oauth_state, connector, site = callback_records()
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[oauth_state, connector, site])
+    # The callback resolves the state once unscoped, adopts its tenant scope, then
+    # re-reads the same row under that scope before consuming it.
+    session.scalar = AsyncMock(side_effect=[oauth_state, oauth_state, connector, site])
+    session.execute = AsyncMock()
     session.add_all = MagicMock()
     provider = FakeProvider()
     secrets = FakeSecretStore()
@@ -120,6 +123,7 @@ async def test_callback_rejects_replayed_state_before_provider_call() -> None:
     oauth_state.consumed_at = datetime.now(UTC)
     session = MagicMock()
     session.scalar = AsyncMock(return_value=oauth_state)
+    session.execute = AsyncMock()
     provider = FakeProvider()
 
     with pytest.raises(HTTPException) as captured:
@@ -134,7 +138,10 @@ async def test_callback_rejects_replayed_state_before_provider_call() -> None:
 async def test_callback_rejects_broader_scope_without_storing_secret() -> None:
     oauth_state, connector, site = callback_records()
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[oauth_state, connector, site])
+    # The callback resolves the state once unscoped, adopts its tenant scope, then
+    # re-reads the same row under that scope before consuming it.
+    session.scalar = AsyncMock(side_effect=[oauth_state, oauth_state, connector, site])
+    session.execute = AsyncMock()
     provider = FakeProvider(
         scopes=frozenset(
             {GSC_READONLY_SCOPE, "https://www.googleapis.com/auth/webmasters"}
@@ -155,7 +162,10 @@ async def test_callback_rejects_broader_scope_without_storing_secret() -> None:
 async def test_callback_rejects_unverified_or_unrequested_property() -> None:
     oauth_state, connector, site = callback_records()
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[oauth_state, connector, site])
+    # The callback resolves the state once unscoped, adopts its tenant scope, then
+    # re-reads the same row under that scope before consuming it.
+    session.scalar = AsyncMock(side_effect=[oauth_state, oauth_state, connector, site])
+    session.execute = AsyncMock()
     provider = FakeProvider(
         properties=[GoogleProperty("sc-domain:example.com", "siteUnverifiedUser")]
     )

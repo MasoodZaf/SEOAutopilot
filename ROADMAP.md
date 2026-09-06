@@ -255,23 +255,33 @@ The remedy is verified end to end: a `NOSUPERUSER NOBYPASSRLS` application role 
 with `FORCE` on for defence in depth. Under it a tenant sees only its own rows, an unknown scope and
 an unset scope both see nothing, and a cross-tenant insert is rejected by the policy's `WITH CHECK`.
 
-**Work:**
+**Done (2026-09-06):**
 
-- Migration adding `FORCE ROW LEVEL SECURITY` to all 50 tables and creating the application role;
-  migrations continue to run as the owner.
-- Repoint the API and worker at the new role; keep the credential out of the image.
-- Set the tenant GUC in the twelve worker modules that never set it. The outbox relay and the routine
-  scheduler are cross-tenant by design and need a separate `BYPASSRLS` role rather than a scope.
-- Give the OAuth callback's deliberately unscoped `connector_oauth_state` lookup an explicit narrow
-  path, then set `app.tenant_id` from the resolved state before it touches anything else.
-- Remove the `strict=True` xfail markers in `tests/integration/test_tenant_isolation.py`. They are
-  strict so that the suite turns red the moment isolation starts working, forcing the marker off
-  rather than letting a half-finished fix pass quietly.
-- Then move the remaining safety controls off `AsyncMock`: approvals, deployment, freeze and kill
-  switch, daily change budget, mode ceiling, calibration idempotency, cursor scoping.
+- Migration `0027` forces row-level security on all 50 tables, driven from the catalogue rather than
+  a hand-written list because the defect being fixed is precisely that a table can be missed. It also
+  creates `seo_autopilot_app` (NOSUPERUSER, NOBYPASSRLS, DML only) and `seo_autopilot_relay`
+  (BYPASSRLS, for the genuinely cross-tenant sweeps). Both are created `NOLOGIN` with no password;
+  granting a secret is an operational step so no credential enters the repository.
+- The API connects as `seo_autopilot_app`. Verified live: the probe that saw all 5 sites under a
+  tenant scope owning nothing now sees 0, and both read and write paths are unchanged.
+- The OAuth callback keeps its one unavoidable unscoped read behind a narrow SELECT-only policy on
+  `connector_oauth_state` gated by `app.oauth_callback`, then adopts the resolved row's tenant scope
+  before the locking re-read that consumes the state. Five integration tests hold that exception to
+  its shape: one table, read only, no other table opened, and state unspendable outside a scope.
+- The isolation tests now pass with their xfail markers removed.
 
-**Exit:** the three isolation tests pass with their markers removed, and every control named in
-`AGENTS.md` has a test that runs against real PostgreSQL.
+**Remaining:**
+
+- Move the worker onto the two new roles: the tenant GUC in the modules that never set it, and
+  `seo_autopilot_relay` for the outbox relay and routine scheduler. The worker still runs as the
+  owning superuser, so it bypasses the policies; it is not attacker-reachable, but isolation is not
+  complete until it moves.
+- Provision both role passwords in deployment and document the step in `DEPLOYMENT.md`.
+- Move the remaining safety controls off `AsyncMock`: approvals, deployment, freeze and kill switch,
+  daily change budget, mode ceiling, calibration idempotency, cursor scoping.
+
+**Exit:** no service connects as a superuser, and every control named in `AGENTS.md` has a test that
+runs against real PostgreSQL.
 
 ### H2 — Make the evidence real
 

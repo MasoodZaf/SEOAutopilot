@@ -5,7 +5,7 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ConnectorSyncCreate
@@ -354,9 +354,28 @@ class ConnectorOAuthCallbackService:
 
     async def complete_gsc(self, state: str, code: str, trace_id: str) -> Connector:
         state_hash = hashlib.sha256(state.encode()).hexdigest()
+        # Two steps, deliberately. The first read is the only statement in this
+        # request that is not tenant scoped -- it cannot be, because the tenant
+        # is what this row establishes -- so it is a plain SELECT permitted by a
+        # single SELECT-only policy. The row's tenant then becomes the scope for
+        # everything after it, including the locking re-read that actually
+        # consumes the state.
+        unscoped = await self.session.scalar(
+            select(ConnectorOauthState).where(ConnectorOauthState.state_hash == state_hash)
+        )
+        if unscoped is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_state_invalid")
+        await self.session.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(unscoped.tenant_id)},
+        )
+        self.session.expunge(unscoped)
         oauth_state = await self.session.scalar(
             select(ConnectorOauthState)
-            .where(ConnectorOauthState.state_hash == state_hash)
+            .where(
+                ConnectorOauthState.state_hash == state_hash,
+                ConnectorOauthState.tenant_id == unscoped.tenant_id,
+            )
             .with_for_update()
         )
         now = datetime.now(UTC)
