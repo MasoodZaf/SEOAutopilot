@@ -73,6 +73,7 @@ class GovernanceService:
             autopilot_enabled=site.autopilot_enabled,
             emergency_freeze=site.emergency_freeze,
             daily_change_budget=site.daily_change_budget,
+            required_approver_count=site.required_approver_count,
             today_deployments_count=today_count,
             freeze_window_start=site.freeze_window_start,
             freeze_window_end=site.freeze_window_end,
@@ -97,6 +98,10 @@ class GovernanceService:
             site.autopilot_enabled = command.autopilot_enabled
         if command.daily_change_budget is not None:
             site.daily_change_budget = command.daily_change_budget
+        if command.clear_required_approver_count:
+            site.required_approver_count = None
+        elif command.required_approver_count is not None:
+            site.required_approver_count = command.required_approver_count
         if command.freeze_window_start is not None:
             site.freeze_window_start = command.freeze_window_start
         if command.freeze_window_end is not None:
@@ -106,6 +111,7 @@ class GovernanceService:
             "site_id": str(site_id),
             "autopilot_enabled": site.autopilot_enabled,
             "daily_change_budget": site.daily_change_budget,
+            "required_approver_count": site.required_approver_count,
         }
         self.session.add(
             AuditEvent(

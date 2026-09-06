@@ -49,6 +49,8 @@ class Site(Base):
     autopilot_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     emergency_freeze: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_change_budget: Mapped[int] = mapped_column(Integer, default=5)
+    # None means "use the risk tier's default"; see evaluate_proposal_policy.
+    required_approver_count: Mapped[int | None] = mapped_column(Integer)
     freeze_window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     freeze_window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

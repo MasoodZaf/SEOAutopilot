@@ -104,6 +104,7 @@ class ProposalService:
             validations,
             author_id=self.context.actor_id,
             tenant_mode=site.mode,
+            site_required_approver_count=site.required_approver_count,
         )
 
         proposal_payload = {

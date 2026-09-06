@@ -15,6 +15,7 @@ from app.domain.proposals import (
     detect_control_directive_changes,
     evaluate_proposal_policy,
     generate_unified_diff,
+    resolve_required_approver_count,
     validate_proposal_content,
 )
 
@@ -161,3 +162,70 @@ def test_prohibited_claim_requires_two_approvers_if_it_is_ever_reconsidered() ->
     assert decision.risk == "prohibited"
     assert decision.can_auto_deploy is False
     assert decision.required_approver_count == 2
+
+
+def test_a_site_may_lower_the_approver_count_for_a_medium_change() -> None:
+    """A small site should not need three people to change a heading."""
+    assert resolve_required_approver_count("medium", None) == 2
+    assert resolve_required_approver_count("medium", 1) == 1
+    assert resolve_required_approver_count("low", 1) == 1
+
+
+def test_a_site_may_raise_the_approver_count_on_any_tier() -> None:
+    assert resolve_required_approver_count("low", 3) == 3
+    assert resolve_required_approver_count("medium", 4) == 4
+    assert resolve_required_approver_count("high", 5) == 5
+
+
+def test_no_site_setting_can_lower_a_high_risk_change_below_two() -> None:
+    """Canonical, robots and redirect edits are forced high precisely so that
+    no per-site setting can reach them."""
+    assert resolve_required_approver_count("high", 1) == 2
+    assert resolve_required_approver_count("prohibited", 1) == 2
+
+
+def test_the_count_can_never_reach_zero() -> None:
+    """A change nobody approves is Autopilot, which has its own controls."""
+    for risk in ("low", "medium", "high", "prohibited"):
+        assert resolve_required_approver_count(risk, 0) >= 1
+
+
+def test_an_unknown_risk_label_falls_back_to_two_approvers() -> None:
+    assert resolve_required_approver_count("something-new", None) == 2
+    assert resolve_required_approver_count("something-new", 1) == 2
+
+
+def test_the_site_setting_reaches_the_policy_decision() -> None:
+    decision = evaluate_proposal_policy(
+        "github_file",
+        "CalcHive/emi-calculator.html",
+        "<html><h1>old</h1></html>",
+        "<html><h1>new</h1></html>",
+        [],
+        site_required_approver_count=1,
+    )
+    assert decision.risk == "medium"
+    assert decision.required_approver_count == 1
+
+    default = evaluate_proposal_policy(
+        "github_file",
+        "CalcHive/emi-calculator.html",
+        "<html><h1>old</h1></html>",
+        "<html><h1>new</h1></html>",
+        [],
+    )
+    assert default.required_approver_count == 2
+
+
+def test_a_site_setting_cannot_soften_an_indexing_control_change() -> None:
+    decision = evaluate_proposal_policy(
+        "github_file",
+        "CalcHive/emi-calculator.html",
+        '<html><link rel="canonical" href="https://a.example/x"></html>',
+        '<html><link rel="canonical" href="https://b.example/y"></html>',
+        [],
+        site_required_approver_count=1,
+    )
+    assert decision.risk == "high"
+    assert decision.required_approver_count == 2
+    assert decision.can_auto_deploy is False

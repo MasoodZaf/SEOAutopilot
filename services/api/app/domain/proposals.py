@@ -161,6 +161,32 @@ class PolicyDecision:
         return asdict(self)
 
 
+# Risk decides the floor; a site may raise it, and may only lower it for the
+# tiers where a single reviewer is a defensible reading of the change.
+TIER_APPROVER_FLOOR = {"low": 1, "medium": 2, "high": 2, "prohibited": 2}
+LOWERABLE_TIERS = {"low", "medium"}
+
+
+def resolve_required_approver_count(risk: str, site_override: int | None) -> int:
+    """How many distinct approvers this change needs, before the author.
+
+    A tenant running a small site should not need three people to change a
+    heading, and a tenant running a regulated one should be able to demand more
+    than two. What a tenant may not do is talk its way below two approvers on a
+    change to canonical, robots or redirect directives, which is why lowering
+    stops at medium: those changes are forced to high risk precisely so that no
+    per-site setting can reach them.
+    """
+    floor = TIER_APPROVER_FLOOR.get(risk, 2)
+    if site_override is None:
+        return floor
+    if site_override >= floor:
+        return site_override
+    if risk in LOWERABLE_TIERS:
+        return max(1, site_override)
+    return floor
+
+
 def evaluate_proposal_policy(
     target_type: str,
     target_path: str,
@@ -169,6 +195,7 @@ def evaluate_proposal_policy(
     validations: list[ValidationCheck],
     author_id: UUID | None = None,
     tenant_mode: str = "recommend",
+    site_required_approver_count: int | None = None,
 ) -> PolicyDecision:
     """Evaluates risk classification, approver rules, and deployment eligibility."""
     rejection_reasons: list[str] = []
@@ -197,7 +224,7 @@ def evaluate_proposal_policy(
         rejection_reasons.append("Prohibited change class cannot be deployed.")
 
     requires_approval = True
-    required_approver_count = 2 if risk in {"medium", "high", "prohibited"} else 1
+    required_approver_count = resolve_required_approver_count(risk, site_required_approver_count)
     allowed_roles = ["owner", "admin", "seo_manager", "editor"] if risk == "low" else ["owner", "admin", "seo_manager"]
     separation_of_duties_enforced = True
     # `not directive_changes` is redundant while they force high risk, and is

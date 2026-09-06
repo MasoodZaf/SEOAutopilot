@@ -622,6 +622,10 @@ class MeasurementCollection(BaseModel):
 class GovernanceSettingsUpdate(BaseModel):
     autopilot_enabled: bool | None = None
     daily_change_budget: int | None = Field(default=None, ge=1, le=50)
+    # None leaves the setting alone. Clearing it back to the risk tier's own
+    # default is a separate act, so a partial update cannot silently reset it.
+    required_approver_count: int | None = Field(default=None, ge=1, le=5)
+    clear_required_approver_count: bool = False
     freeze_window_start: datetime | None = None
     freeze_window_end: datetime | None = None
 
@@ -637,6 +641,7 @@ class GovernanceStatusRead(BaseModel):
     autopilot_enabled: bool
     emergency_freeze: bool
     daily_change_budget: int
+    required_approver_count: int | None
     today_deployments_count: int
     freeze_window_start: datetime | None
     freeze_window_end: datetime | None
