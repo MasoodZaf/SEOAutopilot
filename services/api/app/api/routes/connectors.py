@@ -19,6 +19,10 @@ from app.api.schemas import (
     DnsProviderVerificationCreate,
     DnsProviderVerificationEnvelope,
     DnsProviderVerificationRead,
+    GitHubConnectorCreate,
+    GitHubInstallationEnvelope,
+    GitHubInstallationRead,
+    GitHubRepositoryTarget,
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
@@ -26,6 +30,12 @@ from app.db.session import SystemSession, TenantSession
 from app.services.cloudflare_dns import CloudflareDnsHttpClient
 from app.services.connector_secrets import DatabaseEnvelopeSecretStore, decode_encryption_key
 from app.services.connectors import ConnectorOAuthCallbackService, ConnectorService
+from app.services.github_app import GitHubAppClient
+from app.services.github_connector import (
+    GitHubConnectorService,
+    GitHubInstallationCallbackService,
+    GitHubRepositoryHttpProbe,
+)
 from app.services.google_oauth import GoogleOAuthHttpClient
 
 router = APIRouter(prefix="/v1", tags=["connectors"])
@@ -41,6 +51,20 @@ def local_dns_provider_secret_store(settings, session: TenantSession) -> Databas
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="dns_provider_connector_not_configured",
         )
+    return DatabaseEnvelopeSecretStore(
+        session,
+        decode_encryption_key(settings.connector_secret_encryption_key.get_secret_value()),
+        settings.connector_secret_key_version,
+    )
+
+
+def local_secret_store(settings, session, detail: str) -> DatabaseEnvelopeSecretStore:
+    """The envelope store, or a refusal that names the connector asking for it."""
+    if (
+        settings.connector_secret_backend != "database_envelope"
+        or not settings.connector_secret_encryption_key
+    ):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
     return DatabaseEnvelopeSecretStore(
         session,
         decode_encryption_key(settings.connector_secret_encryption_key.get_secret_value()),
@@ -204,3 +228,116 @@ async def create_connector_sync(
     return ConnectorSyncEnvelope(
         data=ConnectorSyncRead.model_validate(sync), meta={"trace_id": context.trace_id}
     )
+
+
+@router.post(
+    "/sites/{site_id}/connectors/github/installation",
+    response_model=GitHubInstallationEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def begin_github_installation(
+    site_id: UUID,
+    command: GitHubRepositoryTarget,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> GitHubInstallationEnvelope:
+    """Send the tenant to GitHub to install the app on their repository.
+
+    Nothing is stored until GitHub sends them back, and no credential passes
+    through this service at any point: the tenant grants the app, and the token
+    is minted per deployment and never written down.
+    """
+    connector, installation_url, expires_at = await GitHubConnectorService(
+        session, context
+    ).begin_app_installation(
+        site_id,
+        command.repository,
+        command.base_branch,
+        command.path_template,
+        get_settings(),
+    )
+    return GitHubInstallationEnvelope(
+        data=GitHubInstallationRead(
+            connector=ConnectorRead.model_validate(connector),
+            installation_url=installation_url,
+            expires_at=expires_at,
+        ),
+        meta={"trace_id": context.trace_id},
+    )
+
+
+@router.get("/connectors/github/callback", include_in_schema=True)
+async def github_installation_callback(
+    session: SystemSession,
+    state: str = Query(min_length=32, max_length=256),
+    installation_id: int = Query(gt=0),
+    setup_action: str = Query(default="install", max_length=32),
+) -> RedirectResponse:
+    settings = get_settings()
+    if not settings.github_connectors_enabled or not settings.github_app_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="github_connector_callback_not_configured",
+        )
+    if setup_action not in {"install", "update"}:
+        # A cancelled install returns here too. There is nothing to record.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="installation_not_completed"
+        )
+    assert settings.github_app_id is not None
+    assert settings.github_app_private_key is not None
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(30.0)
+    ) as http_client:
+        app_client = GitHubAppClient(
+            http_client,
+            settings.github_app_id,
+            settings.github_app_private_key.get_secret_value(),
+        )
+        await GitHubInstallationCallbackService(session, app_client).complete(
+            state, installation_id, secrets.token_hex(16)
+        )
+    return RedirectResponse(
+        url=f"{settings.app_base_url.rstrip('/')}/settings/connectors?github=connected",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post(
+    "/sites/{site_id}/connectors/github/token",
+    response_model=ConnectorRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def connect_github_token(
+    site_id: UUID,
+    command: GitHubConnectorCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> ConnectorRead:
+    """Bind a tenant-supplied token to one site.
+
+    The app installation above is the better path and should be offered first:
+    this one stores a long-lived credential that belongs to a person. It exists
+    so an install already running on a shared token can move to a per-site
+    connector without waiting for an app registration.
+    """
+    settings = get_settings()
+    if not settings.github_connectors_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="github_connector_not_configured",
+        )
+    secret_store = local_secret_store(settings, session, "github_connector_not_configured")
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(15.0)
+    ) as http_client:
+        connector = await GitHubConnectorService(session, context).connect_personal_access_token(
+            site_id,
+            command.repository,
+            command.base_branch,
+            command.path_template,
+            command.access_token.get_secret_value(),
+            GitHubRepositoryHttpProbe(http_client),
+            secret_store,
+        )
+    return ConnectorRead.model_validate(connector)

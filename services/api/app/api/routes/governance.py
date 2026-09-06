@@ -4,7 +4,6 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
-from app.api.routes.proposals import github_target
 from app.api.schemas import (
     GovernanceSettingsUpdate,
     GovernanceStatusEnvelope,
@@ -18,6 +17,7 @@ from app.core.auth import TenantContextDependency
 from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
 from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
+from app.services.github_connector import credential_for_proposal
 from app.services.governance import GovernanceService
 
 router = APIRouter(tags=["governance"])
@@ -135,23 +135,28 @@ async def rollback_proposal_deployment(
     settings: Annotated[Settings, Depends(get_settings)],
     notes: str = Body(default="", embed=True),
 ) -> RollbackReceiptEnvelope:
-    target = github_target(settings)
-    token = settings.github_token
-    if target is None or token is None:
-        # No connector, no rollback. The service refuses rather than recording
-        # an undo that never happened.
-        rollback = await GovernanceService(session, context).rollback_deployment(
-            proposal_id, notes
-        )
-    else:
-        async with httpx.AsyncClient(
-            follow_redirects=False, timeout=httpx.Timeout(20.0)
-        ) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(20.0)
+    ) as client:
+        try:
+            credential = await credential_for_proposal(
+                session, context, proposal_id, settings, client
+            )
+        except HTTPException as error:
+            if error.status_code != status.HTTP_409_CONFLICT:
+                raise
+            # No connector, no rollback anyone can see. The service still
+            # records the decision, and refuses rather than reporting an undo
+            # that never reached a provider.
+            rollback = await GovernanceService(session, context).rollback_deployment(
+                proposal_id, notes
+            )
+        else:
             try:
                 rollback = await GovernanceService(session, context).rollback_deployment(
                     proposal_id,
                     notes,
-                    GitHubDeploymentAdapter(client, target, token.get_secret_value()),
+                    GitHubDeploymentAdapter(client, credential.target, credential.token),
                 )
             except GitHubDeploymentError as error:
                 raise HTTPException(

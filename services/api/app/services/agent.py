@@ -15,7 +15,6 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.proposals import github_target
 from app.api.schemas import RoutineUpsert
 from app.core.config import Settings, get_settings
 from app.core.context import Role, TenantContext
@@ -25,6 +24,7 @@ from app.domain.routines import Cadence, RoutineSchedule, initial_run_at
 from app.domain.skills import SKILLS, RequestedCadence, Skill, SkillEffect, parse_cadence, route
 from app.services.briefs import ContentBriefService
 from app.services.competitors import CompetitorService
+from app.services.github_connector import credential_for_site
 from app.services.keywords import KeywordService
 from app.services.opportunities import OpportunityService
 from app.services.proposal_drafts import ProposalDraftService
@@ -387,14 +387,6 @@ class AgentService:
                 status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="skill_not_implemented"
             )
 
-        target = github_target(self.settings)
-        token = self.settings.github_token
-        if target is None or token is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="deployment_connector_not_configured",
-            )
-
         opportunities = await OpportunityService(self.session, self.context).list_top(
             site.id, PROPOSE_LIMIT, "open"
         )
@@ -408,10 +400,11 @@ class AgentService:
         async with httpx.AsyncClient(
             follow_redirects=False, timeout=httpx.Timeout(30.0)
         ) as client:
-            adapter = GitHubDeploymentAdapter(client, target, token.get_secret_value())
-            drafts = ProposalDraftService(
-                self.session, self.context, self.settings.github_path_template
+            credential = await credential_for_site(
+                self.session, self.context, site.id, self.settings, client
             )
+            adapter = GitHubDeploymentAdapter(client, credential.target, credential.token)
+            drafts = ProposalDraftService(self.session, self.context, credential.path_template)
             proposals = ProposalService(self.session, self.context)
             for opportunity in opportunities:
                 try:

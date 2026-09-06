@@ -4,7 +4,6 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
-from app.api.routes.proposals import github_target
 from app.api.schemas import (
     CalibrationItemEnvelope,
     CalibrationItemRead,
@@ -22,6 +21,7 @@ from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
 from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
 from app.services.calibrations import CalibrationService
+from app.services.github_connector import credential_for_opportunity
 from app.services.opportunities import OpportunityService
 from app.services.proposal_drafts import ProposalDraftService
 from app.services.proposals import ProposalService
@@ -123,21 +123,18 @@ async def draft_proposal_from_opportunity(
     is classified, validated and left awaiting approval. Drafting is not
     approving, and this endpoint deploys nothing.
     """
-    target = github_target(settings)
-    token = settings.github_token
-    if target is None or token is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="deployment_connector_not_configured",
-        )
-
     async with httpx.AsyncClient(
         follow_redirects=False, timeout=httpx.Timeout(20.0)
     ) as client:
-        adapter = GitHubDeploymentAdapter(client, target, token.get_secret_value())
+        credential = await credential_for_opportunity(
+            session, context, opportunity_id, settings, client
+        )
+        adapter = GitHubDeploymentAdapter(client, credential.target, credential.token)
         try:
+            # The path template belongs to the site's connector: two sites in
+            # one tenant can be built from repositories with different layouts.
             site_id, command = await ProposalDraftService(
-                session, context, settings.github_path_template
+                session, context, credential.path_template
             ).draft_from_opportunity(opportunity_id, adapter.read_file)
         except GitHubDeploymentError as error:
             raise HTTPException(

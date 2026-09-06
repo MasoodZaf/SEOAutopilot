@@ -42,8 +42,20 @@ class Settings(BaseSettings):
     connector_secret_backend: Literal["disabled", "database_envelope", "managed"] = "disabled"
     connector_secret_encryption_key: SecretStr | None = None
     connector_secret_key_version: str = "local-v1"
-    # GitHub deployment target. Absent by default, so the route keeps failing
-    # closed until a repository and token are configured deliberately.
+    # The GitHub App the tenants install. The private key is the app's, not a
+    # tenant's: it signs a JWT that is exchanged for an installation token
+    # scoped to whatever repositories that tenant granted. No tenant credential
+    # is ever stored, and revoking access is an uninstall.
+    github_connectors_enabled: bool = False
+    github_app_id: str | None = None
+    github_app_slug: str | None = None
+    github_app_private_key: SecretStr | None = None
+    github_app_callback_url: str = "http://localhost:8000/v1/connectors/github/callback"
+    # The install-wide deployment target that predates per-site connectors. One
+    # repository and one token for every tenant, which is why using it now takes
+    # an explicit opt-in and is refused outside development: it is the pilot's
+    # bridge onto a connector, not a supported configuration.
+    github_legacy_token_enabled: bool = False
     github_repository: str | None = None
     github_base_branch: str = "main"
     github_token: SecretStr | None = None
@@ -79,9 +91,36 @@ class Settings(BaseSettings):
                 or len(self.search_query_hash_key.get_secret_value()) < 32
             ):
                 raise ValueError("SEARCH_QUERY_HASH_KEY must contain at least 32 characters")
+        app_parts = (self.github_app_id, self.github_app_slug, self.github_app_private_key)
+        if any(app_parts) and not all(app_parts):
+            # A half-configured app is worse than none: the install endpoint
+            # would offer a flow that cannot complete, and the tenant would
+            # find out after granting access to their repository.
+            raise ValueError(
+                "GITHUB_APP_ID, GITHUB_APP_SLUG and GITHUB_APP_PRIVATE_KEY must be "
+                "configured together or not at all"
+            )
+        if self.github_app_private_key is not None:
+            from app.services.github_app import load_private_key
+
+            load_private_key(self.github_app_private_key.get_secret_value())
+        if self.github_legacy_token_enabled:
+            # A token shared by every tenant cannot be made safe by scoping it
+            # better, so it is bounded by environment instead.
+            if self.app_env != "development":
+                raise ValueError(
+                    "GITHUB_LEGACY_TOKEN_ENABLED is development-only; connect a per-site "
+                    "GitHub connector instead"
+                )
+            if not self.github_repository or not self.github_token:
+                raise ValueError(
+                    "GITHUB_REPOSITORY and GITHUB_TOKEN are required when the legacy "
+                    "install-wide token is enabled"
+                )
         if (
             self.google_connectors_enabled
             or self.dns_provider_connectors_enabled
+            or self.github_connectors_enabled
             or self.notifications_enabled
         ):
             if self.connector_secret_backend == "disabled":
@@ -126,6 +165,17 @@ class Settings(BaseSettings):
         if self.mock_deployments_enabled and self.app_env not in {"development", "test"}:
             raise ValueError("Mock deployments are development and test only")
         return self
+
+    @property
+    def github_app_configured(self) -> bool:
+        """All three halves of the app credential, or none of them.
+
+        An app id without a private key is not a partially working connector;
+        it is one that fails at the moment a tenant tries to install it.
+        """
+        return bool(
+            self.github_app_id and self.github_app_slug and self.github_app_private_key
+        )
 
 
 @lru_cache

@@ -24,11 +24,8 @@ from app.core.config import Settings, get_settings
 from app.core.context import TenantContext
 from app.db.session import TenantSession
 from app.domain.deployments import DeploymentAdapter, MockDeploymentAdapter
-from app.domain.github_adapter import (
-    GitHubDeploymentAdapter,
-    GitHubDeploymentError,
-    GitHubTarget,
-)
+from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
+from app.services.github_connector import credential_for_proposal, credential_for_site
 from app.services.proposals import ProposalService
 
 router = APIRouter(tags=["proposals"])
@@ -126,18 +123,16 @@ async def deploy_proposal(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> DeploymentReceiptEnvelope:
     if command.connector_type == "github":
-        target = github_target(settings)
-        token = settings.github_token
-        if target is None or token is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="deployment_connector_not_configured",
-            )
         # Redirects are never followed: a redirect off api.github.com would
         # carry the installation token to wherever it pointed.
         async with httpx.AsyncClient(
             follow_redirects=False, timeout=httpx.Timeout(20.0)
         ) as client:
+            # The credential comes from this proposal's own site. Two tenants
+            # deploying at once reach two repositories with two grants.
+            credential = await credential_for_proposal(
+                session, context, proposal_id, settings, client
+            )
             return await _deploy(
                 proposal_id,
                 command,
@@ -145,7 +140,7 @@ async def deploy_proposal(
                 session,
                 idempotency_key,
                 settings,
-                GitHubDeploymentAdapter(client, target, token.get_secret_value()),
+                GitHubDeploymentAdapter(client, credential.target, credential.token),
             )
 
     # The mock adapter reports a deployment nobody performed, so reaching it
@@ -165,17 +160,6 @@ async def deploy_proposal(
         idempotency_key,
         settings,
         MockDeploymentAdapter(connector_type="mock", enforce_drift=True),
-    )
-
-
-def github_target(settings: Settings) -> GitHubTarget | None:
-    """Parse `owner/repository` from settings, or nothing if it is unusable."""
-    raw = (settings.github_repository or "").strip()
-    owner, separator, repository = raw.partition("/")
-    if not separator or not owner or not repository or "/" in repository:
-        return None
-    return GitHubTarget(
-        owner=owner, repository=repository, base_branch=settings.github_base_branch
     )
 
 
@@ -231,17 +215,10 @@ async def deploy_proposals(
     thirty files, and only the second can be reviewed. Each proposal keeps its
     own approval and its own receipt.
     """
-    target = github_target(settings)
-    token = settings.github_token
-    if target is None or token is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="deployment_connector_not_configured",
-        )
-
     async with httpx.AsyncClient(
         follow_redirects=False, timeout=httpx.Timeout(60.0)
     ) as client:
+        credential = await credential_for_site(session, context, site_id, settings, client)
         try:
             receipts = await ProposalService(
                 session, context, deployments_enabled=settings.deployments_enabled
@@ -249,7 +226,7 @@ async def deploy_proposals(
                 site_id=site_id,
                 proposal_ids=command.proposal_ids,
                 idempotency_key=idempotency_key,
-                adapter=GitHubDeploymentAdapter(client, target, token.get_secret_value()),
+                adapter=GitHubDeploymentAdapter(client, credential.target, credential.token),
             )
         except GitHubDeploymentError as error:
             raise HTTPException(

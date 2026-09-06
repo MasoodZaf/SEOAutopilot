@@ -331,6 +331,10 @@ class Connector(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending_authorization")
     external_account_ref: Mapped[str | None] = mapped_column(Text)
     secret_ref: Mapped[str | None] = mapped_column(Text)
+    # Non-secret settings this connector needs to be usable: for GitHub, the
+    # base branch and the URL-path-to-file mapping. Kept out of the encrypted
+    # payload so reading them never requires decrypting a credential.
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     granted_scopes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     consented_by: Mapped[UUID | None]
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

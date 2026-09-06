@@ -7,16 +7,18 @@ from the live host. It takes its own opt-in instead.
 """
 
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api.routes.proposals import deploy_proposal, github_target
+from app.api.routes.proposals import deploy_proposal
 from app.api.schemas import DeploymentCreate
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
+from app.domain.github_adapter import GitHubTarget
+from app.services.github_connector import GitHubCredential
 
 pytestmark = pytest.mark.asyncio
 
@@ -77,38 +79,58 @@ async def test_mock_deployments_cannot_be_opted_into_outside_development() -> No
             )
 
 
-async def test_github_is_refused_until_a_repository_and_token_are_configured() -> None:
-    for overrides in (
-        {},
-        {"github_repository": "MasoodZaf/mindTools"},
-        {"github_token": "t" * 40},
+CREDENTIAL = GitHubCredential(
+    target=GitHubTarget(owner="MasoodZaf", repository="mindTools", base_branch="main"),
+    token="resolved-for-this-site",
+    path_template="{path}.html",
+    connector_id=UUID("019d0000-0000-7000-8000-0000000000c1"),
+    source="github_app",
+)
+
+
+async def test_github_is_refused_when_the_site_has_no_credential() -> None:
+    # The route no longer reads an install-wide token, so "not configured" is
+    # now a fact about this proposal's site rather than about the process.
+    refusal = HTTPException(status_code=409, detail="deployment_connector_not_configured")
+    with patch(
+        "app.api.routes.proposals.credential_for_proposal",
+        new=AsyncMock(side_effect=refusal),
+    ), pytest.raises(HTTPException) as raised:
+        await deploy(DeploymentCreate(connector_type="github"), settings())
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "deployment_connector_not_configured"
+
+
+async def test_the_adapter_carries_the_credential_resolved_for_that_proposal() -> None:
+    """The token reaching GitHub must be the one this site is entitled to.
+
+    An install-wide token would make this assertion vacuous: every proposal
+    would produce the same adapter. It is the whole point of the connector that
+    the proposal id decides which credential is used.
+    """
+    proposal_id = uuid4()
+    resolver = AsyncMock(return_value=CREDENTIAL)
+    with (
+        patch("app.api.routes.proposals.credential_for_proposal", new=resolver),
+        patch("app.api.routes.proposals._deploy", new=AsyncMock()) as inner,
     ):
-        with pytest.raises(HTTPException) as raised:
-            await deploy(DeploymentCreate(connector_type="github"), settings(**overrides))
-        assert raised.value.status_code == 409
+        await deploy_proposal(
+            proposal_id,
+            DeploymentCreate(connector_type="github"),
+            context(),
+            AsyncMock(),
+            KEY,
+            settings(),
+        )
 
-
-async def test_a_configured_github_target_is_parsed_and_reached() -> None:
-    config = settings(github_repository="MasoodZaf/mindTools", github_token="t" * 40)
-    target = github_target(config)
-
-    assert target is not None
-    assert (target.owner, target.repository, target.base_branch) == (
-        "MasoodZaf",
-        "mindTools",
-        "main",
-    )
-
-    with patch("app.api.routes.proposals._deploy", new=AsyncMock()) as inner:
-        await deploy(DeploymentCreate(connector_type="github"), config)
-
+    assert resolver.await_args is not None
+    assert resolver.await_args.args[2] == proposal_id
     assert inner.await_args is not None
-    assert inner.await_args.args[-1].connector_type == "github"
-
-
-async def test_a_malformed_repository_is_not_a_target() -> None:
-    for raw in ("", "  ", "mindTools", "/mindTools", "MasoodZaf/", "a/b/c"):
-        assert github_target(settings(github_repository=raw)) is None
+    adapter = inner.await_args.args[-1]
+    assert adapter.connector_type == "github"
+    assert adapter._target is CREDENTIAL.target
+    assert adapter._headers["Authorization"] == "Bearer resolved-for-this-site"
 
 
 async def test_a_connector_with_no_adapter_is_refused() -> None:

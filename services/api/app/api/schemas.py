@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime
 from enum import StrEnum
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -373,6 +374,9 @@ class ConnectorRead(BaseModel):
     provider_key: str | None
     status: str
     external_account_ref: str | None
+    # Non-secret settings only. The encrypted payload is never read here, and
+    # nothing that could identify a credential is written into it.
+    config_json: dict[str, Any] = Field(default_factory=dict)
     granted_scopes: list[str]
     last_sync_at: datetime | None
     version: int
@@ -398,6 +402,60 @@ class ConnectorAuthorizationCreate(BaseModel):
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("credentials, query, and fragment are not allowed")
         return candidate
+
+
+class GitHubRepositoryTarget(BaseModel):
+    """Where a site's approved changes are written, and under what layout."""
+
+    repository: str = Field(min_length=3, max_length=200)
+    base_branch: str = Field(default="main", min_length=1, max_length=200)
+    # A crawled URL path is not a repository path, and the mapping between them
+    # is a property of how the site is built. It cannot be inferred.
+    path_template: str = Field(default="{path}.html", min_length=1, max_length=200)
+
+    @field_validator("repository")
+    @classmethod
+    def validate_repository(cls, value: str) -> str:
+        from app.services.github_connector import parse_repository
+
+        parsed = parse_repository(value)
+        if parsed is None:
+            raise ValueError("repository must look like owner/name")
+        return f"{parsed[0]}/{parsed[1]}"
+
+    @field_validator("base_branch")
+    @classmethod
+    def validate_base_branch(cls, value: str) -> str:
+        branch = value.strip()
+        if not branch or branch.startswith("-") or any(
+            character in branch for character in " ~^:?*[\\"
+        ):
+            raise ValueError("base_branch is not a valid git ref")
+        return branch
+
+    @field_validator("path_template")
+    @classmethod
+    def validate_path_template(cls, value: str) -> str:
+        from app.services.github_connector import normalize_path_template
+
+        return normalize_path_template(value)
+
+
+class GitHubConnectorCreate(GitHubRepositoryTarget):
+    """A tenant-supplied token, sent once over TLS and never returned."""
+
+    access_token: SecretStr = Field(min_length=20, max_length=4096)
+
+
+class GitHubInstallationRead(BaseModel):
+    connector: ConnectorRead
+    installation_url: str
+    expires_at: datetime
+
+
+class GitHubInstallationEnvelope(BaseModel):
+    data: GitHubInstallationRead
+    meta: dict[str, str]
 
 
 class DnsProviderConnectorCreate(BaseModel):
