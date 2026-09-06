@@ -32,7 +32,7 @@ def multiagent_evidence(**overrides: object) -> MultiAgentPageEvidence:
     performance = overrides.pop("performance", PerformanceEvidence(performance_score=90, lcp_ms=1800, inp_ms=100, cls=0.02, ttfb_ms=250))
     return MultiAgentPageEvidence(
         page_id="019d0000-0000-7000-8000-000000000001",
-        normalized_url="https://example.com/page",
+        normalized_url=str(overrides.pop("normalized_url", "https://example.com/page")),
         page=page,  # type: ignore[arg-type]
         link_graph=link_graph,  # type: ignore[arg-type]
         search_console=search_console,  # type: ignore[arg-type]
@@ -181,3 +181,91 @@ def test_a_heading_shared_by_only_two_pages_is_left_alone() -> None:
 def test_a_unique_heading_is_never_reported_as_duplicated() -> None:
     _, findings = evaluate_multiagent_page(multiagent_evidence())
     assert "h1.duplicate_across_site" not in [f.code for f in findings]
+
+
+# --- content.title_omits_url_topic ------------------------------------------
+
+
+def codes(evidence: MultiAgentPageEvidence) -> set[str]:
+    _score, findings = evaluate_multiagent_page(evidence)
+    return {finding.code for finding in findings}
+
+
+def test_a_page_that_never_says_what_its_url_says_it_is() -> None:
+    """The pilot site's shape: /networth-calculator titled "Net Worth Tracker".
+
+    The slug is the one description of a page its author chose deliberately and
+    no template overwrites, so it can carry this finding without any search
+    data to back it.
+    """
+    found = codes(
+        multiagent_evidence(
+            normalized_url="https://thecalchive.com/networth-calculator",
+            page=page_evidence(title="Net Worth Tracker — Free Tool", h1=["Net Worth Tracker"]),
+        )
+    )
+    assert "content.title_omits_url_topic" in found
+
+
+def test_the_word_in_either_place_is_enough() -> None:
+    """A title without it but a heading with it is a weaker, different problem."""
+    for title, heading in (
+        ("Net Worth Calculator — Free Tool", "Net Worth Tracker"),
+        ("Net Worth Tracker — Free Tool", "Net Worth Calculator"),
+    ):
+        found = codes(
+            multiagent_evidence(
+                normalized_url="https://thecalchive.com/networth-calculator",
+                page=page_evidence(title=title, h1=[heading]),
+            )
+        )
+        assert "content.title_omits_url_topic" not in found
+
+
+def test_the_match_is_stemmed_like_every_other_token_comparison() -> None:
+    found = codes(
+        multiagent_evidence(
+            normalized_url="https://thecalchive.com/networth-calculator",
+            page=page_evidence(title="Net Worth Calculators — Free Tool", h1=["Net Worth"]),
+        )
+    )
+    assert "content.title_omits_url_topic" not in found
+
+
+def test_a_section_slug_is_not_a_subject_claim() -> None:
+    """`/about` titled "Our Story" is fine, and reporting it would bury the rest."""
+    for url in ("https://example.com/about", "https://example.com/", "https://example.com/blog"):
+        found = codes(
+            multiagent_evidence(
+                normalized_url=url,
+                page=page_evidence(title="Our Story — Example", h1=["Our Story"]),
+            )
+        )
+        assert "content.title_omits_url_topic" not in found
+
+
+def test_a_modifier_the_slug_ran_together_is_not_a_missing_word() -> None:
+    """`/networth-calculator` against "Net Worth Calculator" is not a defect.
+
+    Slugs concatenate what prose separates. Checking every slug word reported a
+    missing "networth" on a page whose title says "Net Worth", which is the
+    kind of false positive that teaches people to ignore an audit.
+    """
+    found = codes(
+        multiagent_evidence(
+            normalized_url="https://thecalchive.com/networth-calculator",
+            page=page_evidence(title="Net Worth Calculator — Free", h1=["Net Worth Calculator"]),
+        )
+    )
+    assert "content.title_omits_url_topic" not in found
+
+
+def test_only_one_finding_per_page() -> None:
+    _score, findings = evaluate_multiagent_page(
+        multiagent_evidence(
+            normalized_url="https://example.com/annual-percentage-calculator",
+            page=page_evidence(title="Rate Tool — Example", h1=["Rate Tool"]),
+        )
+    )
+    raised = [f for f in findings if f.code == "content.title_omits_url_topic"]
+    assert len(raised) == 1

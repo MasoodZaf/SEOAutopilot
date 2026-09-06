@@ -1,6 +1,7 @@
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from app.keywords.cluster import similarity_tokens
 
@@ -59,6 +60,43 @@ class MultiAgentPageEvidence:
     performance: PerformanceEvidence = field(default_factory=PerformanceEvidence)
 
 
+def url_topic_tokens(normalized_url: str) -> list[str]:
+    """The subject a URL's last path segment claims for the page.
+
+    Only the final path segment, because that names the page rather than its
+    section, and within it only the trailing word, which is the noun: the
+    modifiers in front of it are routinely concatenated in a slug and separated
+    in prose, so `/networth-calculator` against "Net Worth Calculator" would
+    report a missing "networth" that is plainly there.
+
+    That also keeps this rule and `title_repair` describing the same thing. A
+    finding the repair could never act on is a finding that only ever produces
+    a refusal.
+    """
+    path = urlsplit(normalized_url).path.strip("/")
+    if not path:
+        return []
+    segment = path.rsplit("/", 1)[-1]
+    for extension in (".html", ".htm", ".php"):
+        segment = segment.removesuffix(extension)
+    parts = [word for word in re.split(r"[^a-z0-9]+", segment.lower()) if word]
+    if len(parts) < 2:
+        # A single-word segment names a section, not a subject: `/about`
+        # titled "Our Story" is fine, and reporting it would bury the cases
+        # where an author compounded a slug precisely to say what a page is.
+        return []
+    trailing = parts[-1]
+    if len(trailing) < MIN_URL_TOPIC_LENGTH or trailing in URL_TOPIC_STOPWORDS:
+        return []
+    words = [trailing]
+    # Stemmed to match the tokens the title and heading are compared with, so
+    # "calculator" in the slug matches "Calculators" in a title.
+    stemmed: list[str] = []
+    for word in words:
+        stemmed.extend(similarity_tokens(word))
+    return stemmed
+
+
 @dataclass(frozen=True, slots=True)
 class Finding:
     code: str
@@ -89,6 +127,16 @@ def opportunity_score(finding: Finding) -> float:
 # One page repeating another's H1 is a coincidence; three or more sharing a
 # heading means the heading belongs to a template rather than to any page.
 DUPLICATE_H1_PAGE_THRESHOLD = 3
+
+# Words a URL slug uses to say what a page is. A slug is the one piece of
+# evidence about a page's subject that the author chose deliberately and that no
+# template can overwrite, so a slug saying "calculator" while the title and
+# heading say neither is a mismatch worth reporting without needing any search
+# data to prove it.
+URL_TOPIC_STOPWORDS = frozenset(
+    {"a", "an", "and", "for", "in", "of", "on", "the", "to", "with", "index", "html", "php"}
+)
+MIN_URL_TOPIC_LENGTH = 4
 
 
 def tokenize_text(text: str) -> set[str]:
@@ -203,6 +251,23 @@ def evaluate_multiagent_page(evidence: MultiAgentPageEvidence) -> tuple[int, lis
         h1_tokens = similarity_tokens(page.h1[0])
         if title_tokens and h1_tokens and not (title_tokens & h1_tokens):
             add("content.title_h1_mismatch", "low", "Title and H1 share no common thematic keywords.", (0.30, 0.85, 0.45, 0.30, "low"), "content")
+
+    for topic in url_topic_tokens(evidence.normalized_url):
+        # Both, deliberately. A word in the title but not the heading is a
+        # weaker signal and a different fix; this is the case where the page
+        # never says what its own address says it is.
+        if topic in similarity_tokens(title) or (
+            page.h1 and topic in similarity_tokens(page.h1[0])
+        ):
+            continue
+        add(
+            "content.title_omits_url_topic",
+            "medium",
+            f"The URL says this page is about '{topic}', and neither the title nor the H1 says so.",
+            (0.60, 0.90, 0.65, 0.25, "low"),
+            "content",
+        )
+        break
 
     if page.h1 and page.pages_sharing_h1 >= DUPLICATE_H1_PAGE_THRESHOLD:
         add(

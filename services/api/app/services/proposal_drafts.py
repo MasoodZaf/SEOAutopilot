@@ -15,6 +15,7 @@ rather than answered badly.
 """
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -33,6 +34,8 @@ from app.db.models import (
     Proposal,
 )
 from app.domain.h1_repair import H1Repair, H1RepairError, is_site_root, plan_repair
+from app.domain.title_repair import TitleRepair
+from app.domain.title_repair import repair_document as repair_title
 
 # Reading a file is the connector's job, not this service's. Passing it in keeps
 # the draft logic testable without a network and without a token.
@@ -40,7 +43,11 @@ ReadFile = Callable[[str], Awaitable[str | None]]
 
 # Both rules describe the same broken heading from different angles, and both
 # are repaired the same way.
-REPAIRABLE_RULES = frozenset({"content.title_h1_mismatch", "h1.duplicate_across_site"})
+HEADING_RULES = frozenset({"content.title_h1_mismatch", "h1.duplicate_across_site"})
+# A different repair with a different shape: the title itself is what is wrong,
+# so deriving a heading from it would only propagate the omission.
+TITLE_RULES = frozenset({"content.title_omits_url_topic"})
+REPAIRABLE_RULES = HEADING_RULES | TITLE_RULES
 
 # A proposal in any of these is still on its way somewhere, so a second one for
 # the same opportunity would be a duplicate rather than a replacement.
@@ -50,6 +57,13 @@ RATIONALE = (
     "The heading is taken from this page's own <title>, so it names the page's "
     "subject instead of repeating a heading the rest of the site also uses. "
     "Nothing else in the file changes."
+)
+
+TITLE_RATIONALE = (
+    "The URL already says what this page is; the title and heading did not. "
+    "The subject word is taken from the page's own slug, so nothing is invented, "
+    "and the site's title suffix is kept verbatim. Nothing else in the file "
+    "changes."
 )
 
 
@@ -74,8 +88,8 @@ class ProposalDraftService:
         rule_key = await self._repairable_rule(opportunity_id)
 
         if is_site_root(page.normalized_url):
-            # The rule is right that the front page shares the heading; the
-            # repair is wrong there, so refuse before reading any file.
+            # The rules are right that the front page shares the heading; both
+            # repairs are wrong there, so refuse before reading any file.
             raise self._refuse("h1_repair_refuses_site_root")
 
         observation = await self._latest_observation(page.id)
@@ -88,6 +102,11 @@ class ProposalDraftService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"draft_target_not_found:{target_path}",
+            )
+
+        if rule_key in TITLE_RULES:
+            return opportunity.site_id, self._title_proposal(
+                opportunity_id, page, rule_key, target_path, document
             )
 
         repair = self._repair(document, observation.title, page.normalized_url)
@@ -103,6 +122,39 @@ class ProposalDraftService:
             target_path=target_path,
             before_content=repair.before_content,
             after_content=repair.after_content,
+        )
+
+    def _title_proposal(
+        self,
+        opportunity_id: UUID,
+        page: Any,
+        rule_key: str,
+        target_path: str,
+        document: str,
+    ) -> ProposalCreate:
+        """One change covering the title and the heading, or a named refusal."""
+        repair: TitleRepair = repair_title(document, page.normalized_url)
+        if not repair.applied:
+            # The reason is the useful part: it names which page shape defeated
+            # the repair, so a person knows what to look at rather than being
+            # told only that nothing happened.
+            raise self._refuse(repair.reason)
+        return ProposalCreate(
+            opportunity_id=opportunity_id,
+            page_id=page.id,
+            title=(
+                f"Name the subject on {self._display_path(page.normalized_url)}: "
+                f"“{repair.heading_after}”"
+            ),
+            rationale=(
+                f"{TITLE_RATIONALE} Rule: {rule_key}. "
+                f"Title “{repair.title_before}” becomes “{repair.title_after}”; "
+                f"H1 “{repair.heading_before}” becomes “{repair.heading_after}”."
+            ),
+            target_type="github_file",
+            target_path=target_path,
+            before_content=repair.before,
+            after_content=repair.after,
         )
 
     async def _refuse_if_already_proposed(self, opportunity_id: UUID) -> None:
