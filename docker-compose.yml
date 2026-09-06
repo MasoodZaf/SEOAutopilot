@@ -80,8 +80,12 @@ services:
 
   crawler:
     build: {context: ., dockerfile: services/crawler/Dockerfile}
+    env_file: [.env.local]
     environment:
-      DATABASE_URL: postgresql://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
+      # DATABASE_URL comes from env_file, like the API's and the worker's. Every
+      # crawler write goes through tenantTransaction, which sets the tenant GUC,
+      # so it runs correctly as the tenant-scoped application role; the client
+      # strips the +asyncpg suffix the Python services need.
       REDIS_URL: redis://redis:6379/0
     read_only: true
     tmpfs: [/tmp]

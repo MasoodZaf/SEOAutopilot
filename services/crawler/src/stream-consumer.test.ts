@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {claimMessage,parseClaimReply,parseReadReply} from "./stream-consumer.js";
+import {claimMessage,normalizeDatabaseUrl,parseClaimReply,parseReadReply} from "./stream-consumer.js";
+
+test("strips the asyncpg driver suffix so one DATABASE_URL serves every service",()=>{
+  assert.equal(
+    normalizeDatabaseUrl("postgresql+asyncpg://app:secret@postgres:5432/seo_autopilot"),
+    "postgresql://app:secret@postgres:5432/seo_autopilot",
+  );
+});
+test("leaves a plain postgres url untouched",()=>{
+  assert.equal(normalizeDatabaseUrl("postgresql://app:secret@postgres:5432/db"),"postgresql://app:secret@postgres:5432/db");
+});
+test("passes through an unset url rather than inventing one",()=>assert.equal(normalizeDatabaseUrl(undefined),undefined));
 
 const message=["1-0",["type","crawl.requested","tenant_id","tenant","aggregate_id","crawl"]];
 test("parses new stream messages",()=>assert.deepEqual(parseReadReply([["stream",[message]]]),[{id:"1-0",fields:{type:"crawl.requested",tenant_id:"tenant",aggregate_id:"crawl"}}]));
