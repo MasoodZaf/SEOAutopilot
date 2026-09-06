@@ -1,8 +1,10 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, status
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
+from app.api.routes.proposals import github_target
 from app.api.schemas import (
     CalibrationItemEnvelope,
     CalibrationItemRead,
@@ -12,11 +14,17 @@ from app.api.schemas import (
     OpportunityEnvelope,
     OpportunityRead,
     OpportunitySuppress,
+    ProposalEnvelope,
+    ProposalRead,
 )
 from app.core.auth import TenantContextDependency
+from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
+from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
 from app.services.calibrations import CalibrationService
 from app.services.opportunities import OpportunityService
+from app.services.proposal_drafts import ProposalDraftService
+from app.services.proposals import ProposalService
 
 router = APIRouter(prefix="/v1/opportunities", tags=["opportunities"])
 calibration_router = APIRouter(prefix="/v1/calibration-items", tags=["calibrations"])
@@ -95,4 +103,49 @@ async def review_calibration_item(
     )
     return CalibrationReviewEnvelope(
         data=CalibrationReviewRead.model_validate(review), meta={"trace_id": context.trace_id}
+    )
+
+
+@router.post(
+    "/{opportunity_id}/proposal-draft",
+    response_model=ProposalEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def draft_proposal_from_opportunity(
+    opportunity_id: UUID,
+    context: TenantContextDependency,
+    session: TenantSession,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ProposalEnvelope:
+    """Build the change this opportunity implies, and submit it as a proposal.
+
+    The draft goes through `create_proposal` like any hand-authored one, so it
+    is classified, validated and left awaiting approval. Drafting is not
+    approving, and this endpoint deploys nothing.
+    """
+    target = github_target(settings)
+    token = settings.github_token
+    if target is None or token is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="deployment_connector_not_configured",
+        )
+
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(20.0)
+    ) as client:
+        adapter = GitHubDeploymentAdapter(client, target, token.get_secret_value())
+        try:
+            site_id, command = await ProposalDraftService(
+                session, context, settings.github_path_template
+            ).draft_from_opportunity(opportunity_id, adapter.read_file)
+        except GitHubDeploymentError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+
+    proposal = await ProposalService(session, context).create_proposal(site_id, command)
+    return ProposalEnvelope(
+        data=ProposalRead.model_validate(proposal),
+        meta={"trace_id": context.trace_id},
     )

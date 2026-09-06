@@ -441,6 +441,23 @@ the one span, and re-reading the result must return the intended heading. It ref
 H1, with several, with an unusable title, or already correct. Nothing yet turns an opportunity into a
 proposal automatically; that is the remaining gap in this track.
 
+**The opportunity-to-proposal step exists (2026-09-06).** `ProposalDraftService` reads the
+opportunity, joins it to its finding through `opportunity_finding` to learn which rule produced it,
+takes the page's latest observed title, reads the target file through the connector, and returns a
+`ProposalCreate`. It writes nothing itself; `POST /v1/opportunities/{id}/proposal-draft` submits the
+result through `create_proposal`, so classification, validators, policy and approval are unchanged.
+It refuses a suppressed opportunity, a rule with no deterministic repair, a page with no crawl
+evidence or title, a target absent from the repository, another tenant's opportunity, and the site
+root. `tests/integration/test_proposal_drafts.py` runs all eight against PostgreSQL on the
+application role; removing the front-page guard fails two of them.
+
+**Re-crawled after the extraction fix (2026-09-06).** Crawl `7ee91e43` returned 32 pages with 32
+distinct content hashes at a 0.031 top share. The stored H1 reads "Every calculator you'll ever
+need" — the welded token is gone — and word counts rose across the site. `content.title_h1_mismatch`
+fell from 32 open findings to 17, and the front page's instance moved itself to `resolved`; 15 did.
+`h1.duplicate_across_site` is open on all 32 with the summary "The H1 is the same on 32 pages, so it
+identifies none of them."
+
 **Mock deployments no longer key off `app_env`.** The route admitted the mock adapter whenever
 `app_env` was development or test, and production runs `app_env=development` until H5 lands, so
 enabling deployments there would have made an adapter that fabricates success reachable on the live

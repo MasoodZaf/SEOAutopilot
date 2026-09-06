@@ -135,6 +135,16 @@ class GitHubDeploymentAdapter:
         found = response.json()
         return found[0] if isinstance(found, list) and found else None
 
+    async def read_file(self, path: str) -> str | None:
+        """The file's content on the base branch, or None if it is not there.
+
+        Drafting a proposal needs the file the change will be applied to, and
+        the base branch is the only honest source for it: a diff built against
+        anything else would fail its own drift check at deploy time.
+        """
+        current = await self._current_file(path)
+        return current[0] if current else None
+
     async def _current_file(self, path: str) -> tuple[str, str] | None:
         """The file's decoded content and blob sha on the base branch."""
         response = await self._request(
