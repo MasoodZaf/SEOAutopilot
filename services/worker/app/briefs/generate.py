@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 MIN_CLUSTER_SCORE = 20.0
 MAX_BRIEFS_PER_RUN = 50
 
+# The bar above is absolute, and the score it reads is dominated by absolute
+# demand. On a site that has not started ranking, no cluster can ever clear it:
+# the pilot site's strongest topic scored 12.5 from 41 impressions at position
+# 86, so the one mechanism that says "here is what to add to this page"
+# produced nothing for exactly the site that needed it.
+#
+# When nothing clears the bar, the site's own strongest topics are offered
+# instead -- a short list, above a floor that keeps single stray impressions
+# out. They are recorded as `exploratory` so nobody mistakes "the best this
+# site has" for "worth a team's week".
+EXPLORATORY_FLOOR = 3.0
+MAX_EXPLORATORY_BRIEFS = 5
+
 LOAD_CLUSTERS_SQL = """
 SELECT c.id, c.analysis_run_id, c.label, c.intent, c.answer_engine_candidate,
        c.impressions, c.clicks, c.ctr, c.average_position,
@@ -112,6 +125,13 @@ async def generate_briefs(
         LOAD_CLUSTERS_SQL, tenant_id, site_id, analysis_run_id,
         MIN_CLUSTER_SCORE, MAX_BRIEFS_PER_RUN,
     )
+    selection_basis = "demand"
+    if not clusters:
+        clusters = await connection.fetch(
+            LOAD_CLUSTERS_SQL, tenant_id, site_id, analysis_run_id,
+            EXPLORATORY_FLOOR, MAX_EXPLORATORY_BRIEFS,
+        )
+        selection_basis = "exploratory"
     written = 0
     refreshes = 0
     new_pages = 0
@@ -183,7 +203,14 @@ async def generate_briefs(
                 ],
                 sort_keys=True, separators=(",", ":"), default=str,
             ),
-            json.dumps(brief.evidence, sort_keys=True, separators=(",", ":"), default=str),
+            # The basis travels with the brief, not just with the run that made
+            # it: a reader opening one months later must be able to tell
+            # whether it was chosen on its merits or for lack of anything
+            # stronger.
+            json.dumps(
+                {**brief.evidence, "selection_basis": selection_basis},
+                sort_keys=True, separators=(",", ":"), default=str,
+            ),
             brief.query_hashes,
             brief.content_hash,
         )
@@ -200,4 +227,5 @@ async def generate_briefs(
         "refresh_briefs": refreshes,
         "new_page_briefs": new_pages,
         "minimum_cluster_score": MIN_CLUSTER_SCORE,
+        "selection_basis": selection_basis,
     }
