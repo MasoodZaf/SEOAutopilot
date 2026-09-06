@@ -292,7 +292,7 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
 **Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
 has a test that runs against real PostgreSQL.
 
-### Orphaned worker runs (found 2026-09-06)
+### Orphaned worker runs (found and closed 2026-09-06)
 
 Exercising the PageSpeed path surfaced a defect unrelated to isolation. The client never mapped
 `httpx` transport failures onto `PageSpeedError`, so a read timeout escaped the consumer's handler,
@@ -301,12 +301,25 @@ run was left `running`, and because `performance_run_already_active` rejects a n
 active, a single network timeout wedged that site's PageSpeed runs permanently. The mapping is fixed
 and covered by tests.
 
-The deeper gap is still open: the claim query does reclaim an expired lease, but only when a message
-is redelivered, and the observed run had no pending Redis entry despite the failing branch never
-acking. Database lease state and stream pending state can therefore diverge and leave a run with no
-route back. A periodic reaper for runs whose lease expired, or marking the run failed before the
-message is dropped, would close it. The same shape should be checked on the crawl, routine and sync
-consumers.
+The deeper gap is now closed too. The claim query does reclaim an expired lease, but only when a
+message is redelivered, and the observed run had no pending Redis entry despite the failing branch
+never acking — so database lease state and stream pending state could diverge and leave a run with
+no route back. `services/worker/app/reaper.py` is the missing half: a cross-tenant sweep on the relay
+identity that, for a row whose lease expired five minutes past its deadline, either resets it to
+`queued` and republishes the delivery event in one statement, or — when its attempts are spent —
+records `status='failed'` with `error_code='lease_expired'` so a dead run is visible rather than
+pending. It covers all four stream-driven tables (`crawl_job`, `performance_run`, `routine_run`,
+`connector_sync`), which answers the "same shape on the other consumers" question.
+
+Two judgement calls worth knowing. `notification_delivery` is excluded because its dispatcher already
+re-reads the table every tick, so sweeping it would race two writers for no gain. And `connector_sync`
+tracks no attempt count, so there is no safe bound on requeueing it — an abandoned sync is failed
+instead, with its cursor preserved so a fresh sync resumes rather than restarts. Giving that table an
+`attempts` column would let it be retried like the others.
+
+Verified against the running stack: a run stranded at `attempts=1` was requeued and republished, the
+dispatcher relayed the event 0.19s later, and the PageSpeed consumer re-claimed it; the same run
+stranded at `attempts=3` was marked failed with `lease_expired`.
 
 ### H2 — Make the evidence real
 
