@@ -63,13 +63,14 @@ services:
     build: {context: ., dockerfile: services/worker/Dockerfile}
     env_file: [.env.local]
     environment:
-      # Still the owning role: twelve worker modules never set the tenant GUC,
-      # and the outbox relay and routine scheduler are cross-tenant by design.
-      # Migration 0027 creates seo_autopilot_relay for those; moving the worker
-      # across is the remaining half of hardening track H1. Set here rather than
-      # in env_file so it overrides the API's application-role DATABASE_URL.
-      DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@postgres:5432/seo_autopilot
       REDIS_URL: redis://redis:6379/0
+      # DATABASE_URL and RELAY_DATABASE_URL come from env_file, like the API's.
+      # The worker holds two identities: the tenant-scoped application role for
+      # per-tenant consumers, and seo_autopilot_relay for the three sweeps that
+      # claim work across tenants before any scope exists. Repeating either key
+      # here would override the env_file value and silently put the worker back
+      # on a role that bypasses row-level security.
+      #
       # ROUTINES_ENABLED, NOTIFICATIONS_ENABLED and APP_BASE_URL come from
       # env_file. Repeating them here would override it with the shell's
       # (usually empty) value and silently disable the scheduler.

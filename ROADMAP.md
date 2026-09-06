@@ -270,18 +270,43 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
   its shape: one table, read only, no other table opened, and state unspendable outside a scope.
 - The isolation tests now pass with their xfail markers removed.
 
+- The worker now holds two identities. `app/tenancy.py` provides a `tenant_scope` context manager
+  that the pagespeed and routine consumers wrap each unit of work in; the analysis and GSC consumers
+  already scoped themselves. The outbox dispatcher, routine scheduler and notification dispatcher
+  claim work across tenants before any scope exists, so they run on `seo_autopilot_relay` from a
+  separate pool. Scope is session level, not transaction level, because a unit of work spans an
+  outbound HTTP call and a transaction held across a network call would keep row locks for its
+  duration; asyncpg resets session state on release, and the explicit clear does not depend on that.
+- Verified live: `pg_stat_activity` shows the services on `seo_autopilot_app` and
+  `seo_autopilot_relay` only, a weekly report routine and a PageSpeed run both complete end to end
+  under the scoped role, and the only superuser connection is an operator's psql.
+
 **Remaining:**
 
-- Move the worker onto the two new roles: the tenant GUC in the modules that never set it, and
-  `seo_autopilot_relay` for the outbox relay and routine scheduler. The worker still runs as the
-  owning superuser, so it bypasses the policies; it is not attacker-reachable, but isolation is not
-  complete until it moves.
-- Provision both role passwords in deployment and document the step in `DEPLOYMENT.md`.
+- Provision both role passwords in deployment and document the step in `DEPLOYMENT.md`. Production
+  is still entirely unpatched: applying 0027 alone changes nothing, because forcing row security
+  does not constrain a superuser.
 - Move the remaining safety controls off `AsyncMock`: approvals, deployment, freeze and kill switch,
   daily change budget, mode ceiling, calibration idempotency, cursor scoping.
 
-**Exit:** no service connects as a superuser, and every control named in `AGENTS.md` has a test that
-runs against real PostgreSQL.
+**Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
+has a test that runs against real PostgreSQL.
+
+### Orphaned worker runs (found 2026-09-06)
+
+Exercising the PageSpeed path surfaced a defect unrelated to isolation. The client never mapped
+`httpx` transport failures onto `PageSpeedError`, so a read timeout escaped the consumer's handler,
+which only catches `PageSpeedError` and `ValueError` to mark a run failed and release its lease. The
+run was left `running`, and because `performance_run_already_active` rejects a new run while one is
+active, a single network timeout wedged that site's PageSpeed runs permanently. The mapping is fixed
+and covered by tests.
+
+The deeper gap is still open: the claim query does reclaim an expired lease, but only when a message
+is redelivered, and the observed run had no pending Redis entry despite the failing branch never
+acking. Database lease state and stream pending state can therefore diverge and leave a run with no
+route back. A periodic reaper for runs whose lease expired, or marking the run failed before the
+message is dropped, would close it. The same shape should be checked on the crawl, routine and sync
+consumers.
 
 ### H2 — Make the evidence real
 

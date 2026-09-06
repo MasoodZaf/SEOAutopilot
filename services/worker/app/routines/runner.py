@@ -21,6 +21,7 @@ from app.keywords.analysis import run_keyword_analysis
 from app.routines.ai_visibility import build_ai_visibility_snapshot
 from app.routines.reports import build_weekly_digest, content_hash
 from app.routines.sitemap_coverage import build_sitemap_coverage
+from app.tenancy import tenant_scope
 
 STREAM = "seo-autopilot:events"
 GROUP = "routines"
@@ -548,10 +549,14 @@ async def run_routine_consumer(
                 await streams.xack(STREAM, GROUP, message_id)
                 continue
             try:
-                async with pool.acquire() as connection:
+                tenant_id = UUID(fields["tenant_id"])
+                async with (
+                    pool.acquire() as connection,
+                    tenant_scope(connection, tenant_id),
+                ):
                     await process_run(
                         connection,
-                        UUID(fields["tenant_id"]),
+                        tenant_id,
                         UUID(fields["aggregate_id"]),
                         encryption_key=encryption_key,
                         fetcher=fetcher,

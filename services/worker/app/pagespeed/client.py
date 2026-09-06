@@ -46,18 +46,27 @@ class PageSpeedClient:
         params = {"url": target_url, "strategy": strategy, "category": "performance"}
         if self._api_key:
             params["key"] = self._api_key
-        async with self._client.stream("GET", ENDPOINT, params=params) as response:
-            if response.status_code == 429:
-                raise PageSpeedError("provider_rate_limited")
-            if response.status_code >= 500:
-                raise PageSpeedError("provider_unavailable")
-            if response.status_code >= 400:
-                raise PageSpeedError("provider_request_rejected")
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > MAX_RESPONSE_BYTES:
-                    raise PageSpeedError("provider_response_too_large")
+        # A transport failure has to arrive as a PageSpeedError like every other
+        # provider problem. The consumer catches PageSpeedError to mark the run
+        # failed and release its lease; a bare httpx.ReadTimeout escaped that
+        # handler and left the run stuck in 'running' until the lease expired.
+        try:
+            async with self._client.stream("GET", ENDPOINT, params=params) as response:
+                if response.status_code == 429:
+                    raise PageSpeedError("provider_rate_limited")
+                if response.status_code >= 500:
+                    raise PageSpeedError("provider_unavailable")
+                if response.status_code >= 400:
+                    raise PageSpeedError("provider_request_rejected")
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_RESPONSE_BYTES:
+                        raise PageSpeedError("provider_response_too_large")
+        except httpx.TimeoutException as error:
+            raise PageSpeedError("provider_timeout") from error
+        except httpx.HTTPError as error:
+            raise PageSpeedError("provider_unavailable") from error
         try:
             payload = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
