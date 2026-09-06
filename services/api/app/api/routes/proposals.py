@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
+    BatchDeploymentCreate,
     DeploymentCreate,
+    DeploymentReceiptCollection,
     DeploymentReceiptEnvelope,
     DeploymentReceiptRead,
     ProposalApprovalCreate,
@@ -207,4 +209,54 @@ async def _deploy(
     return DeploymentReceiptEnvelope(
         data=DeploymentReceiptRead.model_validate(receipt),
         meta={"trace_id": context.trace_id},
+    )
+
+
+@router.post(
+    "/v1/sites/{site_id}/deployments",
+    response_model=DeploymentReceiptCollection,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def deploy_proposals(
+    site_id: UUID,
+    command: BatchDeploymentCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=200)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DeploymentReceiptCollection:
+    """Deploy several approved proposals as one pull request.
+
+    Thirty single-file pull requests describe the same work as one touching
+    thirty files, and only the second can be reviewed. Each proposal keeps its
+    own approval and its own receipt.
+    """
+    target = github_target(settings)
+    token = settings.github_token
+    if target is None or token is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="deployment_connector_not_configured",
+        )
+
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(60.0)
+    ) as client:
+        try:
+            receipts = await ProposalService(
+                session, context, deployments_enabled=settings.deployments_enabled
+            ).deploy_proposals(
+                site_id=site_id,
+                proposal_ids=command.proposal_ids,
+                idempotency_key=idempotency_key,
+                adapter=GitHubDeploymentAdapter(client, target, token.get_secret_value()),
+            )
+        except GitHubDeploymentError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+
+    return DeploymentReceiptCollection(
+        data=[DeploymentReceiptRead.model_validate(r) for r in receipts],
+        meta={"trace_id": context.trace_id, "count": len(receipts)},
     )

@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -22,6 +23,8 @@ from app.db.models import (
     Site,
 )
 from app.domain.deployments import (
+    BatchDeploymentAdapter,
+    BatchDeploymentRequest,
     DeploymentAdapter,
     DeploymentManifest,
     DeploymentRequest,
@@ -330,6 +333,258 @@ class ProposalService:
         await self.session.flush()
         await self.session.refresh(approval)
         return approval
+
+    async def deploy_proposals(
+        self,
+        site_id: UUID,
+        proposal_ids: Sequence[UUID],
+        idempotency_key: str,
+        adapter: BatchDeploymentAdapter,
+    ) -> list[DeploymentReceipt]:
+        """Deploy several approved proposals as one reviewable change.
+
+        Every gate that guards a single deployment guards each member of the
+        batch: role, global switch, site mode, freeze, approval, and the daily
+        budget. The budget counts pages rather than pull requests, because a
+        branch touching thirty files has the blast radius of thirty changes and
+        the whole point of the budget is blast radius.
+
+        Nothing is written anywhere until every proposal has passed. A batch
+        that half-applies is worse than one that is refused, because the
+        receipts would then disagree with the repository.
+        """
+        if self.context.role not in ALLOWED_DEPLOYMENT_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_deploy_proposal",
+            )
+        if not self.deployments_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="deployments_disabled"
+            )
+        if not proposal_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="no_proposals_given")
+
+        now = datetime.now(UTC)
+        site = await self._deployable_site(site_id, now)
+
+        existing = await self.session.scalars(
+            select(DeploymentReceipt).where(
+                DeploymentReceipt.tenant_id == self.context.tenant_id,
+                DeploymentReceipt.idempotency_key == idempotency_key,
+            )
+        )
+        already = list(existing)
+        if already:
+            return already
+
+        start_of_day = datetime(now.year, now.month, now.day, tzinfo=UTC)
+        spent = int(
+            await self.session.scalar(
+                select(func.count())
+                .select_from(DeploymentReceipt)
+                .where(
+                    DeploymentReceipt.tenant_id == self.context.tenant_id,
+                    DeploymentReceipt.site_id == site_id,
+                    DeploymentReceipt.deployed_at >= start_of_day,
+                )
+            )
+            or 0
+        )
+        if spent + len(proposal_ids) > site.daily_change_budget:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"daily_change_budget_exhausted:"
+                    f"{len(proposal_ids)}_requested_{site.daily_change_budget - spent}_remaining"
+                ),
+            )
+
+        changes: list[DeploymentRequest] = []
+        proposals: list[Proposal] = []
+        for proposal_id in proposal_ids:
+            proposal = await self.get_proposal(proposal_id)
+            if proposal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"proposal_not_found:{proposal_id}",
+                )
+            if proposal.site_id != site_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"proposal_belongs_to_another_site:{proposal_id}",
+                )
+            if proposal.expires_at < now:
+                proposal.status = "expired"
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"proposal_expired:{proposal_id}",
+                )
+            if proposal.status != "approved":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"proposal_must_be_approved_before_deployment:{proposal_id}",
+                )
+            proposals.append(proposal)
+            changes.append(
+                DeploymentRequest(
+                    tenant_id=self.context.tenant_id,
+                    site_id=site_id,
+                    proposal_id=proposal.id,
+                    target_type=proposal.target_type,
+                    target_path=proposal.target_path,
+                    diff_unified=proposal.diff_unified,
+                    base_hash=proposal.base_hash,
+                    after_content=proposal.after_content,
+                    idempotency_key=idempotency_key,
+                    manifest=await self._manifest_for(proposal, now),
+                    current_live_content=None,
+                )
+            )
+
+        try:
+            batch = BatchDeploymentRequest(
+                tenant_id=self.context.tenant_id,
+                site_id=site_id,
+                idempotency_key=idempotency_key,
+                changes=tuple(changes),
+            )
+        except ValueError as invalid:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(invalid)
+            ) from invalid
+
+        # Claim every key before the adapter runs, for the same reason the
+        # single path does: the unique index, not the check above, is the lock.
+        receipts = [
+            DeploymentReceipt(
+                tenant_id=self.context.tenant_id,
+                site_id=site_id,
+                proposal_id=proposal.id,
+                connector_type="github",
+                idempotency_key=idempotency_key if index == 0 else f"{idempotency_key}:{index}",
+                external_ref="",
+                manifest_json=change.manifest.to_dict(),
+                status="pending",
+                deployed_at=now,
+            )
+            for index, (proposal, change) in enumerate(zip(proposals, changes, strict=True))
+        ]
+        try:
+            async with self.session.begin_nested():
+                for receipt in receipts:
+                    self.session.add(receipt)
+                await self.session.flush()
+        except IntegrityError:
+            concurrent = list(
+                await self.session.scalars(
+                    select(DeploymentReceipt).where(
+                        DeploymentReceipt.tenant_id == self.context.tenant_id,
+                        DeploymentReceipt.idempotency_key == idempotency_key,
+                    )
+                )
+            )
+            if not concurrent:
+                raise
+            return concurrent
+
+        try:
+            result = await adapter.deploy_batch(batch)
+        except DriftDetectedError as drift_err:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(drift_err)
+            ) from drift_err
+
+        for proposal, receipt in zip(proposals, receipts, strict=True):
+            receipt.connector_type = result.connector_type
+            receipt.external_ref = result.external_ref
+            receipt.manifest_json = {**receipt.manifest_json, **result.manifest_json}
+            receipt.status = result.status
+            proposal.status = "deployed"
+            proposal.updated_at = now
+
+            payload = {
+                "deployment_id": str(receipt.id),
+                "proposal_id": str(proposal.id),
+                "site_id": str(site_id),
+                "external_ref": result.external_ref,
+                "connector_type": result.connector_type,
+                "batch_size": len(receipts),
+            }
+            self.session.add(
+                AuditEvent(
+                    tenant_id=self.context.tenant_id,
+                    actor_type="user",
+                    actor_id=str(self.context.actor_id),
+                    action="proposal.deployed",
+                    resource_type="proposal",
+                    resource_id=str(proposal.id),
+                    trace_id=self.context.trace_id,
+                    metadata_json=payload,
+                    event_hash=stable_hash(
+                        {**payload, "actor_id": str(self.context.actor_id)}
+                    ),
+                )
+            )
+            self.session.add(
+                OutboxEvent(
+                    tenant_id=self.context.tenant_id,
+                    event_type="proposal.deployed.v1",
+                    event_version=1,
+                    aggregate_type="proposal",
+                    aggregate_id=proposal.id,
+                    payload=payload,
+                )
+            )
+
+        await self.session.flush()
+        return receipts
+
+    async def _deployable_site(self, site_id: UUID, now: datetime) -> Site:
+        """The site checks that gate every deployment, single or batched."""
+        site = await self.session.scalar(
+            select(Site).where(Site.id == site_id, Site.tenant_id == self.context.tenant_id)
+        )
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+        if site.mode not in {"recommend", "autopilot"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="site_mode_blocks_deployment"
+            )
+        if site.emergency_freeze:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="emergency_freeze_active"
+            )
+        if (
+            site.freeze_window_start is not None
+            and site.freeze_window_end is not None
+            and site.freeze_window_start <= now <= site.freeze_window_end
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="scheduled_freeze_window_active"
+            )
+        return site
+
+    async def _manifest_for(self, proposal: Proposal, now: datetime) -> DeploymentManifest:
+        approvers = await self.session.scalars(
+            select(ProposalApproval.approver_id).where(
+                ProposalApproval.proposal_id == proposal.id,
+                ProposalApproval.proposal_version == proposal.version,
+                ProposalApproval.decision == "approved",
+            )
+        )
+        return DeploymentManifest(
+            tenant_id=str(self.context.tenant_id),
+            site_id=str(proposal.site_id),
+            proposal_id=str(proposal.id),
+            target_path=proposal.target_path,
+            base_hash=proposal.base_hash,
+            proposal_hash=proposal.proposal_hash,
+            author_id=str(proposal.author_id),
+            approver_ids=[str(a) for a in approvers],
+            deployed_at=now.isoformat(),
+            version=proposal.version,
+        )
 
     async def deploy_proposal(
         self,

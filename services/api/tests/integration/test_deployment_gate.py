@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.api.schemas import DeploymentCreate
 from app.core.context import Role, TenantContext
-from app.domain.deployments import MockDeploymentAdapter
+from app.domain.deployments import BatchDeploymentResult, MockDeploymentAdapter
 from app.services.governance import GovernanceService
 from app.services.proposals import ProposalService
 from tests.conftest import requires_database
@@ -700,3 +700,109 @@ async def test_only_an_admin_can_roll_back(tenant_session_factory, chain) -> Non
                 chain.proposal_id, "", MockDeploymentAdapter("mock")
             )
         assert error.value.detail == "insufficient_permissions_to_rollback_deployment"
+
+
+class FakeBatchAdapter:
+    """Records what it was asked to deploy, and reports one pull request."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+
+    async def deploy_batch(self, request):
+        paths = tuple(change.target_path for change in request.changes)
+        self.calls.append(paths)
+        return BatchDeploymentResult(
+            connector_type="github",
+            external_ref="https://github.com/acme/site/pull/9",
+            status="applied",
+            manifest_json={"pull_request_number": 9, "change_count": len(paths)},
+            applied_paths=paths,
+        )
+
+
+async def deploy_batch(session, chain: Chain, ids, key="batch-key-0001", adapter=None):
+    adapter = adapter or FakeBatchAdapter()
+    receipts = await service(session, chain).deploy_proposals(
+        site_id=chain.site_id, proposal_ids=ids, idempotency_key=key, adapter=adapter
+    )
+    return receipts, adapter
+
+
+async def test_a_batch_deploys_every_proposal_under_one_pull_request(
+    tenant_session_factory, chain
+) -> None:
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await set_site(session, chain, "daily_change_budget=5")
+        receipts, adapter = await deploy_batch(session, chain, [chain.proposal_id])
+
+    assert len(receipts) == 1
+    assert receipts[0].external_ref == "https://github.com/acme/site/pull/9"
+    assert receipts[0].status == "applied"
+    assert adapter.calls == [(receipts[0].manifest_json["target_path"],)]
+
+
+async def test_a_batch_larger_than_the_remaining_budget_is_refused_whole(
+    tenant_session_factory, chain
+) -> None:
+    """The budget counts pages, not pull requests.
+
+    A branch touching thirty files has the blast radius of thirty changes, and
+    blast radius is the only thing the budget exists to bound.
+    """
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await set_site(session, chain, "daily_change_budget=1")
+        adapter = FakeBatchAdapter()
+        with pytest.raises(HTTPException) as error:
+            await service(session, chain).deploy_proposals(
+                site_id=chain.site_id,
+                proposal_ids=[chain.proposal_id, chain.proposal_id],
+                idempotency_key="batch-over-budget",
+                adapter=adapter,
+            )
+
+    assert error.value.status_code == 409
+    assert "daily_change_budget_exhausted" in str(error.value.detail)
+    assert "2_requested" in str(error.value.detail)
+    # Refused before the provider was touched at all.
+    assert adapter.calls == []
+
+
+async def test_an_unapproved_proposal_poisons_the_whole_batch(
+    tenant_session_factory, chain
+) -> None:
+    """Batching shares a branch and a review, never an approval."""
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await session.execute(
+            text("UPDATE proposal SET status='validated' WHERE id=:id"),
+            {"id": chain.proposal_id},
+        )
+        adapter = FakeBatchAdapter()
+        with pytest.raises(HTTPException) as error:
+            await deploy_batch(session, chain, [chain.proposal_id], adapter=adapter)
+
+    assert "proposal_must_be_approved_before_deployment" in str(error.value.detail)
+    assert adapter.calls == []
+
+
+async def test_a_frozen_site_refuses_a_batch(tenant_session_factory, chain) -> None:
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await set_site(session, chain, "emergency_freeze=true")
+        adapter = FakeBatchAdapter()
+        with pytest.raises(HTTPException) as error:
+            await deploy_batch(session, chain, [chain.proposal_id], adapter=adapter)
+
+    assert error.value.detail == "emergency_freeze_active"
+    assert adapter.calls == []
+
+
+async def test_a_repeated_batch_key_returns_the_first_receipts(
+    tenant_session_factory, chain
+) -> None:
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await set_site(session, chain, "daily_change_budget=5")
+        first, adapter = await deploy_batch(session, chain, [chain.proposal_id])
+        second, _ = await deploy_batch(session, chain, [chain.proposal_id], adapter=adapter)
+
+    assert [r.id for r in first] == [r.id for r in second]
+    # The provider was asked once, not twice.
+    assert len(adapter.calls) == 1

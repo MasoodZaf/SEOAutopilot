@@ -550,6 +550,15 @@ class DeploymentCreate(BaseModel):
     current_live_content: str | None = None
 
 
+class BatchDeploymentCreate(BaseModel):
+    proposal_ids: list[UUID] = Field(min_length=1, max_length=50)
+
+
+class DeploymentReceiptCollection(BaseModel):
+    data: list["DeploymentReceiptRead"]
+    meta: dict[str, object] = Field(default_factory=dict)
+
+
 class DeploymentReceiptRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID

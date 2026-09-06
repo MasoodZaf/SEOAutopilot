@@ -32,6 +32,8 @@ from typing import Any
 import httpx
 
 from app.domain.deployments import (
+    BatchDeploymentRequest,
+    BatchDeploymentResult,
     DeploymentRequest,
     DeploymentResult,
     DriftDetectedError,
@@ -61,6 +63,16 @@ class GitHubTarget:
     @property
     def slug(self) -> str:
         return f"{self.owner}/{self.repository}"
+
+
+def batch_branch_name(request: "BatchDeploymentRequest") -> str:
+    """One branch for the whole batch, derived from its idempotency key.
+
+    The same key must land on the same branch, so a retry finds the pull
+    request it already opened instead of opening a second one.
+    """
+    key = compute_content_hash(request.idempotency_key)[:12]
+    return f"{BRANCH_PREFIX}/batch-{request.site_id}-{key}"
 
 
 def branch_name(request: DeploymentRequest) -> str:
@@ -238,6 +250,88 @@ class GitHubDeploymentAdapter:
             raise GitHubDeploymentError(f"github_pull_failed:{opened.status_code}:{head}")
         return self._result(request, opened.json())
 
+    async def deploy_batch(self, request: BatchDeploymentRequest) -> BatchDeploymentResult:
+        """Apply every change in the batch to one branch, under one pull request.
+
+        Drift is checked for all of them before any of them is written, so a
+        batch cannot half-apply because the twentieth file moved under it.
+        """
+        head = batch_branch_name(request)
+
+        existing = await self._existing_pull_request(head)
+        if existing is not None:
+            return self._batch_result(request, existing)
+
+        # Read and verify everything first. A write that begins and then stops
+        # leaves a branch nobody asked for and receipts that disagree with it.
+        current: dict[str, tuple[str, str] | None] = {}
+        for change in request.changes:
+            found = await self._current_file(change.target_path)
+            live = found[0] if found else ""
+            if compute_content_hash(live) != change.base_hash:
+                raise DriftDetectedError(
+                    f"Drift detected: {change.target_path} in {self._target.slug} no longer "
+                    f"matches the proposal base hash {change.base_hash}."
+                )
+            current[change.target_path] = found
+
+        await self._create_branch(head, await self._base_sha())
+
+        for change in request.changes:
+            payload: dict[str, Any] = {
+                "message": commit_message(change),
+                "content": base64.b64encode(change.after_content.encode("utf-8")).decode(),
+                "branch": head,
+            }
+            found = current[change.target_path]
+            if found is not None:
+                payload["sha"] = found[1]
+            written = await self._request(
+                "PUT",
+                f"/repos/{self._target.slug}/contents/{change.target_path}",
+                json=payload,
+            )
+            if written.status_code not in (200, 201):
+                raise GitHubDeploymentError(
+                    f"github_commit_failed:{written.status_code}:{change.target_path}"
+                )
+
+        opened = await self._request(
+            "POST",
+            f"/repos/{self._target.slug}/pulls",
+            json={
+                "title": f"SEO: {len(request.changes)} pages on {self._target.base_branch}",
+                "head": head,
+                "base": self._target.base_branch,
+                "body": batch_pull_request_body(request),
+                "maintainer_can_modify": True,
+            },
+        )
+        if opened.status_code == 422:
+            concurrent = await self._existing_pull_request(head)
+            if concurrent is not None:
+                return self._batch_result(request, concurrent)
+        if opened.status_code != 201:
+            raise GitHubDeploymentError(f"github_pull_failed:{opened.status_code}:{head}")
+        return self._batch_result(request, opened.json())
+
+    def _batch_result(
+        self, request: BatchDeploymentRequest, pull: dict[str, Any]
+    ) -> BatchDeploymentResult:
+        return BatchDeploymentResult(
+            connector_type=self.connector_type,
+            external_ref=str(pull.get("html_url", "")),
+            status="applied",
+            manifest_json={
+                "pull_request_number": pull.get("number"),
+                "branch": str(pull.get("head", {}).get("ref", "")),
+                "repository": self._target.slug,
+                "change_count": len(request.changes),
+                "paths": [change.target_path for change in request.changes],
+            },
+            applied_paths=tuple(change.target_path for change in request.changes),
+        )
+
     async def rollback(self, request: RollbackRequest) -> RollbackResult:
         """Undo a deployment, by the only two routes GitHub actually offers.
 
@@ -350,6 +444,31 @@ class GitHubDeploymentAdapter:
                 "pull_request_state": pull.get("state"),
             },
         )
+
+
+def batch_pull_request_body(request: BatchDeploymentRequest) -> str:
+    """One review needs one summary, and a line per change it contains."""
+    rows = "\n".join(
+        f"- `{change.target_path}` — proposal `{change.proposal_id}`, "
+        f"base `{change.base_hash[:12]}`"
+        for change in request.changes
+    )
+    approvers = sorted(
+        {approver for change in request.changes for approver in change.manifest.approver_ids}
+    )
+    approved_by = "\n".join(f"- {approver}" for approver in approvers)
+    return (
+        f"Proposed by SEO Autopilot: {len(request.changes)} changes on site "
+        f"`{request.site_id}`.\n\n"
+        f"Each change was proposed, classified and approved on its own, and has its own "
+        f"deployment receipt. They share this branch and this review, not their authority.\n\n"
+        f"**Changes**\n{rows}\n\n"
+        f"**Approved by**\n{approved_by or '- none recorded'}\n\n"
+        f"Every base hash above was verified against the file on the base branch before "
+        f"this branch was created, and none of them was written until all of them "
+        f"verified. If any file has changed since, close this and re-propose rather than "
+        f"merging: the diffs were reviewed against the old content.\n"
+    )
 
 
 def pull_request_body(request: DeploymentRequest) -> str:

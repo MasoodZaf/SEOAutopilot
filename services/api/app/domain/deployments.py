@@ -45,6 +45,41 @@ class DeploymentRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchDeploymentRequest:
+    """Several approved changes, carried to one place as one review.
+
+    Thirty single-file pull requests describe the same work as one pull request
+    touching thirty files, and only the second can be read. Each change keeps
+    its own proposal, approval and receipt; what is shared is the branch and the
+    review, not the authority.
+    """
+
+    tenant_id: UUID
+    site_id: UUID
+    idempotency_key: str
+    changes: tuple[DeploymentRequest, ...]
+
+    def __post_init__(self) -> None:
+        if not self.changes:
+            raise ValueError("A batch needs at least one change.")
+        paths = [change.target_path for change in self.changes]
+        if len(set(paths)) != len(paths):
+            # Two changes to one file in one branch would silently apply
+            # whichever was written last, and the receipt for the other would
+            # claim an effect that never happened.
+            raise ValueError("A batch cannot contain two changes to the same path.")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchDeploymentResult:
+    connector_type: str
+    external_ref: str
+    status: str
+    manifest_json: dict[str, Any]
+    applied_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DeploymentResult:
     connector_type: str
     external_ref: str
@@ -78,6 +113,10 @@ class RollbackResult:
     external_ref: str
     restored_hash: str
     detail: str
+
+
+class BatchDeploymentAdapter(Protocol):
+    async def deploy_batch(self, request: BatchDeploymentRequest) -> BatchDeploymentResult: ...
 
 
 class RollbackAdapter(Protocol):
