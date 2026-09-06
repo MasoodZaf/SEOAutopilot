@@ -37,7 +37,13 @@ logger = logging.getLogger(__name__)
 UNIMPLEMENTED_KINDS: set[str] = set()
 
 # Keyword clustering reads a rolling window of search evidence.
+# Days *with evidence*, not calendar days. A site with daily traffic sees no
+# difference; a site sparse enough that Google's anonymisation leaves months of
+# gaps is the reason this is not a calendar span. See _keyword_window.
 KEYWORD_WINDOW_DAYS = 28
+# Demand does drift, so the search backwards stops somewhere. A year is the
+# limit of what Search Console retains anyway.
+KEYWORD_MAX_LOOKBACK_DAYS = 365
 
 # Search Console finalises a day's data a couple of days late, so asking for
 # yesterday reliably returns nothing.
@@ -212,6 +218,39 @@ async def _run_site_audit(
     return "completed", {"crawl_id": str(crawl_id)}, None
 
 
+async def _keyword_window(
+    connection: Any, tenant_id: UUID, site_id: UUID, today: date
+) -> tuple[date, date, int] | None:
+    """The most recent `KEYWORD_WINDOW_DAYS` days that actually hold evidence.
+
+    This used to be the last 28 calendar days, which is right for a site with
+    daily traffic and useless for the sites that most need the output. Search
+    Console suppresses a day's query breakdown when the volume is small, so a
+    site earning a handful of impressions a week has evidence scattered across
+    months -- and a fixed 28-day span lands squarely in a gap and reports "no
+    search evidence" while dozens of real queries sit in the table.
+
+    Counting days that have data instead makes the two cases the same rule: a
+    busy site gets the last 28 days, a sparse one reaches back until it has 28
+    days' worth of evidence, and both stop at a year.
+    """
+    floor = today - timedelta(days=KEYWORD_MAX_LOOKBACK_DAYS)
+    rows = await connection.fetch(
+        """
+        SELECT metric_date FROM search_metric
+        WHERE tenant_id=$1 AND site_id=$2 AND metric_date >= $3 AND metric_date <= $4
+        GROUP BY metric_date
+        ORDER BY metric_date DESC
+        LIMIT $5
+        """,
+        tenant_id, site_id, floor, today, KEYWORD_WINDOW_DAYS,
+    )
+    if not rows:
+        return None
+    days = [row["metric_date"] for row in rows]
+    return min(days), max(days), len(days)
+
+
 async def _run_keyword_refresh(
     connection: Any,
     tenant_id: UUID,
@@ -220,20 +259,32 @@ async def _run_keyword_refresh(
     today: date,
     encryption_key: bytes | None,
 ) -> tuple[str, dict[str, Any], str | None]:
-    """Recluster the site's search demand over a rolling window."""
+    """Recluster the site's search demand over its most recent evidence."""
     if encryption_key is None:
         return "skipped", {}, "query_encryption_key_unavailable"
-    window_end = today - timedelta(days=1)
-    window_start = window_end - timedelta(days=KEYWORD_WINDOW_DAYS - 1)
     available = await connection.fetchval(
         "SELECT count(*) FROM search_query WHERE tenant_id=$1 AND site_id=$2",
         tenant_id, site_id,
     )
     if not available:
         return "skipped", {}, "no_search_query_evidence"
+
+    window = await _keyword_window(connection, tenant_id, site_id, today)
+    if window is None:
+        return "skipped", {}, "no_search_evidence_in_window"
+    window_start, window_end, days_with_evidence = window
+
     summary = await run_keyword_analysis(
         connection, tenant_id, site_id, window_start, window_end, encryption_key, run_id
     )
+    # How old the evidence is, reported rather than judged. Demand for "emi
+    # calculator" does not expire in a quarter, but a reader deciding whether to
+    # act on a brief should be able to see what it was built from.
+    summary = {
+        **summary,
+        "days_with_evidence": days_with_evidence,
+        "evidence_age_days": (today - window_end).days,
+    }
     if summary["queries_considered"] == 0:
         return "skipped", summary, "no_search_evidence_in_window"
     return "completed", summary, None
