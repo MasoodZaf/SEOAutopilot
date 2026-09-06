@@ -14,9 +14,10 @@ subject of its own.
 
 Two shapes, and the difference is not cosmetic:
 
-  replace   The name ends in a word that means the same job by another name:
-            "Debt Payoff Planner" -> "Debt Payoff Calculator". Appending would
-            give "Debt Payoff Planner Calculator", which no one would write.
+  replace   The name ends in a word that means the same job by another name,
+            or the same word cut short: "Debt Payoff Planner" and "Running Pace
+            Calc" both become "... Calculator". Appending would give "Debt
+            Payoff Planner Calculator", which no one would write.
 
   append    The name is a subject with no such word: "Ideal Weight" ->
             "Ideal Weight Calculator".
@@ -51,6 +52,11 @@ MAX_TITLE_LENGTH = 65
 # search for in their own right, and overwriting them would trade a real term
 # for a guess.
 _INTERCHANGEABLE = frozenset({"tracker", "planner", "quiz", "checker", "estimator", "counter", "tool"})
+
+# The shortest a name may be truncated to and still be read as the topic word.
+# "Calc" for "calculator"; below four characters a coincidence is likelier than
+# an abbreviation.
+MIN_ABBREVIATION_LENGTH = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +99,21 @@ def compose_name(name: str, topic: str) -> tuple[str, str] | None:
         return None
     if any(word.lower().strip(".,;:!?") == topic for word in words):
         return None
-    if words[-1].lower().strip(".,;:!?") in _INTERCHANGEABLE:
+    last = words[-1].lower().strip(".,;:!?")
+    if last in _INTERCHANGEABLE or _abbreviates(last, topic):
         return " ".join(words[:-1] + [topic.capitalize()]), "replaced"
     return f"{name} {topic.capitalize()}", "appended"
+
+
+def _abbreviates(word: str, topic: str) -> bool:
+    """Is this the topic word itself, cut short?
+
+    "Running Pace Calc" already says calculator; appending would produce
+    "Running Pace Calc Calculator", which stutters the same word twice.
+    """
+    return (
+        len(word) >= MIN_ABBREVIATION_LENGTH and word != topic and topic.startswith(word)
+    )
 
 
 def _one_match(pattern: re.Pattern[str], document: str) -> re.Match[str] | None:

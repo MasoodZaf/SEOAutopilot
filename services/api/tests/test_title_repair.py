@@ -60,6 +60,36 @@ def test_a_word_meaning_the_same_job_is_replaced_not_stacked() -> None:
     )
 
 
+def test_the_topic_word_cut_short_is_not_stacked_on_itself() -> None:
+    """The pilot site's `/pace-calculator`, titled "Running Pace Calc".
+
+    Appending gave "Running Pace Calc Calculator" -- the same word twice, once
+    abbreviated. It is the "Debt Payoff Planner Calculator" defect wearing a
+    shorter name, and the synonym list cannot catch it because "calc" is not a
+    synonym.
+    """
+    assert compose_name("Running Pace Calc", "calculator") == (
+        "Running Pace Calculator",
+        "replaced",
+    )
+
+
+def test_a_short_word_that_merely_starts_the_same_is_left_alone() -> None:
+    """A prefix rule is one letter away from eating real words.
+
+    "Cal" is three characters and could be anything; "Calorie" is a subject in
+    its own right and starts with the same letters as nothing. Neither may be
+    read as an abbreviation.
+    """
+    assert compose_name("Daily Cal", "calculator") == ("Daily Cal Calculator", "appended")
+    assert compose_name("Track My Cal", "calculator") == (
+        "Track My Cal Calculator",
+        "appended",
+    )
+    # Longer than the topic, so not a truncation of it.
+    assert compose_name("Calorie", "calculator") == ("Calorie Calculator", "appended")
+
+
 def test_a_plain_subject_gets_the_word_appended() -> None:
     assert compose_name("Ideal Weight", "calculator") == (
         "Ideal Weight Calculator",
@@ -226,6 +256,7 @@ def test_a_refusal_produces_no_document() -> None:
         ("pregnancy-calculator", "Pregnancy Due Date", "Pregnancy Due Date Calculator"),
         ("cgpa-calculator", "CGPA to Percentage", "CGPA to Percentage Calculator"),
         ("water-calculator", "Water Intake", "Water Intake Calculator"),
+        ("pace-calculator", "Running Pace Calc", "Running Pace Calculator"),
     ],
 )
 def test_the_pilot_sites_real_titles(slug: str, title: str, expected: str) -> None:
