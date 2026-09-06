@@ -15,13 +15,14 @@ def row(query: str = "confidential query") -> SearchAnalyticsRow:
     return SearchAnalyticsRow(query, "https://example.com/a", "usa", "mobile", 1, 10, 0.1, 8)
 
 
-class FakeProvider:
+class FakeSource:
+    """A source owns its credential, so the loop never sees one."""
+
     def __init__(self, replies: dict[tuple[date, int], list[SearchAnalyticsRow]]) -> None:
         self.replies = replies
         self.calls: list[tuple[date, int]] = []
 
-    async def query_day(self, property_ref: str, access_token: str, day: date, start_row: int):
-        assert access_token == "resolved-only-in-memory"
+    async def query_day(self, property_ref: str, day: date, start_row: int):
         self.calls.append((day, start_row))
         return self.replies.get((day, start_row), [])
 
@@ -59,7 +60,7 @@ class FakeSink:
 async def test_sync_is_daily_resumable_and_does_not_store_raw_query() -> None:
     first = date(2026, 8, 1)
     second = date(2026, 8, 2)
-    provider = FakeProvider({(first, 0): [row()], (second, 0): [row("another query")]})
+    provider = FakeSource({(first, 0): [row()], (second, 0): [row("another query")]})
     sink = FakeSink()
     result = await sync_search_analytics(
         provider,
@@ -68,7 +69,6 @@ async def test_sync_is_daily_resumable_and_does_not_store_raw_query() -> None:
         site_id=SITE,
         sync_id=SYNC,
         property_ref="sc-domain:example.com",
-        access_token="resolved-only-in-memory",
         range_start=first,
         range_end=second,
         cursor=None,
@@ -90,7 +90,7 @@ async def test_sync_is_daily_resumable_and_does_not_store_raw_query() -> None:
 @pytest.mark.asyncio
 async def test_replay_after_checkpoint_loss_is_idempotent() -> None:
     day = date(2026, 8, 1)
-    provider = FakeProvider({(day, 0): [row()]})
+    provider = FakeSource({(day, 0): [row()]})
     sink = FakeSink()
     first = await sync_search_analytics(
         provider,
@@ -99,7 +99,6 @@ async def test_replay_after_checkpoint_loss_is_idempotent() -> None:
         site_id=SITE,
         sync_id=SYNC,
         property_ref="sc-domain:example.com",
-        access_token="resolved-only-in-memory",
         range_start=day,
         range_end=day,
         cursor=SyncCursor(day, 0),
@@ -112,7 +111,6 @@ async def test_replay_after_checkpoint_loss_is_idempotent() -> None:
         site_id=SITE,
         sync_id=SYNC,
         property_ref="sc-domain:example.com",
-        access_token="resolved-only-in-memory",
         range_start=day,
         range_end=day,
         cursor=SyncCursor(day, 0),

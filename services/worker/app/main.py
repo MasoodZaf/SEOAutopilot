@@ -14,6 +14,7 @@ from app.gsc.consumer import (
     require_secret_bytes,
     run_gsc_consumer,
 )
+from app.gsc.refresh import GoogleTokenHttpRefresher, TokenRefresher
 from app.notifications.deliver import run_notification_dispatcher
 from app.outbox import DatabaseConnection, StreamClient, dispatch_batch
 from app.pagespeed.client import PageSpeedClient
@@ -94,6 +95,25 @@ async def run() -> None:
         follow_redirects=False, timeout=httpx.Timeout(15.0)
     )
 
+    # A Google access token lives an hour, so a connector without a refresher
+    # can only sync for an hour after somebody clicks consent. The client
+    # credentials are the same pair the API uses for the consent exchange; both
+    # services read one .env.local.
+    google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    token_refresher: TokenRefresher | None = None
+    if google_client_id and google_client_secret:
+        token_refresher = GoogleTokenHttpRefresher(
+            httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(15.0)),
+            client_id=google_client_id,
+            client_secret=google_client_secret,
+        )
+    else:
+        logger.warning(
+            "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are unset; Search Console syncs "
+            "cannot renew an access token and will stop working one hour after consent"
+        )
+
     background = [
         run_dispatcher(relay_pool, streams),
         # Nothing else re-reads the work tables, so without this a run whose
@@ -111,6 +131,7 @@ async def run() -> None:
             encryption_key=connector_key,
             query_hash_key=query_hash_key,
             query_key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
+            refresher=token_refresher,
         ),
         run_pagespeed_consumer(
             cast(PageSpeedPool, pool),

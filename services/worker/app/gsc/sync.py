@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from typing import Protocol
 from uuid import UUID
 
-from app.gsc.client import ROW_LIMIT, SearchAnalyticsRow, SearchConsoleProvider
+from app.gsc.client import ROW_LIMIT, SearchAnalyticsRow, SearchAnalyticsSource
 
 MAX_PAGES_PER_DAY = 10
 
@@ -90,14 +90,13 @@ def metric_record(
 
 
 async def sync_search_analytics(
-    provider: SearchConsoleProvider,
+    source: SearchAnalyticsSource,
     sink: MetricSink,
     *,
     tenant_id: UUID,
     site_id: UUID,
     sync_id: UUID,
     property_ref: str,
-    access_token: str,
     range_start: date,
     range_end: date,
     cursor: SyncCursor | None,
@@ -118,7 +117,7 @@ async def sync_search_analytics(
         while True:
             if page_count >= MAX_PAGES_PER_DAY:
                 raise RuntimeError("provider_daily_row_bound_exceeded")
-            rows = await provider.query_day(property_ref, access_token, day, start_row)
+            rows = await source.query_day(property_ref, day, start_row)
             page_count += 1
             if not rows:
                 next_day = day + timedelta(days=1)

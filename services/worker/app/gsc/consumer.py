@@ -6,9 +6,10 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets as secrets_module
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -16,13 +17,28 @@ import asyncpg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from redis.exceptions import ResponseError
 
-from app.gsc.client import READONLY_SCOPE, SearchConsoleClient, SearchConsoleError
+from app.gsc.client import (
+    READONLY_SCOPE,
+    SearchAnalyticsRow,
+    SearchConsoleClient,
+    SearchConsoleError,
+)
+from app.gsc.refresh import (
+    GoogleAuthorizationRevoked,
+    TokenRefresher,
+)
 from app.gsc.sync import MetricRecord, MetricSink, SyncCursor, sync_search_analytics
 from app.keywords.cluster import is_question, tokenize
 from app.keywords.secrets import MAX_TERM_LENGTH, seal_query
 
 STREAM = "seo-autopilot:events"
 GROUP = "gsc-sync"
+SECRET_PREFIX = "db-envelope://"
+
+# Renew before Google would refuse rather than after. A token that expires
+# between this check and the request it authorises fails a whole day's page for
+# no reason a person could act on.
+TOKEN_RENEWAL_MARGIN = timedelta(minutes=10)
 logger = logging.getLogger(__name__)
 
 
@@ -168,14 +184,37 @@ async def claim_sync(
     )
 
 
-async def load_access_token(
+@dataclass(frozen=True, slots=True)
+class StoredCredential:
+    """The whole grant as it sits in the envelope, not just the usable half."""
+
+    secret_id: UUID
+    provider: str
+    key_version: str
+    access_token: str
+    refresh_token: str
+    expires_at: datetime
+    scopes: list[str]
+
+    def is_fresh(self, now: datetime) -> bool:
+        return self.expires_at - now > TOKEN_RENEWAL_MARGIN
+
+
+async def load_credential(
     pool: asyncpg.Pool, sync: ClaimedSync, encryption_key: bytes
-) -> str:
-    prefix = "db-envelope://"
-    if not sync.secret_ref.startswith(prefix):
+) -> StoredCredential:
+    """Read the grant. Deliberately does not judge whether it has expired.
+
+    Expiry used to be fatal here, which is what made Search Console data
+    impossible to accumulate: an access token lives an hour, so every sync after
+    the first hour refused and sent the tenant back to a consent screen. Expiry
+    is now a reason to renew, and only a refusal from Google is a reason to ask
+    a person for anything.
+    """
+    if not sync.secret_ref.startswith(SECRET_PREFIX):
         raise ValueError("unsupported_secret_ref")
     try:
-        secret_id = UUID(sync.secret_ref.removeprefix(prefix))
+        secret_id = UUID(sync.secret_ref.removeprefix(SECRET_PREFIX))
     except ValueError as error:
         raise ValueError("invalid_secret_ref") from error
     async with pool.acquire() as connection, connection.transaction():
@@ -203,6 +242,7 @@ async def load_access_token(
         encryption_key=encryption_key,
     )
     access_token = payload.get("access_token")
+    refresh_token = payload.get("refresh_token")
     scopes = payload.get("scopes")
     expires_at = payload.get("expires_at")
     if (
@@ -213,13 +253,182 @@ async def load_access_token(
         or not isinstance(expires_at, str)
     ):
         raise ValueError("connector_secret_invalid")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        # Nothing here can renew itself. Only a person re-consenting can.
+        raise GoogleAuthorizationRevoked("authorization_required")
     try:
         expiry = datetime.fromisoformat(expires_at)
     except ValueError as error:
         raise ValueError("connector_secret_invalid") from error
-    if expiry.tzinfo is None or expiry <= datetime.now(UTC):
-        raise ValueError("authorization_required")
-    return access_token
+    if expiry.tzinfo is None:
+        raise ValueError("connector_secret_invalid")
+    return StoredCredential(
+        secret_id=secret_id,
+        provider=str(row["provider"]),
+        key_version=str(row["key_version"]),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_at=expiry,
+        scopes=[str(scope) for scope in scopes],
+    )
+
+
+async def store_renewed_credential(
+    pool: asyncpg.Pool,
+    sync: ClaimedSync,
+    credential: StoredCredential,
+    *,
+    access_token: str,
+    expires_at: datetime,
+    encryption_key: bytes,
+    key_version: str,
+) -> StoredCredential:
+    """Seal the renewed grant, retire the old row, and repoint the connector.
+
+    Same envelope shape the API writes on first consent, so either side can read
+    what the other stored. The refresh token is carried across unchanged:
+    Google does not reissue one on a refresh, and losing it here would turn the
+    next expiry back into a manual re-consent.
+    """
+    payload = {
+        "access_token": access_token,
+        "refresh_token": credential.refresh_token,
+        "expires_at": expires_at.isoformat(),
+        "scopes": credential.scopes,
+    }
+    aad = secret_aad(sync.tenant_id, sync.connector_id, credential.provider, key_version)
+    nonce = secrets_module.token_bytes(12)
+    ciphertext = AESGCM(encryption_key).encrypt(
+        nonce, json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(), aad
+    )
+    async with pool.acquire() as connection, connection.transaction():
+        await _set_tenant(connection, sync.tenant_id)
+        await connection.execute(
+            """
+            UPDATE connector_secret SET revoked_at=now()
+            WHERE tenant_id=$1 AND connector_id=$2 AND revoked_at IS NULL
+            """,
+            sync.tenant_id,
+            sync.connector_id,
+        )
+        secret_id = await connection.fetchval(
+            """
+            INSERT INTO connector_secret(
+              tenant_id,connector_id,provider,ciphertext,nonce,aad_hash,key_version
+            ) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id
+            """,
+            sync.tenant_id,
+            sync.connector_id,
+            credential.provider,
+            ciphertext,
+            nonce,
+            hashlib.sha256(aad).hexdigest(),
+            key_version,
+        )
+        await connection.execute(
+            """
+            UPDATE connector SET secret_ref=$3,token_expires_at=$4
+            WHERE id=$1 AND tenant_id=$2
+            """,
+            sync.connector_id,
+            sync.tenant_id,
+            f"{SECRET_PREFIX}{secret_id}",
+            expires_at,
+        )
+    return StoredCredential(
+        secret_id=secret_id,
+        provider=credential.provider,
+        key_version=key_version,
+        access_token=access_token,
+        refresh_token=credential.refresh_token,
+        expires_at=expires_at,
+        scopes=credential.scopes,
+    )
+
+
+class AccessTokenManager:
+    """Hands out a usable access token, renewing it as often as it takes."""
+
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        sync: ClaimedSync,
+        *,
+        encryption_key: bytes,
+        key_version: str,
+        refresher: TokenRefresher | None,
+    ) -> None:
+        self._pool = pool
+        self._sync = sync
+        self._encryption_key = encryption_key
+        self._key_version = key_version
+        self._refresher = refresher
+        self._credential: StoredCredential | None = None
+
+    async def _current(self) -> StoredCredential:
+        if self._credential is None:
+            self._credential = await load_credential(
+                self._pool, self._sync, self._encryption_key
+            )
+        return self._credential
+
+    async def token(self) -> str:
+        credential = await self._current()
+        if credential.is_fresh(datetime.now(UTC)):
+            return credential.access_token
+        return await self.renew()
+
+    async def renew(self) -> str:
+        credential = await self._current()
+        if self._refresher is None:
+            # Naming the real cause. Reporting `authorization_required` here
+            # would send a tenant to a consent screen to fix a missing client
+            # secret on the server, which cannot possibly work.
+            raise ValueError("token_refresh_not_configured")
+        refreshed = await self._refresher.refresh(credential.refresh_token)
+        if refreshed.scopes and set(refreshed.scopes) != {READONLY_SCOPE}:
+            # The grant is not the one that was consented to. Writing it back
+            # would silently widen what this connector can reach.
+            raise GoogleAuthorizationRevoked("authorization_required")
+        self._credential = await store_renewed_credential(
+            self._pool,
+            self._sync,
+            credential,
+            access_token=refreshed.access_token,
+            expires_at=refreshed.expires_at,
+            encryption_key=self._encryption_key,
+            key_version=self._key_version,
+        )
+        return self._credential.access_token
+
+
+class CredentialedSearchConsole:
+    """A Search Console source that carries, and can replace, its own token.
+
+    A 490-day backfill makes roughly a thousand requests. An access token lives
+    an hour. Without the retry below, a backfill that runs long enough dies
+    partway with `authorization_required` and marks a perfectly good connector
+    as needing re-consent.
+    """
+
+    def __init__(self, client: SearchConsoleClient, tokens: AccessTokenManager) -> None:
+        self._client = client
+        self._tokens = tokens
+
+    async def query_day(
+        self, property_ref: str, day: date, start_row: int
+    ) -> list[SearchAnalyticsRow]:
+        token = await self._tokens.token()
+        try:
+            return await self._client.query_day(property_ref, token, day, start_row)
+        except SearchConsoleError as error:
+            if str(error) != "authorization_required":
+                raise
+        # Renewed once, and only once: a second refusal with a token minted
+        # seconds earlier is the grant being gone, not a clock problem.
+        return await self._client.query_day(
+            property_ref, await self._tokens.renew(), day, start_row
+        )
 
 
 class PostgresMetricSink(MetricSink):
@@ -453,6 +662,7 @@ async def run_gsc_consumer(
     encryption_key: bytes,
     query_hash_key: bytes,
     query_key_version: str = "local-v1",
+    refresher: TokenRefresher | None = None,
 ) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -491,30 +701,35 @@ async def run_gsc_consumer(
                     await streams.xack(STREAM, GROUP, message_id)
                     continue
                 try:
-                    access_token = await load_access_token(pool, sync, encryption_key)
                     sink = PostgresMetricSink(
                         pool,
                         sync,
                         query_encryption_key=encryption_key,
                         query_key_version=query_key_version,
                     )
-                    provider = SearchConsoleClient()
+                    tokens = AccessTokenManager(
+                        pool,
+                        sync,
+                        encryption_key=encryption_key,
+                        key_version=query_key_version,
+                        refresher=refresher,
+                    )
+                    client = SearchConsoleClient()
                     try:
                         await sync_search_analytics(
-                            provider,
+                            CredentialedSearchConsole(client, tokens),
                             sink,
                             tenant_id=sync.tenant_id,
                             site_id=sync.site_id,
                             sync_id=sync.id,
                             property_ref=sync.property_ref,
-                            access_token=access_token,
                             range_start=sync.range_start,
                             range_end=sync.range_end,
                             cursor=sync.cursor,
                             query_hash_key=query_hash_key,
                         )
                     finally:
-                        await provider.close()
+                        await client.close()
                     await complete_sync(pool, sync, sink)
                 except (SearchConsoleError, TypeError, ValueError, RuntimeError) as error:
                     await fail_sync(pool, sync, str(error))

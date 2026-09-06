@@ -30,9 +30,17 @@ class SearchAnalyticsRow:
     position: float
 
 
-class SearchConsoleProvider(Protocol):
+class SearchAnalyticsSource(Protocol):
+    """Where a day of rows comes from, credential included.
+
+    The access token is deliberately not a parameter. It was one, threaded from
+    the top of the sync down into every request, which meant the loop held a
+    string that could expire halfway through a long backfill and had no way to
+    ask for another. Owning the credential is what lets a source renew it.
+    """
+
     async def query_day(
-        self, property_ref: str, access_token: str, day: date, start_row: int
+        self, property_ref: str, day: date, start_row: int
     ) -> list[SearchAnalyticsRow]: ...
 
 
