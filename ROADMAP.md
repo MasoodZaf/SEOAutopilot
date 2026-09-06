@@ -426,6 +426,15 @@ rather than an overlay. Walking the site's 32 findings to a proposal turned up t
   from the title would have replaced a hand-written headline with the brand string on the site's most
   valuable page. `plan_repair` refuses the site root outright.
 
+- **The evidence itself was wrong, and that was upstream of all of it.** Cheerio's `.text()`
+  concatenates text nodes with nothing between them, so the hero read back as
+  "Every calculatoryou'll ever need" — one token where a reader sees two, matching no stem in any
+  title. Every text rule was comparing against a word that does not exist, and word counts lost a
+  word at each markup boundary. `readVisibleText` in `crawl-engine.ts` treats `<br>` and block
+  elements as word boundaries and drops `script`/`style` before reading, for headings, anchor text
+  and body copy alike. Replayed against the stored production observations, the mismatch rule falls
+  from 30 pages to 15 and the front page stops being one of them.
+
 `app/domain/h1_repair.py` derives the replacement from the page's own `<title>`, so the first real
 change needs no language model and is byte-verifiable: the document must be identical either side of
 the one span, and re-reading the result must return the intended heading. It refuses a page with no

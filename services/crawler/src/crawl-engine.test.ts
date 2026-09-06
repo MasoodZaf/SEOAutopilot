@@ -69,3 +69,29 @@ test("sitemap inventory records provenance, scope, and unreachable sources",asyn
   assert.equal(byUrl.get("https://cdn.other/sitemap.xml")?.status,"out_of_scope");
   assert.equal(byUrl.get("https://sitemaps.example/missing.xml")?.status,"unreachable");
 });
+
+test("markup boundaries inside a heading are word boundaries, not joins",async()=>{
+  // TheCalcHive's hero: cheerio's .text() concatenated the nodes either side of
+  // the <br> and stored "calculatoryou", a token no reader sees and no
+  // stemmer can match, which made every title/heading comparison downstream
+  // compare against a word that does not exist.
+  const page="<html><head><title>Age Calculator — Free Online Tool | CalcHive</title></head><body>"
+    +"<h1>Every calculator<br>you'll ever <em>need</em></h1>"
+    +"<p>First paragraph.</p><p>Second paragraph.</p>"
+    +"<script>const noise='this text is code, not copy';</script>"
+    +"<a href='/about'>Read<br>more</a></body></html>";
+  const responses=new Map<string,FetchedResource>([
+    ["https://example.com/robots.txt",resource("https://example.com/robots.txt","User-agent: *\nAllow: /","text/plain")],
+    ["https://example.com/",resource("https://example.com/",page,"text/html")],
+    ["https://example.com/about",resource("https://example.com/about","<html><head><title>About</title></head><body><h1>About</h1></body></html>","text/html")],
+  ]);
+  const fetcher:FetchResource=async url=>{const found=responses.get(url.toString());if(!found)throw new Error(`unexpected:${url}`);return found};
+  const result=await crawlSite("https://example.com",10,fetcher);
+  const home=result.observations[0];
+
+  assert.deepEqual(home?.h1,["Every calculator you'll ever need"]);
+  assert.equal(home?.links[0]?.anchorText,"Read more");
+  // Paragraph boundaries separate words too, and script source is not copy:
+  // the five heading words, four from the paragraphs, two from the link.
+  assert.equal(home?.wordCount,11);
+});

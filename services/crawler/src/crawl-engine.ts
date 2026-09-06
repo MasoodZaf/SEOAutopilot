@@ -7,6 +7,31 @@ import robotsParserModule from "robots-parser";
 import type {FetchResource, LinkObservation, PageObservation} from "./types.js";
 
 const USER_AGENT = "SEOAutopilotBot";
+
+/**
+ * Elements that end a word. Cheerio's `.text()` concatenates text nodes with
+ * nothing between them, so `<h1>Every calculator<br>you'll ever need</h1>`
+ * reads back as "calculatoryou" — one token where a reader sees two. That
+ * corrupts every rule downstream: heading and title comparisons tokenize a
+ * word that does not exist, and word counts fall well below what is on the page.
+ */
+const TEXT_BOUNDARY_SELECTOR =
+  "br,p,div,li,tr,td,th,h1,h2,h3,h4,h5,h6,section,article,header,footer,nav," +
+  "aside,blockquote,pre,figure,figcaption,option,dt,dd,hr,form,table";
+
+/** Elements whose text is code or styling, never page copy. */
+const NON_CONTENT_SELECTOR = "script,style,noscript,template";
+
+type Fragment = ReturnType<ReturnType<typeof load>>;
+
+function readVisibleText(fragment: Fragment): string {
+  const copy = fragment.clone();
+  copy.find(NON_CONTENT_SELECTOR).remove();
+  copy.find(TEXT_BOUNDARY_SELECTOR).before(" ").after(" ");
+  return copy.text().replace(/\s+/g, " ").trim();
+}
+
+
 const MAX_LINKS_PER_PAGE = 5_000;
 type RobotsPolicy = {isAllowed(url: string, userAgent?: string): boolean | undefined};
 const parseRobots = robotsParserModule as unknown as (url: string, body: string) => RobotsPolicy;
@@ -190,18 +215,18 @@ export async function crawlSite(
       enqueue(candidate, finalBase, entry.depth + 1);
       links.push({
         targetUrl: candidate,
-        anchorText: $(element).text().replace(/\s+/g, " ").trim().slice(0, 500),
+        anchorText: readVisibleText($(element)).slice(0, 500),
         relValues: [...new Set(($(element).attr("rel") ?? "").toLowerCase().split(/\s+/).filter(Boolean))],
       });
     }
-    const text = $("body").text().replace(/\s+/g, " ").trim();
+    const text = readVisibleText($("body"));
     observations.push({
       normalizedUrl: current,
       finalUrl: resource.finalUrl,
       status: resource.status,
       title: $("title").first().text().trim() || null,
       metaDescription: $('meta[name="description"]').attr("content")?.trim() || null,
-      h1: $("h1").toArray().map(element => $(element).text().replace(/\s+/g, " ").trim()).filter(Boolean),
+      h1: $("h1").toArray().map(element => readVisibleText($(element))).filter(Boolean),
       wordCount: text ? text.split(" ").length : 0,
       contentHash: createHash("sha256").update(text).digest("hex"),
       rendered: resource.rendered,
