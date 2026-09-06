@@ -626,6 +626,11 @@ class GovernanceSettingsUpdate(BaseModel):
     freeze_window_end: datetime | None = None
 
 
+class SiteModeUpdate(BaseModel):
+    mode: str = Field(pattern="^(observe|recommend|autopilot)$")
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class GovernanceStatusRead(BaseModel):
     site_id: UUID
     mode: str

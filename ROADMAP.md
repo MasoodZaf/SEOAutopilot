@@ -458,6 +458,22 @@ fell from 32 open findings to 17, and the front page's instance moved itself to 
 `h1.duplicate_across_site` is open on all 32 with the summary "The H1 is the same on 32 pages, so it
 identifies none of them."
 
+**A site's mode can be changed (2026-09-06).** Mode was settable only at site creation, so the
+product decision that "operating mode is the tenant's choice, not a product-wide stance" had no
+mechanism behind it — a customer who had watched a site in Observe and wanted proposals had to
+delete the site and recreate it. `PATCH /v1/sites/{id}/governance/mode` moves a site between the
+three modes as a governance act: owner/admin only, a stated reason required, recorded in the audit
+trail and the outbox like a freeze. Raising the mode requires a verified, unfrozen site, and
+entering Autopilot requires `autopilot_enabled` to have been granted separately, so no single
+request arrives at unattended changes. Dropping to Observe is never refused, because the way to stop
+a site being changed must not itself be blockable, and leaving Autopilot withdraws the authority.
+Ten cases cover it against PostgreSQL.
+
+**Dead deployment adapters removed.** `services/worker/app/deployments/` held a GitHub adapter still
+raising `github_connector_not_implemented` alongside Shopify and mock ones, imported by nothing but
+their own two tests — the same fork that was removed from the policy engine in the QA checkpoint,
+grown back elsewhere. The live adapter is `services/api/app/domain/github_adapter.py`.
+
 **Mock deployments no longer key off `app_env`.** The route admitted the mock adapter whenever
 `app_env` was development or test, and production runs `app_env=development` until H5 lands, so
 enabling deployments there would have made an adapter that fabricates success reachable on the live

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import (
     GovernanceSettingsUpdate,
     GovernanceStatusRead,
+    SiteModeUpdate,
 )
 from app.core.context import Role, TenantContext
 from app.db.models import (
@@ -28,6 +29,9 @@ from app.domain.governance import (
 )
 
 ADMIN_ROLES = {Role.OWNER, Role.ADMIN}
+
+# Ordered by how much the platform may do to the site without being asked again.
+MODE_RANK = {"observe": 0, "recommend": 1, "autopilot": 2}
 FREEZE_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
 
 
@@ -118,6 +122,97 @@ class GovernanceService:
         )
         await self.session.flush()
         return await self.get_governance_status(site_id)
+
+    async def set_site_mode(self, site_id: UUID, command: SiteModeUpdate) -> GovernanceStatusRead:
+        """Move a site between observe, recommend and autopilot.
+
+        Mode was settable only at site creation, so a customer choosing to move
+        from observing to recommending had no way to say so. It is a governance
+        decision, not a setting: it changes what the platform is permitted to do
+        to the site, so it is owner/admin only, requires a stated reason, and is
+        recorded in the audit trail and the outbox like a freeze.
+
+        Climbing is constrained; descending never is. Observe is always
+        reachable, because the way to stop a site being changed must never
+        itself be blocked.
+        """
+        if self.context.role not in ADMIN_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="only_admins_can_change_site_mode",
+            )
+
+        site = await self.session.scalar(
+            select(Site).where(Site.id == site_id, Site.tenant_id == self.context.tenant_id)
+        )
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+
+        previous = site.mode
+        if previous == command.mode:
+            return await self.get_governance_status(site_id)
+
+        if MODE_RANK[command.mode] > MODE_RANK[previous]:
+            self._check_mode_ceiling(site, command.mode)
+
+        site.mode = command.mode
+        if command.mode != "autopilot":
+            # Autopilot authority does not outlive the mode that justified it.
+            site.autopilot_enabled = False
+
+        payload = {
+            "site_id": str(site_id),
+            "previous_mode": previous,
+            "mode": site.mode,
+            "reason": command.reason,
+        }
+        self.session.add(
+            AuditEvent(
+                tenant_id=self.context.tenant_id,
+                actor_type="user",
+                actor_id=str(self.context.actor_id),
+                action="governance.site_mode_changed",
+                resource_type="site",
+                resource_id=str(site_id),
+                trace_id=self.context.trace_id,
+                metadata_json=payload,
+                event_hash=stable_hash({**payload, "actor_id": str(self.context.actor_id)}),
+            )
+        )
+        self.session.add(
+            OutboxEvent(
+                tenant_id=self.context.tenant_id,
+                event_type="site.mode_changed.v1",
+                event_version=1,
+                aggregate_type="site",
+                aggregate_id=site.id,
+                payload=payload,
+            )
+        )
+        await self.session.flush()
+        return await self.get_governance_status(site_id)
+
+    def _check_mode_ceiling(self, site: Site, mode: str) -> None:
+        """What a site must already be before it may be given more authority."""
+        if site.status != "active" or site.verified_at is None:
+            # Ownership is the whole basis for touching someone's site.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="site_must_be_verified_before_raising_mode",
+            )
+        if site.emergency_freeze:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="site_is_frozen",
+            )
+        if mode == "autopilot" and not site.autopilot_enabled:
+            # Autopilot deploys without a human in the loop. Turning the mode on
+            # is not the same act as granting that authority, and doing both in
+            # one call would let a single request arrive at unattended changes.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="autopilot_must_be_enabled_before_entering_autopilot_mode",
+            )
 
     async def trigger_emergency_freeze(self, site_id: UUID, notes: str = "") -> GovernanceStatusRead:
         if self.context.role not in FREEZE_ROLES:

@@ -12,6 +12,7 @@ from app.api.schemas import (
     PolicySimulationRead,
     RollbackReceiptEnvelope,
     RollbackReceiptRead,
+    SiteModeUpdate,
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import Settings, get_settings
@@ -53,6 +54,21 @@ async def update_site_governance(
         data=status_read,
         meta={"trace_id": context.trace_id},
     )
+
+
+@router.patch(
+    "/v1/sites/{site_id}/governance/mode",
+    response_model=GovernanceStatusEnvelope,
+)
+async def set_site_mode(
+    site_id: UUID,
+    command: SiteModeUpdate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> GovernanceStatusEnvelope:
+    """Change what the platform is allowed to do to this site."""
+    status_read = await GovernanceService(session, context).set_site_mode(site_id, command)
+    return GovernanceStatusEnvelope(data=status_read, meta={"trace_id": context.trace_id})
 
 
 @router.post(
