@@ -795,14 +795,56 @@ async def test_a_frozen_site_refuses_a_batch(tenant_session_factory, chain) -> N
     assert adapter.calls == []
 
 
-async def test_a_repeated_batch_key_returns_the_first_receipts(
+async def _second_approved_proposal(session, chain: Chain) -> UUID:
+    """A sibling of the seeded proposal, on its own page and path."""
+    page_id, proposal_id = uuid4(), uuid4()
+    url = "https://gate.example/second"
+    await session.execute(
+        text(
+            "INSERT INTO page(id,tenant_id,site_id,normalized_url,url_hash)"
+            " VALUES(:id,:tenant_id,:site_id,:url,:url_hash)"
+        ),
+        {
+            "id": page_id, "tenant_id": chain.tenant_id, "site_id": chain.site_id,
+            "url": url, "url_hash": hashlib.sha256(url.encode()).hexdigest(),
+        },
+    )
+    await session.execute(
+        text(
+            "INSERT INTO proposal(id,tenant_id,site_id,opportunity_id,page_id,author_id,title,"
+            "rationale,target_type,target_path,before_content,after_content,diff_unified,"
+            "base_hash,proposal_hash,risk,status,policy_evaluation_json,expires_at)"
+            " SELECT :new_id,tenant_id,site_id,opportunity_id,:page_id,author_id,title,"
+            "rationale,target_type,'second.html',before_content,after_content,diff_unified,"
+            "base_hash,proposal_hash,risk,'approved',policy_evaluation_json,expires_at"
+            " FROM proposal WHERE id=:source"
+        ),
+        {"new_id": proposal_id, "page_id": page_id, "source": chain.proposal_id},
+    )
+    return proposal_id
+
+
+async def test_a_repeated_batch_key_returns_every_receipt_not_just_the_first(
     tenant_session_factory, chain
 ) -> None:
+    """A batch writes one receipt per proposal, each with its own key.
+
+    Matching the bare key found one of them, so a retry answered with a single
+    receipt while reporting that the whole batch had been handled. It only shows
+    with more than one proposal, which is why deploying one page did not.
+    """
     async with tenant_session_factory(chain.tenant_id) as session:
         await set_site(session, chain, "daily_change_budget=5")
-        first, adapter = await deploy_batch(session, chain, [chain.proposal_id])
-        second, _ = await deploy_batch(session, chain, [chain.proposal_id], adapter=adapter)
+        second_id = await _second_approved_proposal(session, chain)
+        ids = [chain.proposal_id, second_id]
 
-    assert [r.id for r in first] == [r.id for r in second]
-    # The provider was asked once, not twice.
+        first, adapter = await deploy_batch(session, chain, ids)
+        repeated, _ = await deploy_batch(session, chain, ids, adapter=adapter)
+
+    assert len(first) == 2
+    assert len(repeated) == 2
+    assert sorted(r.id for r in first) == sorted(r.id for r in repeated)
+    # Distinct keys, one pull request, and the provider asked exactly once.
+    assert len({r.idempotency_key for r in first}) == 2
+    assert len({r.external_ref for r in first}) == 1
     assert len(adapter.calls) == 1

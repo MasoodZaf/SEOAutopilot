@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -368,13 +368,7 @@ class ProposalService:
         now = datetime.now(UTC)
         site = await self._deployable_site(site_id, now)
 
-        existing = await self.session.scalars(
-            select(DeploymentReceipt).where(
-                DeploymentReceipt.tenant_id == self.context.tenant_id,
-                DeploymentReceipt.idempotency_key == idempotency_key,
-            )
-        )
-        already = list(existing)
+        already = await self._batch_receipts(idempotency_key)
         if already:
             return already
 
@@ -462,7 +456,7 @@ class ProposalService:
                 site_id=site_id,
                 proposal_id=proposal.id,
                 connector_type="github",
-                idempotency_key=idempotency_key if index == 0 else f"{idempotency_key}:{index}",
+                idempotency_key=f"{idempotency_key}:{index}",
                 external_ref="",
                 manifest_json=change.manifest.to_dict(),
                 status="pending",
@@ -476,14 +470,7 @@ class ProposalService:
                     self.session.add(receipt)
                 await self.session.flush()
         except IntegrityError:
-            concurrent = list(
-                await self.session.scalars(
-                    select(DeploymentReceipt).where(
-                        DeploymentReceipt.tenant_id == self.context.tenant_id,
-                        DeploymentReceipt.idempotency_key == idempotency_key,
-                    )
-                )
-            )
+            concurrent = await self._batch_receipts(idempotency_key)
             if not concurrent:
                 raise
             return concurrent
@@ -539,6 +526,28 @@ class ProposalService:
 
         await self.session.flush()
         return receipts
+
+    async def _batch_receipts(self, idempotency_key: str) -> list[DeploymentReceipt]:
+        """Every receipt written by one batch, not merely its first.
+
+        A batch gives each receipt its own key, because the table's uniqueness
+        is per receipt. Matching the bare key found one of thirty, so a retry
+        answered with a single receipt while claiming the whole batch had been
+        handled. The bare form is still matched for batches written before the
+        keys were suffixed.
+        """
+        rows = await self.session.scalars(
+            select(DeploymentReceipt)
+            .where(
+                DeploymentReceipt.tenant_id == self.context.tenant_id,
+                or_(
+                    DeploymentReceipt.idempotency_key == idempotency_key,
+                    DeploymentReceipt.idempotency_key.startswith(f"{idempotency_key}:"),
+                ),
+            )
+            .order_by(DeploymentReceipt.idempotency_key)
+        )
+        return list(rows)
 
     async def _deployable_site(self, site_id: UUID, now: datetime) -> Site:
         """The site checks that gate every deployment, single or batched."""
