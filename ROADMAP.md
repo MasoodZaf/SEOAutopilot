@@ -305,9 +305,14 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
   tests stay green. It also shows a signed cursor being accepted by the token and refused by the
   service for another tenant, since the token binds to a site and not to who holds it.
 
-With that, every control named in `AGENTS.md` has a test against real PostgreSQL, and the second half
-of H1's exit condition is met. The first half — no service connecting as a superuser in production —
-is still waiting on the deploy.
+**H1 is closed.** Deployed 2026-09-06. Production runs the API and crawler as `seo_autopilot_app`
+and the worker as that plus `seo_autopilot_relay`; `pg_stat_activity` shows no service on
+`seo_autopilot`. Measured on the host as the application role: unscoped `SELECT count(*) FROM site`
+returns 0, a bogus tenant 0, the pilot tenant 3, and the role cannot bypass row security. Before the
+deploy the same query returned every row. Migration `0028` ran there too, suppressing 3765 findings
+and opportunities across three collapsed crawls and deleting 1424 fictitious page scores. A crawl of
+thecalchive.com afterwards produced 30 pages with 30 distinct content hashes and a 0.033 top share,
+exercising API, outbox relay, crawler and analysis under the scoped roles.
 
 **Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
 has a test that runs against real PostgreSQL.
