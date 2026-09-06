@@ -762,6 +762,7 @@ class RoutineKindName(StrEnum):
     COMPETITOR_SCAN = "competitor_scan"
     AI_VISIBILITY_SCAN = "ai_visibility_scan"
     WEEKLY_REPORT = "weekly_report"
+    SEARCH_CONSOLE_SYNC = "search_console_sync"
 
 
 class CadenceName(StrEnum):

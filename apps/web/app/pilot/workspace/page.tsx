@@ -353,7 +353,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 A routine gathers evidence and produces reports. It is skipped while the site is unverified or frozen, and it holds no deployment authority.
               </p>
               <ul className="mt-4 flex flex-col gap-2">
-                {["site_audit", "keyword_refresh", "sitemap_coverage", "content_briefs", "competitor_scan", "ai_visibility_scan", "weekly_report"].map((kind) => {
+                {["search_console_sync", "site_audit", "keyword_refresh", "sitemap_coverage", "content_briefs", "competitor_scan", "ai_visibility_scan", "weekly_report"].map((kind) => {
                   const routine = routineByKind.get(kind);
                   return (
                     <li key={kind} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900 px-3 py-2">

@@ -39,6 +39,14 @@ UNIMPLEMENTED_KINDS: set[str] = set()
 # Keyword clustering reads a rolling window of search evidence.
 KEYWORD_WINDOW_DAYS = 28
 
+# Search Console finalises a day's data a couple of days late, so asking for
+# yesterday reliably returns nothing.
+SEARCH_CONSOLE_LAG_DAYS = 3
+# And it keeps revising those days afterwards. Re-requesting a trailing window
+# costs a handful of API calls and lets late arrivals land, because ingestion
+# upserts on the natural key rather than inserting blindly.
+SEARCH_CONSOLE_WINDOW_DAYS = 7
+
 
 class Pool(Protocol):
     def acquire(self) -> Any: ...
@@ -229,6 +237,108 @@ async def _run_keyword_refresh(
     if summary["queries_considered"] == 0:
         return "skipped", summary, "no_search_evidence_in_window"
     return "completed", summary, None
+
+
+async def _run_search_console_sync(
+    connection: Any,
+    tenant_id: UUID,
+    site_id: UUID,
+    routine_id: UUID,
+    today: date,
+) -> tuple[str, dict[str, Any], str | None]:
+    """Queue the Search Console sync that every other search routine depends on.
+
+    `keyword_refresh` clusters `search_query`; the weekly report reads
+    `search_metric`. Nothing filled either on a schedule, so both skipped with
+    "no evidence" on a site whose connector was working perfectly. This is the
+    link that was missing.
+
+    It queues work rather than doing it: the sync worker owns the credential,
+    the paging and the checkpointing, and duplicating any of that here would
+    give two things the ability to advance the same cursor.
+    """
+    connector = await connection.fetchrow(
+        """
+        SELECT id, status, secret_ref FROM connector
+        WHERE tenant_id=$1 AND site_id=$2 AND type='google_search_console'
+        """,
+        tenant_id, site_id,
+    )
+    if connector is None:
+        return "skipped", {}, "search_console_connector_missing"
+    if connector["status"] != "active" or not connector["secret_ref"]:
+        # A connector awaiting re-consent is a person's problem, and saying so
+        # is more use than a generic failure.
+        return (
+            "skipped",
+            {"connector_status": connector["status"]},
+            "search_console_connector_not_active",
+        )
+
+    range_end = today - timedelta(days=SEARCH_CONSOLE_LAG_DAYS)
+    range_start = range_end - timedelta(days=SEARCH_CONSOLE_WINDOW_DAYS - 1)
+    # Derived from the routine and the window it covers, so a catch-up run for
+    # a slot already served finds the sync it made instead of making a second.
+    idempotency_key = f"routine:{routine_id}:{range_end.isoformat()}"
+
+    existing = await connection.fetchrow(
+        """
+        SELECT id, status FROM connector_sync
+        WHERE tenant_id=$1 AND connector_id=$2 AND idempotency_key=$3
+        """,
+        tenant_id, connector["id"], idempotency_key,
+    )
+    if existing is not None:
+        return (
+            "skipped",
+            {"sync_id": str(existing["id"]), "sync_status": existing["status"]},
+            "search_console_sync_already_requested",
+        )
+
+    # Attributed to whoever created the routine, so an ingestion of somebody's
+    # search data still names a human who asked for it.
+    requested_by = await connection.fetchval(
+        "SELECT created_by FROM routine WHERE id=$1 AND tenant_id=$2", routine_id, tenant_id
+    )
+    if requested_by is None:
+        return "skipped", {}, "routine_missing"
+
+    sync_id = await connection.fetchval(
+        """
+        INSERT INTO connector_sync(
+          tenant_id,connector_id,kind,idempotency_key,range_start,range_end,status,requested_by)
+        VALUES($1,$2,'incremental',$3,$4,$5,'queued',$6)
+        RETURNING id
+        """,
+        tenant_id, connector["id"], idempotency_key, range_start, range_end, requested_by,
+    )
+    await connection.execute(
+        """
+        INSERT INTO outbox_event(
+          tenant_id,event_type,event_version,aggregate_type,aggregate_id,payload)
+        VALUES($1,'connector.sync_requested',1,'connector_sync',$2,$3::jsonb)
+        """,
+        tenant_id, sync_id,
+        json.dumps(
+            {
+                "sync_id": str(sync_id),
+                "connector_id": str(connector["id"]),
+                "site_id": str(site_id),
+                "routine_id": str(routine_id),
+            },
+            sort_keys=True, separators=(",", ":"),
+        ),
+    )
+    return (
+        "completed",
+        {
+            "sync_id": str(sync_id),
+            "connector_id": str(connector["id"]),
+            "range_start": range_start.isoformat(),
+            "range_end": range_end.isoformat(),
+        },
+        None,
+    )
 
 
 async def _latest_finished_crawl(connection: Any, tenant_id: UUID, site_id: UUID) -> Any:
@@ -477,6 +587,11 @@ async def process_run(
             elif kind == "sitemap_coverage":
                 status, summary, skip = await _run_sitemap_coverage(
                     connection, tenant_id, site_id, run_id
+                )
+            elif kind == "search_console_sync":
+                status, summary, skip = await _run_search_console_sync(
+                    connection, tenant_id, site_id, routine_id,
+                    today or datetime.now(UTC).date(),
                 )
             elif kind == "weekly_report":
                 status, summary, skip = await _run_weekly_report(
