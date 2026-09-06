@@ -286,8 +286,13 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
 - Provision both role passwords in deployment and document the step in `DEPLOYMENT.md`. Production
   is still entirely unpatched: applying 0027 alone changes nothing, because forcing row security
   does not constrain a superuser.
-- Move the remaining safety controls off `AsyncMock`: approvals, deployment, freeze and kill switch,
-  daily change budget, mode ceiling, calibration idempotency, cursor scoping.
+- Move the remaining safety controls off `AsyncMock`. **Done for the deployment path** —
+  `tests/integration/test_deployment_gate.py` covers the mode ceiling, emergency freeze, scheduled
+  freeze window, daily change budget, idempotency, role check and global switch against real
+  PostgreSQL on the `seo_autopilot_app` role. The value was measured, not assumed: removing the
+  tenant and day scoping from the budget count — so one tenant's deployments consume another's, and
+  the budget counts all of history — leaves all 31 mocked proposal tests green, and fails the new
+  ones. **Still on mocks:** calibration idempotency and cursor scoping.
 
 **Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
 has a test that runs against real PostgreSQL.
