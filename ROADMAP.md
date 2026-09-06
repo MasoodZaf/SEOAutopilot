@@ -182,3 +182,148 @@ every other recurring capability depends on it.
 - Feature flags default closed for external writes.
 - Provider feasibility, account creation, successful local mocks, and prepared documents are not launch approval.
 - Autopilot scope expands only after policy simulation and production evidence; never by default.
+
+## QA/QC checkpoint (2026-09-06)
+
+An adversarial review of the shipped paths, run against the live local stack rather than the test
+suite alone, found five defects. All five are fixed and verified; the gate is green at 189 API tests,
+92 worker tests, ruff and pyright clean on both services, and web lint/typecheck/test/build passing.
+
+- **Two-approver rule defeated by one approver.** `approve_proposal` counted prior approvals after
+  `session.add()`. SQLAlchemy autoflushes the pending row into that query, and the `+ 1` then counted
+  the same person twice, so the first approver alone satisfied `required_approver_count = 2` on every
+  medium and high risk proposal. Fixed by counting distinct approver ids before staging the new row.
+  The missing-key default also moved from 1 to 2 so a damaged policy record fails closed.
+- **Indexing-control changes classified as low risk.** Risk was read from `target_path` only, so a
+  canonical rewritten to another domain, a `noindex` meta robots tag, or a refresh redirect took one
+  approver, admitted the editor role, and was auto-deployable — contradicting the `AGENTS.md` rule
+  that canonical, robots and redirect changes never auto-deploy. `detect_control_directive_changes`
+  now forces high risk on any change to those directives, and reports which one in the policy record.
+- **Server actions swallowed their own redirects.** `redirect()` throws; fifteen catch blocks in
+  `apps/web/app/pilot/actions.ts` rewrote that signal into a generic `unexpected-error`, discarding
+  precise codes such as `verification-challenge-expired`. Guarded with `unstable_rethrow`.
+- **Policy logic forked.** `services/worker/app/proposals/` held a byte-identical copy of the API's
+  policy and validator that only its own tests imported. Removed; its tests were ported onto the live
+  implementation.
+- **Prompt-injection guards lived in the mock provider.** Moved into `GuardedLLMProvider`, which runs
+  the injection, budget and evidence-citation checks around every provider call. A provider that
+  implements no checks of its own is now tested to still be refused.
+
+The root cause of the first defect is structural, not incidental: every service test drives an
+`AsyncMock` session, so no test can observe how a real session behaves. `test_unit_of_work.py`
+already documented this blind spot and guarded one instance of it. Hardening track H1 below removes
+the cause rather than the next symptom.
+
+## Product decisions (2026-09-06)
+
+- **Operating mode is the tenant's choice, not a product-wide stance.** Observe, Recommend and
+  Autopilot are per-site settings a customer selects, with a mode ceiling the platform enforces.
+  This makes Autopilot in-scope rather than deferred, and it gives `can_auto_deploy` a real consumer
+  for the first time — it is currently computed and read by nothing. Autopilot therefore needs the
+  blast-radius design in Phase 6 before any tenant can switch it on, and the low-risk allowlist must
+  exclude the indexing-control directives now classified as high risk.
+- **CodeArc is the primary pilot.** It has low traffic *because* its SEO is poor, which makes it the
+  cleaner measurement subject: a near-zero baseline gives an unambiguous before/after signal, where
+  an already-ranking site would need a synthetic control to separate the change from its own trend.
+  The trade is a slower measurement cycle and a hard dependency on opening the login gate to the
+  crawler. TheCalcHive and WordKit remain comparison sites.
+
+## Path to production readiness
+
+The original Phase 2 exit gate has not passed, and Phases 4 through 6 have never executed against a
+real connector. These tracks sequence the remaining work. H1 and H2 have no external dependencies and
+run first; H6 is a business constraint, not a build one.
+
+### H1 — Restore tenant isolation, and the harness that proves it
+
+The harness landed first and immediately found that **row-level security has never been in effect**.
+All 50 tenant tables enable it and every policy is written correctly, but two independent conditions
+make them inert, and both must be fixed:
+
+1. No table sets `FORCE ROW LEVEL SECURITY`, and the API connects as the role that ran the
+   migrations, so it owns every table. An owner bypasses its own policies unless they are forced.
+2. That role is a `SUPERUSER` with `BYPASSRLS` — the postgres image makes `POSTGRES_USER` a
+   superuser. A superuser ignores row security unconditionally and `FORCE` does not apply to it.
+   Forcing alone was measured on a clean schema and changed nothing.
+
+Measured on a database built only from `infra/migrations`, so this is the schema's behaviour and not
+an artefact of the dev volume: with `app.tenant_id` set to a tenant owning no rows, the application
+role still saw every site. Isolation today rests entirely on the explicit `tenant_id` filters in the
+service layer; any query that omits one — and some rely on RLS instead of filtering — is unisolated.
+
+The remedy is verified end to end: a `NOSUPERUSER NOBYPASSRLS` application role granted only DML,
+with `FORCE` on for defence in depth. Under it a tenant sees only its own rows, an unknown scope and
+an unset scope both see nothing, and a cross-tenant insert is rejected by the policy's `WITH CHECK`.
+
+**Work:**
+
+- Migration adding `FORCE ROW LEVEL SECURITY` to all 50 tables and creating the application role;
+  migrations continue to run as the owner.
+- Repoint the API and worker at the new role; keep the credential out of the image.
+- Set the tenant GUC in the twelve worker modules that never set it. The outbox relay and the routine
+  scheduler are cross-tenant by design and need a separate `BYPASSRLS` role rather than a scope.
+- Give the OAuth callback's deliberately unscoped `connector_oauth_state` lookup an explicit narrow
+  path, then set `app.tenant_id` from the resolved state before it touches anything else.
+- Remove the `strict=True` xfail markers in `tests/integration/test_tenant_isolation.py`. They are
+  strict so that the suite turns red the moment isolation starts working, forcing the marker off
+  rather than letting a half-finished fix pass quietly.
+- Then move the remaining safety controls off `AsyncMock`: approvals, deployment, freeze and kill
+  switch, daily change budget, mode ceiling, calibration idempotency, cursor scoping.
+
+**Exit:** the three isolation tests pass with their markers removed, and every control named in
+`AGENTS.md` has a test that runs against real PostgreSQL.
+
+### H2 — Make the evidence real
+
+- Open CodeArc to the crawler (crawler-UA allowlist or a signed bypass token) and complete a full
+  500-page crawl. The current latest crawl is `cancelled`, so today's opportunity set rests on
+  partial evidence.
+- Resolve the opportunity yield question: TheCalcHive produced 1 opportunity from 32 pages and
+  WordKit 1 from 13. Confirm the sites are clean or find the rule that is not firing.
+- Run the crawl scenarios against the in-repo hostile fixture rather than only production sites.
+
+**Exit:** a completed full crawl on CodeArc, and an opportunity count defensible per page.
+
+### H3 — Close the change loop
+
+- Real GitHub adapter: branch, commit, PR, drift detection against `base_hash`, idempotency key
+  yielding exactly one PR. The manifest and PR-body formatter already exist.
+- Post-deploy verification by re-crawling the target URL and diffing against expectation.
+- Rollback with incident and audit records.
+
+**Exit:** QA_TEST_PLAN scenarios 11, 12 and 13 pass against a real test repository, not the mock
+adapter.
+
+### H4 — Real generation behind the guardrail
+
+- Implement a provider against `GuardedLLMProvider`. Scope generation to drafting — meta
+  descriptions, brief prose, H1 suggestions. Findings, scoring and policy stay deterministic.
+- Wire `wrap_untrusted_evidence` into prompt construction; it is currently unreferenced.
+- Build the eval set: labeled expected findings, evidence precision and recall, unsupported-claim
+  rate, cost and latency.
+
+**Exit:** QA_TEST_PLAN scenario 7 becomes an end-to-end gate rather than a unit proof.
+
+### H5 — Multi-user identity
+
+- OIDC, sessions, real accounts and role assignment; retire the local-pilot bearer token.
+- Separation of duties is currently only provable in the negative — one actor can be refused, but two
+  distinct humans approving in sequence cannot be exercised at all.
+
+**Exit:** two real accounts complete an author-then-approve cycle on a medium-risk proposal.
+
+### H6 — Measurable outcome
+
+All three pilot sites currently report zero search impressions, so verification and measurement can
+be built correctly and still prove nothing. CodeArc's own traffic recovery is the first measurement
+subject; a design partner with existing traffic remains the faster path to a second one.
+
+**Exit:** a deployed change with a baseline and follow-up window, reported without presenting
+association as causation.
+
+### Remaining quality gates
+
+Playwright end-to-end coverage of onboarding, opportunity, diff, approval and rollback; axe
+accessibility review; performance evidence at 10,000 pages with dashboard p95 and queue fairness;
+resilience drills for worker loss, lease expiry, duplicate events and partial provider failure; and
+an independent security review of the injection denylist and secret rotation.

@@ -14,6 +14,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # Ephemeral database for the integration suite. Kept separate from the dev
+  # volume so tests can create, wipe and recreate schemas freely, and tmpfs-backed
+  # because nothing in it needs to survive a restart.
+  postgres-test:
+    image: postgres:17.6-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: seo_autopilot_test
+      POSTGRES_USER: seo_autopilot
+      POSTGRES_PASSWORD: seo_autopilot
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    ports: ["127.0.0.1:5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seo_autopilot -d seo_autopilot_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   redis:
     image: redis:8.2-alpine
     command: ["redis-server", "--appendonly", "yes"]
