@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.api.schemas import DeploymentCreate
 from app.core.context import Role, TenantContext
 from app.domain.deployments import MockDeploymentAdapter
+from app.services.governance import GovernanceService
 from app.services.proposals import ProposalService
 from tests.conftest import requires_database
 
@@ -575,3 +576,127 @@ async def test_a_receipt_is_never_left_pending_when_the_adapter_fails(
                 {"tenant_id": chain.tenant_id},
             )
         ).scalar_one() == 0
+
+
+def governance(session, chain: Chain, role: Role = Role.OWNER) -> GovernanceService:
+    return GovernanceService(
+        session,
+        TenantContext(
+            tenant_id=chain.tenant_id,
+            actor_id=chain.approver_id,
+            role=role,
+            trace_id="integration",
+        ),
+    )
+
+
+async def test_rollback_without_a_connector_is_refused_not_recorded(
+    tenant_session_factory, chain
+) -> None:
+    """The placeholder's one virtue was honesty; keep it.
+
+    Writing a receipt for an undo nobody performed is worse than refusing,
+    because the site's history would then show the change reversed.
+    """
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await deploy(session, chain, key="rollback-none-01")
+        with pytest.raises(HTTPException) as error:
+            await governance(session, chain).rollback_deployment(chain.proposal_id)
+        assert error.value.detail == "rollback_connector_not_configured"
+        assert (
+            await session.execute(
+                text("SELECT count(*) FROM rollback_receipt WHERE tenant_id=:tenant_id"),
+                {"tenant_id": chain.tenant_id},
+            )
+        ).scalar_one() == 0
+
+
+async def test_a_rollback_leaves_a_receipt_and_retires_the_deployment(
+    tenant_session_factory, chain
+) -> None:
+    async with tenant_session_factory(chain.tenant_id) as session:
+        receipt = await deploy(session, chain, key="rollback-real-01")
+        rollback = await governance(session, chain).rollback_deployment(
+            chain.proposal_id, "canary failed", MockDeploymentAdapter("mock")
+        )
+
+        assert rollback.status == "applied"
+        assert rollback.deployment_receipt_id == receipt.id
+        assert rollback.restored_hash == hashlib.sha256(BEFORE_CONTENT.encode()).hexdigest()
+        assert "canary failed" in rollback.notes
+
+        # The deployment must stop reading 'applied', or the history shows a
+        # change that is no longer in force.
+        assert (
+            await session.execute(
+                text("SELECT status FROM deployment_receipt WHERE id=:id"), {"id": receipt.id}
+            )
+        ).scalar_one() == "rolled_back"
+        assert (
+            await session.execute(
+                text("SELECT status FROM proposal WHERE id=:id"), {"id": chain.proposal_id}
+            )
+        ).scalar_one() == "failed"
+
+        # QA scenario 13 wants records, not just an outcome.
+        assert (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM audit_event"
+                    " WHERE tenant_id=:tenant_id AND action='proposal.rolled_back'"
+                ),
+                {"tenant_id": chain.tenant_id},
+            )
+        ).scalar_one() == 1
+        assert (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM outbox_event"
+                    " WHERE aggregate_id=:id AND event_type='proposal.rolled_back.v1'"
+                ),
+                {"id": chain.proposal_id},
+            )
+        ).scalar_one() == 1
+
+
+async def test_rolling_back_twice_returns_the_first_receipt(
+    tenant_session_factory, chain
+) -> None:
+    """A repeated rollback must not open a second revert or a second record."""
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await deploy(session, chain, key="rollback-twice-1")
+        service = governance(session, chain)
+        first = await service.rollback_deployment(
+            chain.proposal_id, "once", MockDeploymentAdapter("mock")
+        )
+        second = await service.rollback_deployment(
+            chain.proposal_id, "again", MockDeploymentAdapter("mock")
+        )
+        assert first.id == second.id
+        assert (
+            await session.execute(
+                text("SELECT count(*) FROM rollback_receipt WHERE tenant_id=:tenant_id"),
+                {"tenant_id": chain.tenant_id},
+            )
+        ).scalar_one() == 1
+
+
+async def test_a_proposal_that_never_deployed_cannot_be_rolled_back(
+    tenant_session_factory, chain
+) -> None:
+    async with tenant_session_factory(chain.tenant_id) as session:
+        with pytest.raises(HTTPException) as error:
+            await governance(session, chain).rollback_deployment(
+                chain.proposal_id, "", MockDeploymentAdapter("mock")
+            )
+        assert error.value.detail == "proposal_has_no_deployment_receipt"
+
+
+async def test_only_an_admin_can_roll_back(tenant_session_factory, chain) -> None:
+    async with tenant_session_factory(chain.tenant_id) as session:
+        await deploy(session, chain, key="rollback-role-01")
+        with pytest.raises(HTTPException) as error:
+            await governance(session, chain, role=Role.EDITOR).rollback_deployment(
+                chain.proposal_id, "", MockDeploymentAdapter("mock")
+            )
+        assert error.value.detail == "insufficient_permissions_to_rollback_deployment"

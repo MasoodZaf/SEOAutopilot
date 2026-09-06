@@ -20,7 +20,12 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from app.domain.deployments import DeploymentManifest, DeploymentRequest, DriftDetectedError
+from app.domain.deployments import (
+    DeploymentManifest,
+    DeploymentRequest,
+    DriftDetectedError,
+    RollbackRequest,
+)
 from app.domain.github_adapter import (
     GitHubDeploymentAdapter,
     GitHubDeploymentError,
@@ -76,6 +81,14 @@ class FakeGitHub:
         self.commits: list[dict[str, Any]] = []
         self.fail = fail or {}
         self.next_pull_number = 41
+        self.closed: list[int] = []
+
+    def merge(self, number: int) -> None:
+        """Mark a pull request merged, as a human clicking the button would."""
+        for pull in self.pulls:
+            if pull["number"] == number:
+                pull["merged_at"] = "2026-09-06T00:00:00Z"
+                pull["state"] = "closed"
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -86,6 +99,23 @@ class FakeGitHub:
         for fragment, status in self.fail.items():
             if fragment in path:
                 return httpx.Response(status, json={"message": "forced"})
+
+        if request.method == "GET" and "/pulls/" in path:
+            number = int(path.rsplit("/", 1)[-1])
+            for pull in self.pulls:
+                if pull["number"] == number:
+                    return httpx.Response(200, json=pull)
+            return httpx.Response(404, json={"message": "Not Found"})
+
+        if request.method == "PATCH" and "/pulls/" in path:
+            number = int(path.rsplit("/", 1)[-1])
+            body = json.loads(request.content)
+            if body.get("state") == "closed":
+                self.closed.append(number)
+                for pull in self.pulls:
+                    if pull["number"] == number:
+                        pull["state"] = "closed"
+            return httpx.Response(200, json={"number": number, "state": "closed"})
 
         if request.method == "GET" and path.endswith("/pulls"):
             head = request.url.params.get("head", "")
@@ -329,3 +359,104 @@ async def test_the_pull_request_body_carries_the_approval_trail() -> None:
     assert request.manifest.base_hash in body
     assert request.manifest.author_id in body
     assert request.target_path in body
+
+
+def rollback_request(pull_number: int | None = 42, notes: str = "") -> RollbackRequest:
+    request = make_request()
+    manifest: dict[str, Any] = dict(request.manifest.to_dict())
+    if pull_number is not None:
+        manifest["pull_request_number"] = pull_number
+    return RollbackRequest(
+        tenant_id=request.tenant_id,
+        site_id=request.site_id,
+        proposal_id=request.proposal_id,
+        target_path=request.target_path,
+        before_content=LIVE,
+        deployed_hash=compute_content_hash(NEW),
+        external_ref=f"https://github.com/{TARGET.slug}/pull/{pull_number}",
+        manifest_json=manifest,
+        notes=notes,
+    )
+
+
+async def test_rolling_back_an_open_pull_request_just_closes_it() -> None:
+    """Nothing reached the base branch, so closing it undoes everything."""
+    fake = FakeGitHub()
+    adapter, client = adapter_for(fake)
+    async with client:
+        deployed = await adapter.deploy(make_request())
+        number = deployed.manifest_json["pull_request_number"]
+        result = await adapter.rollback(rollback_request(number))
+
+    assert result.status == "applied"
+    assert result.detail == "pull_request_closed_before_merge"
+    assert result.restored_hash == compute_content_hash(LIVE)
+    # Closing is enough; a revert branch would be noise on an unmerged change.
+    assert len(fake.pulls) == 1
+    assert len(fake.commits) == 1
+    assert fake.closed == [number]
+
+
+async def test_rolling_back_a_merged_pull_request_opens_a_revert() -> None:
+    """The change is in the base branch, so undoing it takes another commit."""
+    fake = FakeGitHub()
+    adapter, client = adapter_for(fake)
+    async with client:
+        deployed = await adapter.deploy(make_request())
+        number = deployed.manifest_json["pull_request_number"]
+        fake.merge(number)
+        result = await adapter.rollback(rollback_request(number, notes="canary failed"))
+
+    assert result.status == "applied"
+    assert result.detail == "revert_pull_request_opened_not_merged"
+    assert result.restored_hash == compute_content_hash(LIVE)
+    assert len(fake.pulls) == 2
+
+    revert = fake.pulls[-1]
+    assert revert["title"].startswith("Revert SEO:")
+    # The reviewer has to know the undo is not in force yet.
+    assert "not merged" in revert["body"].lower()
+    assert "canary failed" in revert["body"]
+
+    # And the revert commit restores the old content, not the new.
+    restored = base64.b64decode(fake.commits[-1]["content"]).decode()
+    assert restored == LIVE
+
+
+async def test_the_adapter_never_merges_anything() -> None:
+    """Rollback is not the moment to grant merge authority."""
+    fake = FakeGitHub()
+    adapter, client = adapter_for(fake)
+    async with client:
+        deployed = await adapter.deploy(make_request())
+        number = deployed.manifest_json["pull_request_number"]
+        fake.merge(number)
+        await adapter.rollback(rollback_request(number))
+
+    assert not any(path.endswith("/merge") for _, path in fake.calls)
+    assert not any(method == "DELETE" for method, _ in fake.calls)
+
+
+async def test_rolling_back_twice_reuses_the_open_revert() -> None:
+    fake = FakeGitHub()
+    adapter, client = adapter_for(fake)
+    async with client:
+        deployed = await adapter.deploy(make_request())
+        number = deployed.manifest_json["pull_request_number"]
+        fake.merge(number)
+        first = await adapter.rollback(rollback_request(number))
+        second = await adapter.rollback(rollback_request(number))
+
+    assert first.external_ref == second.external_ref
+    assert second.detail == "revert_pull_request_already_open"
+    assert len(fake.pulls) == 2
+
+
+async def test_a_receipt_without_a_pull_request_number_cannot_be_rolled_back() -> None:
+    """Better to refuse than to guess which pull request to undo."""
+    fake = FakeGitHub()
+    adapter, client = adapter_for(fake)
+    async with client:
+        with pytest.raises(GitHubDeploymentError, match="github_rollback_no_pull_request"):
+            await adapter.rollback(rollback_request(pull_number=None))
+    assert fake.calls == []

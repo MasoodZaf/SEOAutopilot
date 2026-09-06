@@ -669,6 +669,7 @@ class RollbackReceiptRead(BaseModel):
     status: str
     rolled_back_at: datetime
     notes: str
+    external_ref: str
 
 
 class RollbackReceiptEnvelope(BaseModel):

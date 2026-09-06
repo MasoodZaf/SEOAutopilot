@@ -35,6 +35,8 @@ from app.domain.deployments import (
     DeploymentRequest,
     DeploymentResult,
     DriftDetectedError,
+    RollbackRequest,
+    RollbackResult,
 )
 from app.domain.proposals import compute_content_hash
 
@@ -225,6 +227,104 @@ class GitHubDeploymentAdapter:
         if opened.status_code != 201:
             raise GitHubDeploymentError(f"github_pull_failed:{opened.status_code}:{head}")
         return self._result(request, opened.json())
+
+    async def rollback(self, request: RollbackRequest) -> RollbackResult:
+        """Undo a deployment, by the only two routes GitHub actually offers.
+
+        An open pull request has changed nothing yet, so closing it is a
+        complete rollback and the honest thing to report. A merged one is in
+        the base branch, and undoing it means another commit -- so this opens a
+        revert pull request restoring the proposal's `before_content` and says
+        so plainly. It does not merge that itself: this adapter has never had
+        merge authority and rollback is not the moment to grant it.
+        """
+        number = request.manifest_json.get("pull_request_number")
+        if not isinstance(number, int):
+            raise GitHubDeploymentError("github_rollback_no_pull_request")
+
+        response = await self._request("GET", f"/repos/{self._target.slug}/pulls/{number}")
+        if response.status_code != 200:
+            raise GitHubDeploymentError(f"github_pull_read_failed:{response.status_code}")
+        pull = response.json()
+
+        if not pull.get("merged_at"):
+            closed = await self._request(
+                "PATCH",
+                f"/repos/{self._target.slug}/pulls/{number}",
+                json={"state": "closed"},
+            )
+            if closed.status_code != 200:
+                raise GitHubDeploymentError(
+                    f"github_pull_close_failed:{closed.status_code}:{number}"
+                )
+            return RollbackResult(
+                status="applied",
+                external_ref=str(pull.get("html_url") or request.external_ref),
+                restored_hash=compute_content_hash(request.before_content),
+                detail="pull_request_closed_before_merge",
+            )
+
+        return await self._open_revert(request, number)
+
+    async def _open_revert(self, request: RollbackRequest, number: int) -> RollbackResult:
+        head = f"{BRANCH_PREFIX}/revert-{request.proposal_id}-{number}"
+
+        existing = await self._existing_pull_request(head)
+        if existing is not None:
+            return RollbackResult(
+                status="applied",
+                external_ref=str(existing.get("html_url") or ""),
+                restored_hash=compute_content_hash(request.before_content),
+                detail="revert_pull_request_already_open",
+            )
+
+        await self._create_branch(head, await self._base_sha())
+        current = await self._current_file(request.target_path)
+        payload: dict[str, Any] = {
+            "message": (
+                f"Revert seo: {request.target_path}\n\n"
+                f"Restores the content proposal {request.proposal_id} replaced.\n"
+                f"Reverts #{number}. {request.notes}".strip()
+            ),
+            "content": base64.b64encode(request.before_content.encode("utf-8")).decode(),
+            "branch": head,
+        }
+        if current is not None:
+            payload["sha"] = current[1]
+        written = await self._request(
+            "PUT", f"/repos/{self._target.slug}/contents/{request.target_path}", json=payload
+        )
+        if written.status_code not in (200, 201):
+            raise GitHubDeploymentError(
+                f"github_revert_commit_failed:{written.status_code}:{head}"
+            )
+
+        opened = await self._request(
+            "POST",
+            f"/repos/{self._target.slug}/pulls",
+            json={
+                "title": f"Revert SEO: {request.target_path}",
+                "head": head,
+                "base": self._target.base_branch,
+                "body": (
+                    f"Rolls back proposal `{request.proposal_id}`, deployed in #{number}.\n\n"
+                    f"Restores `{request.target_path}` to the content recorded on the "
+                    f"proposal before it was changed.\n\n"
+                    f"**This is not merged.** The change is only undone once someone "
+                    f"merges this.\n\n{request.notes}"
+                ).strip(),
+                "maintainer_can_modify": True,
+            },
+        )
+        if opened.status_code != 201:
+            raise GitHubDeploymentError(f"github_revert_pull_failed:{opened.status_code}:{head}")
+        return RollbackResult(
+            status="applied",
+            external_ref=str(opened.json().get("html_url") or ""),
+            restored_hash=compute_content_hash(request.before_content),
+            detail="revert_pull_request_opened_not_merged",
+        )
+
 
     def _result(self, request: DeploymentRequest, pull: dict[str, Any]) -> DeploymentResult:
         return DeploymentResult(

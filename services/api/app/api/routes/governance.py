@@ -1,7 +1,10 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, status
+import httpx
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 
+from app.api.routes.proposals import github_target
 from app.api.schemas import (
     GovernanceSettingsUpdate,
     GovernanceStatusEnvelope,
@@ -11,7 +14,9 @@ from app.api.schemas import (
     RollbackReceiptRead,
 )
 from app.core.auth import TenantContextDependency
+from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
+from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
 from app.services.governance import GovernanceService
 
 router = APIRouter(tags=["governance"])
@@ -111,9 +116,31 @@ async def rollback_proposal_deployment(
     proposal_id: UUID,
     context: TenantContextDependency,
     session: TenantSession,
+    settings: Annotated[Settings, Depends(get_settings)],
     notes: str = Body(default="", embed=True),
 ) -> RollbackReceiptEnvelope:
-    rollback = await GovernanceService(session, context).rollback_deployment(proposal_id, notes)
+    target = github_target(settings)
+    token = settings.github_token
+    if target is None or token is None:
+        # No connector, no rollback. The service refuses rather than recording
+        # an undo that never happened.
+        rollback = await GovernanceService(session, context).rollback_deployment(
+            proposal_id, notes
+        )
+    else:
+        async with httpx.AsyncClient(
+            follow_redirects=False, timeout=httpx.Timeout(20.0)
+        ) as client:
+            try:
+                rollback = await GovernanceService(session, context).rollback_deployment(
+                    proposal_id,
+                    notes,
+                    GitHubDeploymentAdapter(client, target, token.get_secret_value()),
+                )
+            except GitHubDeploymentError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                ) from error
     return RollbackReceiptEnvelope(
         data=RollbackReceiptRead.model_validate(rollback),
         meta={"trace_id": context.trace_id},

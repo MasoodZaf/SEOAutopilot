@@ -52,6 +52,38 @@ class DeploymentResult:
     manifest_json: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class RollbackRequest:
+    """Undo one deployment.
+
+    `before_content` is the proposal's own record of what the file held when it
+    was written, which is what "undo" has to restore -- not whatever is there
+    now, since that may include someone else's later work.
+    """
+
+    tenant_id: UUID
+    site_id: UUID
+    proposal_id: UUID
+    target_path: str
+    before_content: str
+    deployed_hash: str
+    external_ref: str
+    manifest_json: dict[str, Any]
+    notes: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RollbackResult:
+    status: str
+    external_ref: str
+    restored_hash: str
+    detail: str
+
+
+class RollbackAdapter(Protocol):
+    async def rollback(self, request: RollbackRequest) -> RollbackResult: ...
+
+
 class DeploymentAdapter(Protocol):
     async def deploy(self, request: DeploymentRequest) -> DeploymentResult: ...
 
@@ -84,4 +116,13 @@ class MockDeploymentAdapter:
             external_ref=external_ref,
             status="applied",
             manifest_json=request.manifest.to_dict(),
+        )
+
+    async def rollback(self, request: RollbackRequest) -> RollbackResult:
+        """Reports what the real adapter would do, without doing anything."""
+        return RollbackResult(
+            status="applied",
+            external_ref=f"mock://rollback/{request.proposal_id}",
+            restored_hash=hashlib.sha256(request.before_content.encode("utf-8")).hexdigest(),
+            detail="mock_rollback",
         )

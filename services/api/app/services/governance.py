@@ -22,6 +22,7 @@ from app.db.models import (
     RollbackReceipt,
     Site,
 )
+from app.domain.deployments import RollbackAdapter, RollbackRequest
 from app.domain.governance import (
     simulate_policy_on_proposals,
 )
@@ -250,7 +251,12 @@ class GovernanceService:
         await self.session.refresh(run)
         return run
 
-    async def rollback_deployment(self, proposal_id: UUID, notes: str = "") -> RollbackReceipt:
+    async def rollback_deployment(
+        self,
+        proposal_id: UUID,
+        notes: str = "",
+        adapter: RollbackAdapter | None = None,
+    ) -> RollbackReceipt:
         if self.context.role not in ADMIN_ROLES:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -276,7 +282,85 @@ class GovernanceService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="proposal_has_no_deployment_receipt",
             )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="rollback_connector_not_configured",
+        if adapter is None:
+            # Still the honest answer when no connector is wired: refusing beats
+            # writing a receipt that claims an undo nobody performed.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="rollback_connector_not_configured",
+            )
+
+        existing = await self.session.scalar(
+            select(RollbackReceipt).where(
+                RollbackReceipt.tenant_id == self.context.tenant_id,
+                RollbackReceipt.deployment_receipt_id == receipt.id,
+            )
         )
+        if existing is not None:
+            return existing
+
+        result = await adapter.rollback(
+            RollbackRequest(
+                tenant_id=self.context.tenant_id,
+                site_id=proposal.site_id,
+                proposal_id=proposal.id,
+                target_path=proposal.target_path,
+                before_content=proposal.before_content,
+                deployed_hash=proposal.proposal_hash,
+                external_ref=receipt.external_ref,
+                manifest_json=dict(receipt.manifest_json or {}),
+                notes=notes,
+            )
+        )
+
+        rollback = RollbackReceipt(
+            tenant_id=self.context.tenant_id,
+            site_id=proposal.site_id,
+            proposal_id=proposal.id,
+            deployment_receipt_id=receipt.id,
+            restored_hash=result.restored_hash,
+            status=result.status,
+            external_ref=result.external_ref,
+            notes=f"{notes} {result.detail}".strip(),
+        )
+        self.session.add(rollback)
+
+        # The deployment receipt has to stop reading 'applied', or the site's
+        # history shows a change that is no longer in force.
+        receipt.status = "rolled_back"
+        proposal.status = "failed"
+        proposal.updated_at = datetime.now(UTC)
+
+        event_payload = {
+            "proposal_id": str(proposal.id),
+            "site_id": str(proposal.site_id),
+            "deployment_receipt_id": str(receipt.id),
+            "external_ref": result.external_ref,
+            "detail": result.detail,
+        }
+        self.session.add(
+            AuditEvent(
+                tenant_id=self.context.tenant_id,
+                actor_type="user",
+                actor_id=str(self.context.actor_id),
+                action="proposal.rolled_back",
+                resource_type="proposal",
+                resource_id=str(proposal.id),
+                trace_id=self.context.trace_id,
+                metadata_json=event_payload,
+                event_hash=stable_hash({**event_payload, "actor_id": str(self.context.actor_id)}),
+            )
+        )
+        self.session.add(
+            OutboxEvent(
+                tenant_id=self.context.tenant_id,
+                event_type="proposal.rolled_back.v1",
+                event_version=1,
+                aggregate_type="proposal",
+                aggregate_id=proposal.id,
+                payload=event_payload,
+            )
+        )
+        await self.session.flush()
+        await self.session.refresh(rollback)
+        return rollback

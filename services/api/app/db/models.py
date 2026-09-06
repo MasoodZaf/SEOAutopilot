@@ -667,6 +667,7 @@ class RollbackReceipt(Base):
     status: Mapped[str] = mapped_column(String(24), default="applied")
     rolled_back_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     notes: Mapped[str] = mapped_column(Text, default="")
+    external_ref: Mapped[str] = mapped_column(Text, default="")
 
 
 class Routine(Base):
