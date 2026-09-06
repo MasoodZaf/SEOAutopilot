@@ -294,12 +294,11 @@ an unset scope both see nothing, and a cross-tenant insert is rejected by the po
   one tenant's deployments consume another's, and the budget counts all of history — leaves all 31
   mocked proposal tests green, and fails the new ones. Writing them also turned up a live defect on
   the deployment path, since fixed.
-- **Calibration has no real coverage at all.** `CalibrationService` has exactly one test, and it
-  asserts that a viewer gets a 403. Everything `create_run` does after the role check — evidence
-  readiness, the idempotency and open-run checks, and item construction from findings and
-  observations — has never been executed by a test, so its idempotency guard is written but
-  unverified. This is the workflow that produces the product's precision evidence, so it needs the
-  same PostgreSQL-backed chain the deployment gate has.
+- ~~Calibration has no real coverage at all.~~ **Done.** `tests/integration/test_calibration_run.py`
+  seeds three pages, each with its own observation, finding and opportunity, and covers evidence
+  readiness, the open-run check, idempotency including the concurrent case, review recording, and
+  tenant isolation of the frozen set. Its idempotency guard is now verified rather than asserted:
+  reverting it fails the concurrency case.
 - **Still on mocks:** cursor scoping.
 
 **Exit:** no service connects as a superuser in production, and every control named in `AGENTS.md`
