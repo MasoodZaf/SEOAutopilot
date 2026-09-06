@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     connector_secret_backend: Literal["disabled", "database_envelope", "managed"] = "disabled"
     connector_secret_encryption_key: SecretStr | None = None
     connector_secret_key_version: str = "local-v1"
+    # GitHub deployment target. Absent by default, so the route keeps failing
+    # closed until a repository and token are configured deliberately.
+    github_repository: str | None = None
+    github_base_branch: str = "main"
+    github_token: SecretStr | None = None
     local_pilot_auth_enabled: bool = False
     local_pilot_auth_token: SecretStr | None = None
     local_pilot_tenant_id: UUID = LOCAL_PILOT_TENANT_ID
