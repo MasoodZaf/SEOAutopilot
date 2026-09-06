@@ -310,14 +310,40 @@ consumers.
 
 ### H2 — Make the evidence real
 
-- Open CodeArc to the crawler (crawler-UA allowlist or a signed bypass token) and complete a full
-  500-page crawl. The current latest crawl is `cancelled`, so today's opportunity set rests on
-  partial evidence.
-- Resolve the opportunity yield question: TheCalcHive produced 1 opportunity from 32 pages and
-  WordKit 1 from 13. Confirm the sites are clean or find the rule that is not firing.
+**The CodeArc evidence set is invalid, and the low yield on the other sites was never the bug.**
+Measured 2026-09-06:
+
+| site | observations | distinct content hashes | findings |
+|---|---|---|---|
+| codearc.net | 2500 | **5** | 1534 |
+| thecalchive.com | 96 | 32 (one per page) | 1 |
+| wordkitapp.com | 26 | 13 (one per page) | 1 |
+
+Every CodeArc page returns HTTP 200 with the same 30-word body, the same site-wide title, and no H1.
+The crawler is recording an app shell or login wall, not the tutorials. Because it is a 200, nothing
+marked the crawl failed. The two sites the crawler can actually see return unique content per page
+and yield one finding each — that is the honest signal, and those sites are close to clean.
+
+So all 1534 CodeArc findings are artifacts: `h1.missing` on 513 of 513 pages, `content.thin` on 513
+of 513, `description.length` on 508. Everything derived from them is equally invalid — the page
+scores, the 100+ opportunities, the frozen top-20 calibration set, the weekly digest, and the advice
+the chat agent gives, which currently reports missing H1s on tutorial pages that in reality have
+them. The system is confidently describing problems that do not exist on the primary pilot site.
+
+**Work:**
+
+- Add an evidence-integrity guard before analysis: a crawl whose distinct `content_hash` count
+  collapses against its page count is a rendering or authentication failure, not a site with
+  identical pages. `content_hash` is already recorded, so the check is cheap. Fail the crawl with a
+  distinct error code rather than analysing it, and cover it in the hostile fixture.
+- Quarantine the existing CodeArc findings, opportunities and calibration set rather than leaving
+  them queryable as if they were real.
+- Only then open CodeArc to the crawler (crawler-UA allowlist, signed bypass token, or server-side
+  rendering for the crawler) and re-crawl. The current latest crawl is also `cancelled`.
 - Run the crawl scenarios against the in-repo hostile fixture rather than only production sites.
 
-**Exit:** a completed full crawl on CodeArc, and an opportunity count defensible per page.
+**Exit:** a completed CodeArc crawl whose distinct content hashes track its page count, and a
+findings count that survives the integrity guard.
 
 ### H3 — Close the change loop
 
