@@ -381,8 +381,13 @@ them. The system is confidently describing problems that do not exist on the pri
 - Still open: give CodeArc a way to be crawled (crawler-UA allowlist, signed bypass token, or
   server-side rendering for the crawler) and re-crawl. Until then the site has no valid evidence, and
   the guard now says so out loud instead of inventing some.
-- Still open: run the crawl scenarios against the in-repo hostile fixture rather than only production
-  sites, including a shell-serving fixture that exercises the guard end to end.
+- ~~Run the crawl scenarios against the in-repo hostile fixture, including a shell-serving fixture
+  that exercises the guard end to end.~~ **Done.** `createShellWallFixture` serves one body under
+  HTTP 200 on every URL, discovered through a sitemap. Crawled through the real engine it yields 120
+  observations, zero fetch errors, every status 200, one content hash, one title and no h1 anywhere —
+  so everything a crawl normally reports says it went well. The 500-page hostile fixture is asserted
+  *not* to trip the guard, since a guard that failed real crawls would be worse than the gap it
+  closes.
 
 **Exit:** a completed CodeArc crawl whose distinct content hashes track its page count, and a
 findings count that survives the integrity guard.
