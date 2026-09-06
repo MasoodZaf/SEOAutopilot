@@ -269,3 +269,16 @@ def test_only_one_finding_per_page() -> None:
     )
     raised = [f for f in findings if f.code == "content.title_omits_url_topic"]
     assert len(raised) == 1
+
+
+def test_the_finding_names_the_word_the_author_wrote_not_its_stem() -> None:
+    """A finding that says a page omits "calculat" reads like a broken auditor."""
+    _score, findings = evaluate_multiagent_page(
+        multiagent_evidence(
+            normalized_url="https://thecalchive.com/networth-calculator",
+            page=page_evidence(title="Net Worth Tracker — Free", h1=["Net Worth Tracker"]),
+        )
+    )
+    raised = next(f for f in findings if f.code == "content.title_omits_url_topic")
+    assert "'calculator'" in raised.summary
+    assert "calculat'" not in raised.summary.replace("calculator'", "")

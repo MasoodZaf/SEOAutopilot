@@ -60,7 +60,7 @@ class MultiAgentPageEvidence:
     performance: PerformanceEvidence = field(default_factory=PerformanceEvidence)
 
 
-def url_topic_tokens(normalized_url: str) -> list[str]:
+def url_topic_tokens(normalized_url: str) -> list[tuple[str, str]]:
     """The subject a URL's last path segment claims for the page.
 
     Only the final path segment, because that names the page rather than its
@@ -88,13 +88,11 @@ def url_topic_tokens(normalized_url: str) -> list[str]:
     trailing = parts[-1]
     if len(trailing) < MIN_URL_TOPIC_LENGTH or trailing in URL_TOPIC_STOPWORDS:
         return []
-    words = [trailing]
     # Stemmed to match the tokens the title and heading are compared with, so
-    # "calculator" in the slug matches "Calculators" in a title.
-    stemmed: list[str] = []
-    for word in words:
-        stemmed.extend(similarity_tokens(word))
-    return stemmed
+    # "calculator" in the slug matches "Calculators" in a title. The word the
+    # author actually wrote is carried alongside it: a finding that tells
+    # somebody their page omits "calculat" reads like a bug in the auditor.
+    return [(stem, trailing) for stem in similarity_tokens(trailing)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,18 +250,18 @@ def evaluate_multiagent_page(evidence: MultiAgentPageEvidence) -> tuple[int, lis
         if title_tokens and h1_tokens and not (title_tokens & h1_tokens):
             add("content.title_h1_mismatch", "low", "Title and H1 share no common thematic keywords.", (0.30, 0.85, 0.45, 0.30, "low"), "content")
 
-    for topic in url_topic_tokens(evidence.normalized_url):
+    for stem, word in url_topic_tokens(evidence.normalized_url):
         # Both, deliberately. A word in the title but not the heading is a
         # weaker signal and a different fix; this is the case where the page
         # never says what its own address says it is.
-        if topic in similarity_tokens(title) or (
-            page.h1 and topic in similarity_tokens(page.h1[0])
+        if stem in similarity_tokens(title) or (
+            page.h1 and stem in similarity_tokens(page.h1[0])
         ):
             continue
         add(
             "content.title_omits_url_topic",
             "medium",
-            f"The URL says this page is about '{topic}', and neither the title nor the H1 says so.",
+            f"The URL says this page is a '{word}', and neither the title nor the H1 says so.",
             (0.60, 0.90, 0.65, 0.25, "low"),
             "content",
         )
