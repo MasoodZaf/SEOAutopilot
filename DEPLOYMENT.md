@@ -88,6 +88,12 @@ $DC exec -T api python -m app.cli.migrate \
 The URL is the **owning** role, not `seo_autopilot_app` — migrations alter
 schema and the application role holds DML only.
 
+The production overlay mounts `infra/migrations` into the API container
+read-only, so the runner reads what was rsynced rather than what the image was
+built with. Without that, a migration-only deploy runs against the previous
+image's copy and reports `would apply 0 migration(s)` — which reads exactly like
+"already up to date".
+
 **One-time, on the existing production database.** It has migrations applied and
 no ledger, so replaying them would fail on the first `CREATE TABLE`. Adopt what
 is already there, then run normally from that point on:

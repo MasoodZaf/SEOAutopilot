@@ -23,6 +23,12 @@ services:
       # verified dump is. A backup directory that stopped being written to looks
       # exactly like a working one until it is needed.
       - ./backups:/backups:ro
+      # The image bakes a copy of the migrations so it is self-describing, and
+      # this shadows it with what was actually deployed. Without the mount a
+      # migration-only deploy runs against the previous image's copy and reports
+      # "0 pending" -- which is indistinguishable from being up to date, and is
+      # the worst possible way to be wrong about a schema.
+      - ./infra/migrations:/app/migrations:ro
 
   worker:
     restart: unless-stopped
