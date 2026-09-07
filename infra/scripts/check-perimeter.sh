@@ -49,6 +49,17 @@ expect /api/metrics 401 "metrics need a scrape credential"
 expect / 200 "public page still serves"
 expect /api/health 200 "the API is actually up"
 
+# The sign-in routes must be served by the web tier. They used to sit under
+# `/api/`, which the proxy sends to the API service, so the public origin
+# answered a FastAPI 404 and the flow could never have completed.
+reached="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/auth/login" || echo 000)"
+if [ "$reached" = "404" ] || [ "$reached" = "000" ]; then
+  echo "[FAIL] sign-in route reaches the web tier: /auth/login -> $reached"
+  FAILED=1
+else
+  echo "[ok]   sign-in route reaches the web tier: /auth/login -> $reached"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
   echo
   echo "The perimeter is not refusing anonymous requests it should refuse."

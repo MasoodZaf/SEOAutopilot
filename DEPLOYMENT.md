@@ -208,8 +208,10 @@ Web (`infra/local/web.env`):
 | `WEB_SESSION_SECRET` | ≥32 chars. Encrypts the session cookie. Not a credential the API trusts. |
 | `APP_BASE_URL` | Public origin, so the redirect URI is right. |
 
-Register `https://seo.oryxenlabs.com/api/auth/callback` as an allowed redirect
-URI with the provider.
+Register `https://seo.oryxenlabs.com/auth/callback` as an allowed redirect URI
+with the provider — **not** `/api/auth/callback`. Everything under `/api/` is
+proxied to the API service, so a callback there reaches FastAPI and 404s; the
+sign-in routes are served by the web tier from `/auth/*`.
 
 ### The first owner
 

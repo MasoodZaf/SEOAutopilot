@@ -8,6 +8,12 @@ import {OAUTH_STATE_COOKIE, seal} from "@/lib/session";
 /**
  * Begin a sign-in.
  *
+ * Served from `/auth/*`, not `/api/auth/*`. The reverse proxy sends everything
+ * under `/api/` to the API service, so these route handlers lived at a path the
+ * public origin never delivered to the web tier -- `/api/auth/callback` answered
+ * `{"detail":"Not Found"}` from FastAPI, which would have made the whole flow
+ * dead on arrival the moment a provider was configured.
+ *
  * The state, the PKCE verifier and the nonce are sealed into one short-lived
  * cookie rather than kept server-side, so the flow survives a restart and needs
  * no shared store. All three are checked on the way back: state proves the

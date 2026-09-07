@@ -47,7 +47,7 @@ function clientSecret(): string {
 
 export function redirectUri(): string {
   const base = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  return `${base.replace(/\/$/, "")}/api/auth/callback`;
+  return `${base.replace(/\/$/, "")}/auth/callback`;
 }
 
 export function isConfigured(): boolean {

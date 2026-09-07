@@ -38,7 +38,7 @@ export default async function LoginPage({
 
       {configured ? (
         <Link
-          href={`/api/auth/login?next=${encodeURIComponent(target)}`}
+          href={`/auth/login?next=${encodeURIComponent(target)}`}
           className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900"
           prefetch={false}
         >

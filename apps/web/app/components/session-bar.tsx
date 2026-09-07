@@ -26,7 +26,7 @@ export async function SessionBar({tone = "dark"}: {tone?: "dark" | "light"}) {
           {session.email || session.name}
         </span>
       </span>
-      <form action="/api/auth/logout" method="post">
+      <form action="/auth/logout" method="post">
         <button
           type="submit"
           className={cn(
