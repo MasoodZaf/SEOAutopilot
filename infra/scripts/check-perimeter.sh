@@ -60,6 +60,60 @@ else
   echo "[ok]   sign-in route reaches the web tier: /auth/login -> $reached"
 fi
 
+# Where sign-in sends people, and where it expects them back.
+#
+# A 307 to the provider is not enough. On 2026-09-07 the first real sign-in
+# completed -- code exchanged, session minted -- and then redirected the browser
+# to the container's own hostname and internal port, because the handler built
+# the URL from the request it had received rather than from the public origin.
+# It read as authentication being broken while it was in fact working.
+#
+# So this asserts the two origins that must be the public one. The redirect URI
+# is also what the provider matches against its registered value, so a drift
+# here is the difference between a working front door and `redirect_uri_mismatch`
+# for everybody.
+location="$(curl -sS -o /dev/null -D - --max-time 20 "$BASE/auth/login" 2>/dev/null \
+  | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' | head -1 || true)"
+
+if [ -z "$location" ]; then
+  echo "[FAIL] sign-in starts an authorization: /auth/login sent no Location"
+  FAILED=1
+else
+  case "$location" in
+    https://accounts.google.com/*)
+      echo "[ok]   sign-in starts an authorization at the provider" ;;
+    *)
+      echo "[FAIL] sign-in starts an authorization: went to $location"
+      FAILED=1 ;;
+  esac
+
+  # The value the provider will compare against its registered redirect URI,
+  # url-decoded far enough to read the origin.
+  redirect="$(printf '%s' "$location" | tr '&' '\n' | sed -n 's/^redirect_uri=//p' \
+    | sed 's/%3A/:/g; s/%2F/\//g')"
+  case "$redirect" in
+    "$BASE"/auth/callback)
+      echo "[ok]   sign-in returns to the public origin: $redirect" ;;
+    *)
+      echo "[FAIL] sign-in returns to $redirect (expected $BASE/auth/callback)"
+      FAILED=1 ;;
+  esac
+fi
+
+# An unauthenticated visit to the control plane must be sent to a login page on
+# this host. The redirect for this lives in proxy.ts, which never executed until
+# an issuer was configured -- so it shipped already broken, pointing into the
+# Docker network, and no test could see it.
+gate="$(curl -sS -o /dev/null -D - --max-time 20 "$BASE/login" 2>/dev/null \
+  | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' | head -1 || true)"
+case "$gate" in
+  ""|"$BASE"/*|/*)
+    echo "[ok]   the login page stays on this origin" ;;
+  *)
+    echo "[FAIL] the login page redirects off-origin: $gate"
+    FAILED=1 ;;
+esac
+
 if [ "$FAILED" -ne 0 ]; then
   echo
   echo "The perimeter is not refusing anonymous requests it should refuse."
