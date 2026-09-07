@@ -102,6 +102,21 @@ is already there, then run normally from that point on:
 $DC exec -T api python -m app.cli.migrate --adopt-through 37 --database-url "..."
 ```
 
+**Adoption is a claim, so check it.** The ledger records which files a database
+has *run*; it cannot record whether they had their effect, and `--adopt-through`
+records them as applied on your word. That word was wrong by one file on
+2026-09-07 — migration `0034` widens two CHECK constraints, had never run on
+production, and was adopted as done. Nothing noticed until the GA4 connector
+answered 500 on its first real request. After adopting, and as a periodic check:
+
+```bash
+$DC exec -T api python -m app.cli.schema_diff --database-url "..."
+```
+
+It builds a reference by running every migration into a scratch database and
+compares every column and CHECK constraint against the live one, so a constraint
+that silently never widened is visible before something trips over it.
+
 It refuses a migration whose file changed after it was applied, naming it: the
 repository would otherwise be a wrong description of the database rather than a
 stale one. If a migration ran but the process died before the ledger was
