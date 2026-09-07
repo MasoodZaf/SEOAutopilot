@@ -22,8 +22,7 @@ export type Session = {
   name: string;
 };
 
-export const SESSION_COOKIE = "seo_autopilot_session";
-export const OAUTH_STATE_COOKIE = "seo_autopilot_oauth";
+export {OAUTH_STATE_COOKIE, SESSION_COOKIE} from "@/lib/cookie-names";
 
 function key(): Buffer {
   const secret = process.env.WEB_SESSION_SECRET;
