@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import {isConfigured} from "@/lib/oidc";
+import {safeNext} from "@/lib/safe-next.mjs";
 
 const MESSAGES: Record<string, string> = {
   provider_refused: "Your identity provider did not complete the sign-in.",
@@ -18,7 +19,7 @@ export default async function LoginPage({
 }) {
   const {error, next} = await searchParams;
   const configured = isConfigured();
-  const target = next && next.startsWith("/") && !next.startsWith("//") ? next : "/pilot";
+  const target = safeNext(next, process.env.APP_BASE_URL ?? "http://localhost:3000");
 
   return (
     <main className="mx-auto flex max-w-md flex-col gap-6 px-6 py-24">

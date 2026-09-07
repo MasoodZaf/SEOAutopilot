@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,6 +138,7 @@ class MembershipService:
         self._may_grant(role)
         membership = await self._membership(membership_id)
         self._refuse_self(membership)
+        self._may_act_on(membership)
         if membership.role == Role.OWNER.value and role != Role.OWNER:
             await self._refuse_last_owner(membership)
         previous = membership.role
@@ -155,6 +156,7 @@ class MembershipService:
         self.context.require(*GRANTING_ROLES)
         membership = await self._membership(membership_id)
         self._refuse_self(membership)
+        self._may_act_on(membership)
         if membership.role == Role.OWNER.value:
             await self._refuse_last_owner(membership)
         # Suspended rather than deleted. The audit trail and every proposal this
@@ -172,9 +174,29 @@ class MembershipService:
     # -- rules -----------------------------------------------------------
 
     def _may_grant(self, role: Role) -> None:
+        """Who may be *made* an owner."""
         if role == Role.OWNER and self.context.role != Role.OWNER:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="only_an_owner_grants_ownership"
+            )
+
+    def _may_act_on(self, membership: TenantMembership) -> None:
+        """Who may be *acted on*, which is the half `_may_grant` does not cover.
+
+        Guarding only the target role stops an admin promoting anybody to owner
+        and stops nothing else: an admin could still demote an owner to viewer,
+        or remove them, provided a second owner existed to satisfy the
+        last-owner rule. That rule keeps *an* owner, not *this* owner.
+
+        So an admin could strip a founder of authority over the tenant that
+        holds the deployment connectors for customer repositories. Not a path to
+        becoming an owner -- `_may_grant` still holds -- but authority
+        destruction and lockout, which is the same hierarchy collapsing from the
+        other end.
+        """
+        if membership.role == Role.OWNER.value and self.context.role != Role.OWNER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="only_an_owner_changes_an_owner"
             )
 
     def _refuse_self(self, membership: TenantMembership) -> None:
@@ -184,16 +206,31 @@ class MembershipService:
             )
 
     async def _refuse_last_owner(self, membership: TenantMembership) -> None:
-        remaining = await self.session.scalar(
-            select(func.count())
-            .select_from(TenantMembership)
-            .where(
-                TenantMembership.tenant_id == self.context.tenant_id,
-                TenantMembership.role == Role.OWNER.value,
-                TenantMembership.status == "active",
-                TenantMembership.id != membership.id,
+        """The invariant that a tenant keeps somebody who can administer it.
+
+        With `_may_act_on` in place this is unreachable one request at a time --
+        only an owner may act on an owner, and nobody may act on themselves, so
+        the acting owner always survives their own change. It is reachable
+        concurrently: two owners demoting each other at the same moment would
+        each count the other as remaining and both commit, leaving none.
+
+        Hence the lock. The rows counted here are locked for the transaction, so
+        the second demotion waits and then sees the truth, or the pair deadlocks
+        and PostgreSQL ends one of them. A bare count could not do that, which
+        is what this looked like before.
+        """
+        remaining = (
+            await self.session.scalars(
+                select(TenantMembership.id)
+                .where(
+                    TenantMembership.tenant_id == self.context.tenant_id,
+                    TenantMembership.role == Role.OWNER.value,
+                    TenantMembership.status == "active",
+                    TenantMembership.id != membership.id,
+                )
+                .with_for_update()
             )
-        )
+        ).all()
         if not remaining:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="tenant_would_have_no_owner"
@@ -201,11 +238,13 @@ class MembershipService:
 
     async def _membership(self, membership_id: UUID) -> TenantMembership:
         membership = await self.session.scalar(
-            select(TenantMembership).where(
+            select(TenantMembership)
+            .where(
                 TenantMembership.id == membership_id,
                 TenantMembership.tenant_id == self.context.tenant_id,
                 TenantMembership.status == "active",
             )
+            .with_for_update()
         )
         if membership is None:
             raise HTTPException(

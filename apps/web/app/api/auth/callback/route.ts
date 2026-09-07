@@ -1,6 +1,7 @@
 import {NextResponse} from "next/server";
 
 import {exchangeCode, readClaims} from "@/lib/oidc";
+import {safeNext} from "@/lib/safe-next.mjs";
 import {OAUTH_STATE_COOKIE, SESSION_COOKIE, open, sameState, seal} from "@/lib/session";
 
 type Pending = {state: string; verifier: string; nonce: string; next: string};
@@ -42,7 +43,12 @@ export async function GET(request: Request) {
     return failure("nonce_mismatch");
   }
 
-  const response = NextResponse.redirect(new URL(pending.next, url.origin));
+  // Re-checked rather than trusted. The cookie is authenticated, so this value
+  // is the one this browser started with -- but the browser was sent here by
+  // somebody, and that somebody chose it.
+  const response = NextResponse.redirect(
+    new URL(safeNext(pending.next, url.origin), url.origin),
+  );
   response.cookies.set(
     SESSION_COOKIE,
     seal({

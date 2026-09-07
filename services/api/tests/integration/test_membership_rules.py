@@ -125,21 +125,86 @@ async def test_an_admin_can_invite_below_ownership(
 async def test_the_last_owner_cannot_be_demoted_or_removed(
     tenant_session_factory, tenant_with_members
 ) -> None:
-    """A tenant one request away from having nobody who can administer it."""
+    """A tenant one request away from having nobody who can administer it.
+
+    This case used to reach the last-owner rule by having an *admin* act on the
+    owner, which the service permitted — so the test was passing because of the
+    defect it sat next to. An admin acting on an owner is now refused earlier
+    and for a better reason, and the invariant is held between that rule and the
+    self-edit rule: only an owner may change an owner, and no one may change
+    themselves, so the acting owner always survives.
+    """
     tenant_id, owner_id, editor_id = tenant_with_members
     async with tenant_session_factory(tenant_id) as session:
         owner_membership = await membership_id(session, tenant_id, owner_id)
-        # An admin acting on the owner, so the refusal is the last-owner rule
-        # rather than the self-edit rule.
-        service = MembershipService(session, context(tenant_id, editor_id, Role.ADMIN))
 
+        admin = MembershipService(session, context(tenant_id, editor_id, Role.ADMIN))
+        with pytest.raises(HTTPException) as by_admin:
+            await admin.change_role(owner_membership, Role.VIEWER, "t")
+        assert by_admin.value.detail == "only_an_owner_changes_an_owner"
+
+        owner = MembershipService(session, context(tenant_id, owner_id, Role.OWNER))
+        with pytest.raises(HTTPException) as by_self:
+            await owner.remove(owner_membership, "t")
+        assert by_self.value.detail == "cannot_change_own_membership"
+
+        role_now = await session.scalar(
+            text("SELECT role FROM tenant_membership WHERE id = :id"),
+            {"id": owner_membership},
+        )
+        assert role_now == "owner"
+
+
+async def test_an_admin_cannot_demote_or_remove_an_owner(
+    tenant_session_factory, tenant_with_members
+) -> None:
+    """The half that guarding only the target role does not cover.
+
+    `_may_grant` stops an admin promoting anybody to owner. On its own it stops
+    nothing else: with a second owner present to satisfy the last-owner rule, an
+    admin could demote a founder to viewer or remove them outright. That rule
+    keeps *an* owner, not *this* owner.
+    """
+    tenant_id, owner_id, editor_id = tenant_with_members
+    async with tenant_session_factory(tenant_id) as session:
+        owner_membership = await membership_id(session, tenant_id, owner_id)
+        editor_membership = await membership_id(session, tenant_id, editor_id)
+
+        # A second owner, so the last-owner rule cannot be what refuses this.
+        owner = MembershipService(session, context(tenant_id, owner_id, Role.OWNER))
+        await owner.change_role(editor_membership, Role.OWNER, "t")
+        await session.flush()
+
+        admin = MembershipService(session, context(tenant_id, uuid4(), Role.ADMIN))
         with pytest.raises(HTTPException) as demote:
-            await service.change_role(owner_membership, Role.VIEWER, "t")
-        assert demote.value.detail == "tenant_would_have_no_owner"
+            await admin.change_role(owner_membership, Role.VIEWER, "t")
+        assert demote.value.status_code == 403
+        assert demote.value.detail == "only_an_owner_changes_an_owner"
 
         with pytest.raises(HTTPException) as remove:
-            await service.remove(owner_membership, "t")
-        assert remove.value.detail == "tenant_would_have_no_owner"
+            await admin.remove(owner_membership, "t")
+        assert remove.value.detail == "only_an_owner_changes_an_owner"
+
+        # The owner is untouched by either attempt.
+        role_now = await session.scalar(
+            text("SELECT role FROM tenant_membership WHERE id = :id"),
+            {"id": owner_membership},
+        )
+        assert role_now == "owner"
+
+
+async def test_an_admin_may_still_manage_everybody_below_an_owner(
+    tenant_session_factory, tenant_with_members
+) -> None:
+    """The guard is about owners, not about admins being powerless."""
+    tenant_id, _, editor_id = tenant_with_members
+    async with tenant_session_factory(tenant_id) as session:
+        editor_membership = await membership_id(session, tenant_id, editor_id)
+        admin = MembershipService(session, context(tenant_id, uuid4(), Role.ADMIN))
+
+        changed = await admin.change_role(editor_membership, Role.DEVELOPER, "t")
+        assert changed.role == "developer"
+        await admin.remove(editor_membership, "t")
 
 
 async def test_a_second_owner_makes_the_first_removable(

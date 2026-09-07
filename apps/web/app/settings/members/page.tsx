@@ -57,6 +57,8 @@ const REASONS: Record<string, string> = {
     "Only an owner can make someone else an owner. Ask an owner to do it.",
   tenant_would_have_no_owner:
     "That would leave this tenant with no owner and nobody able to administer it. Make somebody else an owner first.",
+  only_an_owner_changes_an_owner:
+    "Only an owner can change or remove another owner.",
   cannot_change_own_membership:
     "You cannot change your own membership. Ask another owner or admin.",
   already_a_member: "That address already belongs to somebody in this tenant.",

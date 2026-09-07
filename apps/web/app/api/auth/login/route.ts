@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {randomBytes} from "node:crypto";
 
 import {authorizationUrl, isConfigured, pkce} from "@/lib/oidc";
+import {safeNext} from "@/lib/safe-next.mjs";
 import {OAUTH_STATE_COOKIE, seal} from "@/lib/session";
 
 /**
@@ -17,10 +18,13 @@ export async function GET(request: Request) {
   if (!isConfigured()) {
     return NextResponse.json({detail: "authentication_not_configured"}, {status: 503});
   }
-  const requested = new URL(request.url).searchParams.get("next") ?? "/pilot";
-  // Only same-site paths. An absolute URL here would make this an open
-  // redirector that launders a phishing destination through a trusted host.
-  const next = requested.startsWith("/") && !requested.startsWith("//") ? requested : "/pilot";
+  const url = new URL(request.url);
+  // Resolved against the same parser that will perform the redirect, not
+  // pattern-matched. A string test passes `/\evil.com` and `/<tab>/evil.com`,
+  // both of which the URL parser then resolves to another origin -- which would
+  // make this an open redirector laundering a phishing destination through a
+  // trusted host, after a genuine sign-in the victim just watched succeed.
+  const next = safeNext(url.searchParams.get("next"), url.origin);
 
   const state = randomBytes(24).toString("base64url");
   const nonce = randomBytes(24).toString("base64url");
