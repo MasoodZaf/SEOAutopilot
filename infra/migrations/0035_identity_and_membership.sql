@@ -62,7 +62,10 @@ CREATE TABLE tenant_invitation (
           AND email_normalized = lower(email_normalized)),
   role text NOT NULL
     CHECK(role IN('owner','admin','seo_manager','editor','developer','viewer')),
-  invited_by uuid NOT NULL REFERENCES app_user(id),
+  -- Null for the first owner of a tenant, who by definition has nobody to be
+  -- invited by. That invitation is made by an operator on the host, not through
+  -- the API, and it is the only one without a human behind it.
+  invited_by uuid REFERENCES app_user(id),
   expires_at timestamptz NOT NULL,
   accepted_at timestamptz,
   accepted_user_id uuid REFERENCES app_user(id),

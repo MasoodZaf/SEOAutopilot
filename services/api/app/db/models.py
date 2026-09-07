@@ -1135,7 +1135,9 @@ class TenantInvitation(Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
     email_normalized: Mapped[str] = mapped_column(String(320))
     role: Mapped[str] = mapped_column(String(24))
-    invited_by: Mapped[UUID] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    # Null only for the first owner of a tenant, invited by an operator rather
+    # than by a member, because there is not yet a member to do it.
+    invited_by: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))

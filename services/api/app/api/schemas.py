@@ -1304,3 +1304,62 @@ class AgentTurnEnvelope(BaseModel):
     request: AgentMessageRead
     task: AgentTaskRead | None
     meta: dict[str, str]
+
+
+class MembershipRoleName(StrEnum):
+    OWNER = "owner"
+    ADMIN = "admin"
+    SEO_MANAGER = "seo_manager"
+    EDITOR = "editor"
+    DEVELOPER = "developer"
+    VIEWER = "viewer"
+
+
+class MemberRead(BaseModel):
+    """A person in this tenant. Deliberately carries no provider subject."""
+
+    id: UUID
+    user_id: UUID
+    email: str
+    display_name: str
+    role: str
+    status: str
+    created_at: datetime
+
+
+class MemberCollection(BaseModel):
+    data: list[MemberRead]
+    meta: dict[str, str | int]
+
+
+class InvitationCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: MembershipRoleName
+
+
+class InvitationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    email_normalized: str
+    role: str
+    expires_at: datetime
+    created_at: datetime
+
+
+class InvitationEnvelope(BaseModel):
+    data: InvitationRead
+    meta: dict[str, str]
+
+
+class InvitationCollection(BaseModel):
+    data: list[InvitationRead]
+    meta: dict[str, str | int]
+
+
+class MemberRoleUpdate(BaseModel):
+    role: MembershipRoleName
+
+
+class MemberEnvelope(BaseModel):
+    data: MemberRead
+    meta: dict[str, str]

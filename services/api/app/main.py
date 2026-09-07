@@ -9,6 +9,7 @@ from app.api.routes.governance import router as governance_router
 from app.api.routes.keywords import router as keywords_router
 from app.api.routes.local_pilot import router as local_pilot_router
 from app.api.routes.measurements import router as measurements_router
+from app.api.routes.members import router as members_router
 from app.api.routes.metrics import router as metrics_router
 from app.api.routes.opportunities import calibration_router
 from app.api.routes.opportunities import router as opportunities_router
@@ -35,6 +36,7 @@ app.include_router(metrics_router)
 if settings.app_env == "development":
     app.include_router(local_pilot_router)
 app.include_router(connectors_router)
+app.include_router(members_router)
 app.include_router(sites_router)
 app.include_router(pages_router)
 app.include_router(opportunities_router)
