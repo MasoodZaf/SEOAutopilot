@@ -19,21 +19,20 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from app.gsc.client import SearchAnalyticsRow, SearchConsoleError
-from app.gsc.consumer import (
-    AccessTokenManager,
-    ClaimedSync,
-    CredentialedSearchConsole,
-    decrypt_secret_payload,
-    secret_aad,
-)
-from app.gsc.refresh import (
+from app.connectors.google_oauth import (
     GoogleAuthorizationRevoked,
     GoogleRefreshError,
     GoogleTokenHttpRefresher,
     RefreshedToken,
 )
-from app.gsc.sync import SyncCursor
+from app.connectors.runtime import (
+    AccessTokenManager,
+    ClaimedSync,
+    decrypt_secret_payload,
+    secret_aad,
+)
+from app.gsc.client import SearchAnalyticsRow, SearchConsoleError
+from app.gsc.consumer import CredentialedSearchConsole
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 READONLY = "https://www.googleapis.com/auth/webmasters.readonly"
@@ -213,7 +212,7 @@ def claimed() -> ClaimedSync:
         secret_ref=f"db-envelope://{SECRET}",
         range_start=date(2026, 8, 1),
         range_end=date(2026, 8, 2),
-        cursor=SyncCursor(date(2026, 8, 1), 0),
+        raw_cursor={"day": "2026-08-01", "start_row": 0},
         base_days_completed=0,
         base_rows_seen=0,
         base_rows_upserted=0,
@@ -239,6 +238,7 @@ def manager(pool: FakePool, token_refresher: Any) -> AccessTokenManager:
         encryption_key=KEY,
         key_version=KEY_VERSION,
         refresher=token_refresher,
+        expected_scopes=frozenset({READONLY}),
     )
 
 

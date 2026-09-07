@@ -5,13 +5,13 @@ from datetime import date
 from uuid import UUID
 
 import pytest
-from app.gsc.consumer import (
+from app.connectors.runtime import (
     decode_encryption_key,
     decrypt_secret_payload,
-    parse_cursor,
     require_secret_bytes,
     secret_aad,
 )
+from app.gsc.consumer import parse_cursor
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 TENANT = UUID("019d0000-0000-7000-8000-000000000011")

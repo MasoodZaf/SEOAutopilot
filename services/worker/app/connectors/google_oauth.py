@@ -18,6 +18,9 @@ responses. A refresh Google refuses with `invalid_grant` means the grant is
 genuinely gone -- revoked, or expired through disuse -- and a person does have
 to re-consent. Anything else is Google being unavailable, and treating that as a
 revoked grant would send the tenant to a consent screen they never needed.
+
+Nothing here is specific to Search Console. Both Google connectors renew the
+same way, against the same endpoint, with the same two outcomes to tell apart.
 """
 
 from __future__ import annotations

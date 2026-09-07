@@ -8,13 +8,13 @@ import httpx
 import redis.asyncio as redis
 
 from app.analysis_consumer import AnalysisPool, AnalysisStream, run_analysis_consumer
-from app.gsc.consumer import (
+from app.connectors.google_oauth import GoogleTokenHttpRefresher, TokenRefresher
+from app.connectors.runtime import (
     SyncStream,
     decode_encryption_key,
     require_secret_bytes,
-    run_gsc_consumer,
 )
-from app.gsc.refresh import GoogleTokenHttpRefresher, TokenRefresher
+from app.gsc.consumer import run_gsc_consumer
 from app.notifications.deliver import run_notification_dispatcher
 from app.outbox import DatabaseConnection, StreamClient, dispatch_batch
 from app.pagespeed.client import PageSpeedClient
