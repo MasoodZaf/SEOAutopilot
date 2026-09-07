@@ -149,11 +149,12 @@ async def test_adoption_records_an_existing_schema_without_replaying_it(
     assert "tenant" in await _tables(scratch_database)
 
     ran = await migrate(scratch_database, MIGRATIONS)
+    # Derived from the directory, not written out: a hardcoded list turns every
+    # new migration into a failing test that says nothing about the runner.
     assert ran == [
-        "0035_identity_and_membership.sql",
-        "0036_rollback_reconciliation.sql",
-        "0037_analytics_ingestion.sql",
+        path.name for path in sorted(MIGRATIONS.glob("*.sql")) if int(path.name[:4]) > 34
     ]
+    assert ran, "there is nothing above the adopted sequence to prove anything with"
     assert {"app_user", "analytics_metric"} <= await _tables(scratch_database)
 
 

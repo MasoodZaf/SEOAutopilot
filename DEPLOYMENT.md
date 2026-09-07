@@ -142,6 +142,29 @@ Hourly. A failing check exits non-zero, so it becomes a failed unit and a
 journal entry rather than a number on a dashboard nobody opens. It reads counts
 and ages across tenants on the relay role, never content.
 
+### Timeouts
+
+Migration `0038` bounds how long a statement, a lock wait, or an abandoned
+transaction can last. Every one of these was `0` before it.
+
+| | `seo_autopilot_app` | `seo_autopilot_relay` |
+|---|---|---|
+| `statement_timeout` | 60s | 120s |
+| `lock_timeout` | 10s | 15s |
+| `idle_in_transaction_session_timeout` | 120s | 900s |
+
+Unbounded waits were survivable while nothing took a row lock. Membership
+changes now read the row they modify `FOR UPDATE`, so a request that dies
+holding its transaction open would otherwise block every later membership change
+until somebody noticed and killed the backend.
+
+The relay role's idle limit is deliberately long: the rollback reconciler holds
+that connection while it asks GitHub about each pending revert, and a short
+limit would kill the sweep mid-run and drop its advisory lock. The application
+role's `statement_timeout` is per statement, and both the API and the crawler's
+end-of-crawl batch issue many small ones — a 500-page crawl is 500 upserts, not
+one long insert.
+
 ### Backups
 
 `infra/scripts/backup.sh` dumps, **restores the dump into a scratch database**,
