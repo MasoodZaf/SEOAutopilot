@@ -1,5 +1,6 @@
 import {NextResponse} from "next/server";
 
+import {appOrigin} from "@/lib/app-origin.mjs";
 import {exchangeCode, readClaims} from "@/lib/oidc";
 import {safeNext} from "@/lib/safe-next.mjs";
 import {OAUTH_STATE_COOKIE, SESSION_COOKIE, open, sameState, seal} from "@/lib/session";
@@ -16,8 +17,12 @@ type Pending = {state: string; verifier: string; nonce: string; next: string};
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  // Not `url.origin`: behind the proxy that is the container's own hostname and
+  // internal port, so every redirect below would leave the browser at a name
+  // that resolves nowhere. See lib/app-origin.mjs.
+  const origin = appOrigin(request);
   const failure = (code: string) =>
-    NextResponse.redirect(new URL(`/login?error=${code}`, url.origin));
+    NextResponse.redirect(new URL(`/login?error=${code}`, origin));
 
   if (url.searchParams.get("error")) return failure("provider_refused");
   const code = url.searchParams.get("code");
@@ -47,7 +52,7 @@ export async function GET(request: Request) {
   // is the one this browser started with -- but the browser was sent here by
   // somebody, and that somebody chose it.
   const response = NextResponse.redirect(
-    new URL(safeNext(pending.next, url.origin), url.origin),
+    new URL(safeNext(pending.next, origin), origin),
   );
   response.cookies.set(
     SESSION_COOKIE,

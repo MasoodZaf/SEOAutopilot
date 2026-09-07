@@ -1,6 +1,7 @@
 import {NextResponse} from "next/server";
 import type {NextRequest} from "next/server";
 
+import {appOrigin} from "@/lib/app-origin.mjs";
 import {SESSION_COOKIE} from "@/lib/cookie-names";
 
 /**
@@ -15,11 +16,19 @@ import {SESSION_COOKIE} from "@/lib/cookie-names";
  * So a forged cookie gets past this and is then refused by the API, which
  * verifies the token properly. Nothing here is the security boundary; it exists
  * so that arriving at /pilot signed out is a login page instead of an error.
+ *
+ * The redirect target does not come from `request.url` for the same reason the
+ * callback's no longer does: behind the proxy that is the container's hostname
+ * and internal port. This code path had never run in production -- the guard
+ * below returned early while no issuer was configured -- so it went live
+ * already broken the moment sign-in was switched on. `app-origin.mjs` imports
+ * nothing from node, so it is safe on the edge runtime; if the environment is
+ * not visible there it reads the proxy's forwarding headers instead.
  */
 export function proxy(request: NextRequest) {
   if (!process.env.OIDC_ISSUER_URL) return NextResponse.next();
   if (request.cookies.has(SESSION_COOKIE)) return NextResponse.next();
-  const login = new URL("/login", request.url);
+  const login = new URL("/login", appOrigin(request));
   login.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
   return NextResponse.redirect(login);
 }
