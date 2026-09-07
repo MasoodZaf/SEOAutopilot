@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy import text
@@ -13,6 +14,15 @@ from app.core.context import TenantContext
 settings = get_settings()
 engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+# The sweep identity. It exists only so that "find unfinished work in tenants
+# nobody is currently acting for" has somewhere to run that is not the
+# application role, which by design can see nothing without a tenant scope, and
+# not a superuser. When it is unset the application role is used instead, where
+# the sweep finds nothing at all -- which is the safe way to be misconfigured.
+relay_engine = create_async_engine(
+    settings.relay_database_url or settings.database_url, pool_pre_ping=True, pool_size=2
+)
 
 
 async def get_tenant_session(
@@ -73,4 +83,21 @@ async def authenticating_session() -> AsyncIterator[AsyncSession]:
     """
     async with session_factory() as session, session.begin():
         await session.execute(text("SELECT set_config('app.authenticating', 'on', true)"))
+        yield session
+
+
+@asynccontextmanager
+async def tenant_scoped_session(tenant_id: UUID) -> AsyncIterator[AsyncSession]:
+    """A tenant-scoped transaction outside a request.
+
+    Background work still has to declare whose data it is touching. This is the
+    same shape `get_tenant_session` gives a request -- one transaction, the GUC
+    set inside it, one commit on a clean exit -- for callers that have no
+    request to hang it on.
+    """
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
         yield session

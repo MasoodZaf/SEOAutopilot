@@ -188,6 +188,41 @@ It ENABLEs *and* FORCEs row-level security: these are the first tables created
 since `0027`, and enabling alone would leave them open, because the services own
 them and an owner bypasses its own policies unless they are forced.
 
+## 5a. Rollback reconciliation
+
+Rolling back a **merged** deployment opens a revert pull request and stops. The
+adapter has never had merge authority, so the deployed content stays live until
+a person merges — which is why that state is `rollback_pending` and not
+`rolled_back`.
+
+Nothing used to find out what happened next, so a rollback stayed pending for
+ever. TheCalcHive's emi-calculator has been in exactly that state since
+2026-09-06: revert closed unmerged, change still live, receipt still waiting.
+
+The API now polls for it. Set in `.env.local`:
+
+| Variable | Meaning |
+|---|---|
+| `ROLLBACK_RECONCILE_ENABLED` | `true` to run the sweep. |
+| `ROLLBACK_RECONCILE_INTERVAL_SECONDS` | Default 300, minimum 60. |
+| `RELAY_DATABASE_URL` | The `seo_autopilot_relay` role. Without it the sweep finds nothing. |
+
+Three outcomes, and each means something different about the live site:
+
+| Revert pull request | Rollback | Deployment | Proposal |
+|---|---|---|---|
+| merged | `applied` | `rolled_back` | `failed` |
+| closed without merging | `failed` | back to `applied` | stays `deployed` |
+| still open | `pending`, `reconciled_at` set | unchanged | unchanged |
+
+Anything else — a repository that cannot be read, an expired token — leaves the
+receipt pending and writes the reason to `reconcile_error`. A rate limit must
+not be able to decide a governance outcome.
+
+The sweep holds a Postgres advisory lock, so more than one API process sweeps
+once rather than N times. Transitions are audited with `actor_type='system'`,
+`actor_id='reconciler'`: no person did this, a poll observed that somebody had.
+
 ## 6. Sites and crawls
 
 All three verified by DNS TXT (`_seo-autopilot.<host>`), all Cloudflare-hosted.
@@ -305,6 +340,8 @@ Genuine findings, in priority order:
       once, and confirm the pilot token no longer reaches the API.
 - [ ] **Remove the Caddy basic-auth gate** once sign-in is exercised on the
       host. It is defence in depth now, not the authentication.
+- [ ] **Turn on rollback reconciliation** (§5a) and let it settle the
+      emi-calculator rollback that has been pending since 2026-09-06.
 - [ ] **Discard the 1,996 findings from crawl `42ff78c7`** — they measure the
       renderer bug, not the sites.
 - [ ] Decide whether codearc.net's tutorials should be public. If they stay

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://seo_autopilot:seo_autopilot@localhost:5432/seo_autopilot"
     )
     redis_url: str = "redis://localhost:6379/0"
+    # The identity migration 0027 created for sweeps that look for work across
+    # tenants, before any tenant scope exists. The API needs it for exactly one
+    # thing -- finding unfinished rollbacks -- and falls back to the application
+    # role, where that sweep simply finds nothing, rather than refusing to start.
+    relay_database_url: str | None = None
     app_base_url: str = "http://localhost:3000"
     deployments_enabled: bool = False
     autopilot_enabled: bool = False
@@ -43,6 +48,11 @@ class Settings(BaseSettings):
     google_connectors_enabled: bool = False
     dns_provider_connectors_enabled: bool = False
     routines_enabled: bool = False
+    # Polling GitHub for what happened to revert pull requests. A revert is
+    # merged by a person, so nothing pushes that fact here; without this a
+    # rollback stays `rollback_pending` for ever.
+    rollback_reconcile_enabled: bool = False
+    rollback_reconcile_interval_seconds: int = 300
     notifications_enabled: bool = False
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
@@ -168,6 +178,10 @@ class Settings(BaseSettings):
             # development the only credential is a verified token, and there is
             # no provider to verify one against.
             raise ValueError("OIDC_ISSUER_URL must be configured outside development")
+        if self.rollback_reconcile_enabled and self.rollback_reconcile_interval_seconds < 60:
+            # A tighter loop is a rate limit waiting to happen against an API
+            # that changes state only when a human acts.
+            raise ValueError("ROLLBACK_RECONCILE_INTERVAL_SECONDS must be at least 60")
         if self.local_pilot_auth_enabled:
             if self.app_env != "development":
                 raise ValueError("Local pilot authentication is development-only")
