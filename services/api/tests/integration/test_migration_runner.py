@@ -169,6 +169,20 @@ async def test_a_dry_run_reports_without_touching_the_database(scratch_database)
     assert await _tables(scratch_database) == {"schema_migration"}
 
 
+def test_an_apple_double_file_is_not_a_migration(tmp_path: Path) -> None:
+    """rsync from macOS puts `._name.sql` next to `name.sql` on the host.
+
+    It matches `*.sql`, has no sequence, and stopped a real deploy dead. A
+    hidden file is not a migration.
+    """
+    from app.cli.migrate import discover
+
+    (tmp_path / "0001_real.sql").write_text("SELECT 1;")
+    (tmp_path / "._0001_real.sql").write_bytes(b"\x00\x05\x16\x07resource fork")
+
+    assert [item.filename for item in discover(tmp_path)] == ["0001_real.sql"]
+
+
 def test_the_plan_is_ordered_and_excludes_what_is_recorded() -> None:
     migrations = [
         Migration(MIGRATIONS / "0001_foundation.sql", "a"),

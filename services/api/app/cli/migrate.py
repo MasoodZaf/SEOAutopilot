@@ -72,7 +72,12 @@ class Migration:
 
 
 def discover(directory: Path) -> list[Migration]:
-    files = sorted(directory.glob("*.sql"))
+    # Dotfiles are not migrations. macOS writes AppleDouble `._name.sql`
+    # alongside real files and rsync carries them onto the host, where they
+    # match `*.sql` and look like a migration numbered nothing.
+    files = sorted(
+        path for path in directory.glob("*.sql") if not path.name.startswith(".")
+    )
     if not files:
         raise MigrationError(f"no migrations found in {directory}")
     migrations = [

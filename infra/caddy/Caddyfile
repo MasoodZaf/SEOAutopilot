@@ -16,6 +16,15 @@ seo.oryxenlabs.com {
 	# visitor. Remove this block once Cloudflare Access fronts the app.
 	# Addresses in OPERATOR_IPS (infra/local/caddy.env, gitignored) skip the
 	# gate so the operator's browser is never prompted.
+	#
+	# READ THIS BEFORE EDITING OPERATOR_IPS. The sense is inverted: it lists
+	# who is *exempt*. A broad range here does not widen access for
+	# operators, it removes the gate for everyone -- `not client_ip
+	# 0.0.0.0/0` is never true, so @protected never matches. That was the
+	# live state on 2026-09-07, with /pilot serving an OWNER-token session
+	# to anyone who asked. Nothing detected it, because every piece was
+	# individually correct. infra/scripts/check-perimeter.sh now asserts the
+	# behaviour instead, hourly.
 	@protected {
 		path /pilot* /settings*
 		not client_ip {$OPERATOR_IPS}

@@ -46,10 +46,11 @@ The repo has no git remote on the server; code is synced by rsync from the
 development machine:
 
 ```bash
-rsync -az --delete \
+rsync -az \
   --exclude='.git/' --exclude='node_modules/' --exclude='.next/' \
-  --exclude='.turbo/' --exclude='.venv-*/' --exclude='__pycache__/' \
+  --exclude='.turbo/' --exclude='.venv-*/' --exclude='.venv/' --exclude='__pycache__/' \
   --exclude='*.pyc' --exclude='*.tsbuildinfo' \
+  --exclude='.ruff_cache/' --exclude='.pytest_cache/' --exclude='._*' \
   --exclude='.env.local' --exclude='.env' --exclude='infra/local/' \
   ./ oryxen:/opt/seo-autopilot/
 ```
@@ -334,6 +335,58 @@ the agent answered `blocked / site_frozen` and `POST /v1/routines/{id}/runs`
 returned 409, and a run queued *before* the freeze — the race the worker fix
 exists for — was recorded `skipped / site_frozen` instead of being stranded.
 Afterwards: no site frozen, no run left in `queued`, counts unchanged.
+
+## 6c. Identity, reconciliation and GA4 deploy (2026-09-07)
+
+Migrations `0035`–`0037` applied through the new runner: the ledger was adopted
+at 34, then three ran. 52 tables → 57. `sites=3 pages=964 proposals=51`
+unchanged. Backup taken and **restored into a scratch database** before starting
+(`backups/pre_identity_20260907T061913Z.dump`, counts matched).
+
+Rebuilt and restarted `api`, `worker`, `web`. Caddy reloaded for the fix below.
+
+**Two live defects were found by exercising the deployed system, not by reading
+the diff. Neither was caused by this deploy.**
+
+**1 — the perimeter gate had never been applying.** `/pilot` and `/settings`
+returned 200 to an anonymous request, with no `WWW-Authenticate`. Confirmed from
+a direct origin connection so no allowlist could explain it.
+
+`OPERATOR_IPS` was `0.0.0.0/0,::/0`. That variable lists who may *skip* the
+prompt, so a catch-all does not widen operator access — it removes the gate for
+everyone: `not client_ip 0.0.0.0/0` is never true, so `@protected` never matched
+and `basic_auth` never ran. Since the web tier injects an OWNER-role token,
+anyone who found the URL had full control of all three sites.
+
+Every piece was individually correct — Caddyfile, credentials, trusted proxies —
+which is why nothing caught it. Set to `192.0.2.1/32` (TEST-NET-1, never
+routable), so the exempt list is effectively empty and the directive stays
+valid; the operator now sees the prompt and has the credentials.
+`infra/scripts/check-perimeter.sh` asserts the *behaviour* hourly, because
+reading the config would not have caught this either.
+
+**2 — the web tier could not authenticate to the API.** `web.env` held a
+`LOCAL_PILOT_AUTH_TOKEN` that did not match the API's, so every server-side call
+returned 401. `/settings/connectors` surfaced it as a 500; `/pilot` swallowed
+it and rendered a page with no live data. Aligned with the API's token; both
+pages now render real data for all three sites. This class of mismatch
+disappears once OIDC is on, because the web tier will forward the user's own
+token instead of holding one.
+
+**Rollback reconciliation turned on** (`ROLLBACK_RECONCILE_ENABLED=true`). The
+emi-calculator rollback that had been `rollback_pending` since 2026-09-06
+settled on the first sweep: rollback `failed`, deployment back to `applied`,
+proposal still `deployed` — the revert (PR #3) was closed unmerged, so nothing
+was undone and the records now say so. Audited as `actor_type='system'`,
+`actor_id='reconciler'`, `change_reversed=false`.
+
+**Timers installed.** `seo-autopilot-backup` nightly at 02:30 UTC (first run
+verified: 2.0 MB, restored, tenants=1 sites=3) and `seo-autopilot-health`
+hourly, which runs the perimeter check and the six invariants. Both green.
+
+**Still on `APP_ENV=development`.** The identity code is deployed but no OIDC
+client is registered, so the pilot token remains the credential and the Caddy
+gate — now actually applying — is still what stands in front of it.
 
 ## 7. Audit findings (2026-08-29)
 

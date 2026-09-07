@@ -18,6 +18,11 @@ services:
   # services back on it and silently switch tenant isolation off again.
   api:
     restart: unless-stopped
+    volumes:
+      # Read-only, and only so `app.cli.health` can see how old the newest
+      # verified dump is. A backup directory that stopped being written to looks
+      # exactly like a working one until it is needed.
+      - ./backups:/backups:ro
 
   worker:
     restart: unless-stopped

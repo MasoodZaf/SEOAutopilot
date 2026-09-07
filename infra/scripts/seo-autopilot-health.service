@@ -6,8 +6,11 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/seo-autopilot
-# The relay role, because these counts span tenants. A failing check fails the
-# unit, so `systemctl --failed` and the journal carry it.
+# Two questions, both of which have been answered wrongly in production by
+# something that looked healthy: does the perimeter still refuse an anonymous
+# request, and are the invariants holding. A failure in either fails the unit,
+# so `systemctl --failed` and the journal carry it.
+ExecStart=/opt/seo-autopilot/infra/scripts/check-perimeter.sh
 ExecStart=/bin/sh -c 'docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m app.cli.health --backup-dir /backups'
 StandardOutput=journal
 StandardError=journal
