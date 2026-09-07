@@ -493,6 +493,39 @@ anything the system publishes.
 client is registered, so the pilot token remains the credential and the Caddy
 gate — now actually applying — is still what stands in front of it.
 
+## 6d. GA4 connected (2026-09-07)
+
+The first engagement data the system has ever held. The GA4 property belongs to
+**CodeArc**, not TheCalcHive — so the connector is bound to `codearc.net`
+(connector `1a6bce67`, `properties/546281601`).
+
+A 30-day backfill returned 49 rows across 10 landing pages, 61 sessions and 267
+views for 2026-08-08 to 2026-09-06; 37 of the 49 resolved to a known `page_id`.
+Seven sessions land on `(not set)`, which is GA4's own unattributed bucket, not
+a defect on this side. A daily `analytics_sync` routine runs at 05:20 UTC.
+
+What this proves and what it does not. It proves the whole path — authorize,
+consent, stream-host binding, token exchange, `runReport` paging, upsert, page
+resolution. It does not give the system anything to *measure*: CodeArc's crawl
+findings were quarantined as invalid by `0028`, so there are no proposals on
+that site whose effect this data could show. Measurement still waits on
+TheCalcHive, which has no GA4 property at all.
+
+Three things had to be fixed before any of this was possible, none of them
+visible from reading a single file:
+
+- The authorize route validated its body with `ConnectorAuthorizationCreate`,
+  the Search Console schema, so every valid GA4 property was refused as an
+  "invalid Search Console URL-prefix property".
+- No page called the route, so connecting meant hand-writing an API call.
+- `access_type=offline` was missing, so Google would have issued no refresh
+  token and the renewal path in `server-api.ts` was unreachable code.
+
+**The OAuth callback redirects to `/settings`, which the Caddy gate protects.**
+A successful consent therefore ends on a basic-auth prompt, which reads exactly
+like a failure. It is not: the connector is already `active` by then. Worth
+knowing before the next person cancels out of a flow that had already worked.
+
 ## 7. Audit findings (2026-08-29)
 
 Full report: https://claude.ai/code/artifact/2e4f154d-700c-4754-a997-aea9ebb83b17
