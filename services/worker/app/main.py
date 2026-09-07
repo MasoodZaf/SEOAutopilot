@@ -8,6 +8,7 @@ import httpx
 import redis.asyncio as redis
 
 from app.analysis_consumer import AnalysisPool, AnalysisStream, run_analysis_consumer
+from app.analytics.consumer import run_analytics_consumer
 from app.connectors.google_oauth import GoogleTokenHttpRefresher, TokenRefresher
 from app.connectors.runtime import (
     SyncStream,
@@ -110,8 +111,8 @@ async def run() -> None:
         )
     else:
         logger.warning(
-            "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are unset; Search Console syncs "
-            "cannot renew an access token and will stop working one hour after consent"
+            "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are unset; Search Console and GA4 "
+            "syncs cannot renew an access token and stop working one hour after consent"
         )
 
     background = [
@@ -131,6 +132,16 @@ async def run() -> None:
             encryption_key=connector_key,
             query_hash_key=query_hash_key,
             query_key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
+            refresher=token_refresher,
+        ),
+        # Reads the same stream as the Search Console consumer and claims only
+        # `google_analytics` rows, so neither has to reject the other's work.
+        run_analytics_consumer(
+            pool,
+            cast(SyncStream, streams),
+            f"analytics-worker-{os.getpid()}",
+            encryption_key=connector_key,
+            key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
             refresher=token_refresher,
         ),
         run_pagespeed_consumer(

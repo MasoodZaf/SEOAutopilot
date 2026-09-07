@@ -23,7 +23,7 @@ from app.outbox import encode_event
 from app.routines.runner import (
     SEARCH_CONSOLE_LAG_DAYS,
     SEARCH_CONSOLE_WINDOW_DAYS,
-    _run_search_console_sync,
+    _run_connector_sync,
 )
 
 TENANT = UUID("019d0000-0000-7000-8000-000000000011")
@@ -94,7 +94,17 @@ def active_connector() -> dict[str, Any]:
 
 
 async def run(connection: FakeConnection, today: date = TODAY):
-    return await _run_search_console_sync(connection, TENANT, SITE, ROUTINE, today)
+    return await _run_connector_sync(
+        connection,
+        TENANT,
+        SITE,
+        ROUTINE,
+        today,
+        connector_type="google_search_console",
+        label="search_console",
+        lag_days=SEARCH_CONSOLE_LAG_DAYS,
+        window_days=SEARCH_CONSOLE_WINDOW_DAYS,
+    )
 
 
 @pytest.mark.asyncio

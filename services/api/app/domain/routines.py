@@ -25,6 +25,7 @@ class RoutineKind(StrEnum):
     AI_VISIBILITY_SCAN = "ai_visibility_scan"
     WEEKLY_REPORT = "weekly_report"
     SEARCH_CONSOLE_SYNC = "search_console_sync"
+    ANALYTICS_SYNC = "analytics_sync"
 
 
 class Cadence(StrEnum):

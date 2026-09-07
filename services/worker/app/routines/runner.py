@@ -53,6 +53,13 @@ SEARCH_CONSOLE_LAG_DAYS = 3
 # upserts on the natural key rather than inserting blindly.
 SEARCH_CONSOLE_WINDOW_DAYS = 7
 
+# GA4 settles faster than Search Console -- most of a day is final within about
+# 24 hours -- so the window sits closer to today. The overlap on every run is
+# deliberate: a re-synced day overwrites its own rows by key rather than adding
+# to them, so late-arriving data corrects itself.
+ANALYTICS_LAG_DAYS = 2
+ANALYTICS_WINDOW_DAYS = 7
+
 
 class Pool(Protocol):
     def acquire(self) -> Any: ...
@@ -290,19 +297,26 @@ async def _run_keyword_refresh(
     return "completed", summary, None
 
 
-async def _run_search_console_sync(
+async def _run_connector_sync(
     connection: Any,
     tenant_id: UUID,
     site_id: UUID,
     routine_id: UUID,
     today: date,
+    *,
+    connector_type: str,
+    label: str,
+    lag_days: int,
+    window_days: int,
 ) -> tuple[str, dict[str, Any], str | None]:
-    """Queue the Search Console sync that every other search routine depends on.
+    """Queue the connector sync that the routines reading its evidence depend on.
 
     `keyword_refresh` clusters `search_query`; the weekly report reads
     `search_metric`. Nothing filled either on a schedule, so both skipped with
     "no evidence" on a site whose connector was working perfectly. This is the
-    link that was missing.
+    link that was missing, and GA4 needs exactly the same link for exactly the
+    same reason -- so it is one function with the connector named, rather than a
+    second copy that can drift.
 
     It queues work rather than doing it: the sync worker owns the credential,
     the paging and the checkpointing, and duplicating any of that here would
@@ -311,23 +325,23 @@ async def _run_search_console_sync(
     connector = await connection.fetchrow(
         """
         SELECT id, status, secret_ref FROM connector
-        WHERE tenant_id=$1 AND site_id=$2 AND type='google_search_console'
+        WHERE tenant_id=$1 AND site_id=$2 AND type=$3
         """,
-        tenant_id, site_id,
+        tenant_id, site_id, connector_type,
     )
     if connector is None:
-        return "skipped", {}, "search_console_connector_missing"
+        return "skipped", {}, f"{label}_connector_missing"
     if connector["status"] != "active" or not connector["secret_ref"]:
         # A connector awaiting re-consent is a person's problem, and saying so
         # is more use than a generic failure.
         return (
             "skipped",
             {"connector_status": connector["status"]},
-            "search_console_connector_not_active",
+            f"{label}_connector_not_active",
         )
 
-    range_end = today - timedelta(days=SEARCH_CONSOLE_LAG_DAYS)
-    range_start = range_end - timedelta(days=SEARCH_CONSOLE_WINDOW_DAYS - 1)
+    range_end = today - timedelta(days=lag_days)
+    range_start = range_end - timedelta(days=window_days - 1)
     # Derived from the routine and the window it covers, so a catch-up run for
     # a slot already served finds the sync it made instead of making a second.
     idempotency_key = f"routine:{routine_id}:{range_end.isoformat()}"
@@ -343,7 +357,7 @@ async def _run_search_console_sync(
         return (
             "skipped",
             {"sync_id": str(existing["id"]), "sync_status": existing["status"]},
-            "search_console_sync_already_requested",
+            f"{label}_sync_already_requested",
         )
 
     # Attributed to whoever created the routine, so an ingestion of somebody's
@@ -640,9 +654,22 @@ async def process_run(
                     connection, tenant_id, site_id, run_id
                 )
             elif kind == "search_console_sync":
-                status, summary, skip = await _run_search_console_sync(
+                status, summary, skip = await _run_connector_sync(
                     connection, tenant_id, site_id, routine_id,
                     today or datetime.now(UTC).date(),
+                    connector_type="google_search_console",
+                    label="search_console",
+                    lag_days=SEARCH_CONSOLE_LAG_DAYS,
+                    window_days=SEARCH_CONSOLE_WINDOW_DAYS,
+                )
+            elif kind == "analytics_sync":
+                status, summary, skip = await _run_connector_sync(
+                    connection, tenant_id, site_id, routine_id,
+                    today or datetime.now(UTC).date(),
+                    connector_type="google_analytics",
+                    label="analytics",
+                    lag_days=ANALYTICS_LAG_DAYS,
+                    window_days=ANALYTICS_WINDOW_DAYS,
                 )
             elif kind == "weekly_report":
                 status, summary, skip = await _run_weekly_report(
