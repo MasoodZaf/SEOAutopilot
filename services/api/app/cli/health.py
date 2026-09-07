@@ -84,6 +84,44 @@ WHERE status = 'pending' AND reconciled_at IS NULL
   AND rolled_back_at < now() - interval '1 hour'
 """
 
+# A tenant nobody can administer.
+#
+# `MembershipService` refuses to remove or demote a last owner, and locks the
+# rows it counts so two concurrent demotions cannot each believe the other
+# survives. That protects the transition. It says nothing about a tenant that
+# arrived in this state another way -- a suspension applied directly, a restore
+# from a dump taken mid-change, an owner whose row was written before those
+# rules existed. The result is a tenant whose members cannot be changed by
+# anybody in it, recoverable only by an operator on the host, and it looks like
+# normal operation until somebody needs to grant access.
+OWNERLESS_TENANT_SQL = """
+SELECT count(*) FROM tenant t
+WHERE EXISTS (SELECT 1 FROM tenant_membership m WHERE m.tenant_id = t.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM tenant_membership m
+    WHERE m.tenant_id = t.id AND m.role = 'owner' AND m.status = 'active'
+  )
+"""
+
+# A connector that says it is fine and has not read anything in days.
+#
+# `connectors_needing_attention` catches the honest failures: the provider
+# refused, the connector moved to `error` or `reauthorization_required`, and
+# somebody has to re-consent. This catches the quiet one -- `active`, no error,
+# and simply not syncing, because the routine was never enabled, or was
+# disabled, or the site was archived and the connector left behind.
+#
+# It is the shape of the risk the GA4 connector carries from today: an
+# authorization that returns no refresh token works perfectly for one hour and
+# then stops, and nothing about the connector row changes to say so.
+STALE_CONNECTOR_SQL = """
+SELECT count(*) FROM connector
+WHERE status = 'active'
+  AND type IN ('google_search_console', 'google_analytics')
+  AND (last_sync_at IS NULL OR last_sync_at < now() - make_interval(days => $1))
+  AND created_at < now() - make_interval(days => $1)
+"""
+
 
 async def run_checks(
     database_url: str,
@@ -92,6 +130,7 @@ async def run_checks(
     backup_max_age_hours: int,
     outbox_backlog_minutes: int,
     stale_rollback_days: int,
+    stale_connector_days: int,
 ) -> list[Check]:
     connection = await asyncpg.connect(
         database_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -102,6 +141,8 @@ async def run_checks(
         reauth = await connection.fetchval(REAUTH_SQL)
         stale_rollbacks = await connection.fetchval(STALE_ROLLBACK_SQL, stale_rollback_days)
         unreconciled = await connection.fetchval(UNRECONCILED_SQL)
+        ownerless = await connection.fetchval(OWNERLESS_TENANT_SQL)
+        stale_connectors = await connection.fetchval(STALE_CONNECTOR_SQL, stale_connector_days)
     finally:
         await connection.close()
 
@@ -129,6 +170,18 @@ async def run_checks(
             int(unreconciled or 0),
             0,
             "pending rollbacks nothing has ever checked; the reconciler is not running",
+        ),
+        Check(
+            "tenants_without_an_owner",
+            int(ownerless or 0),
+            0,
+            "a tenant whose membership nobody in it can change; needs an operator",
+        ),
+        Check(
+            "connectors_not_syncing",
+            int(stale_connectors or 0),
+            0,
+            f"active connectors that have read nothing for {stale_connector_days} days",
         ),
         Check(
             "rollbacks_awaiting_a_decision",
@@ -168,6 +221,10 @@ def main() -> int:
     parser.add_argument("--backup-max-age-hours", type=int, default=36)
     parser.add_argument("--outbox-backlog-minutes", type=int, default=15)
     parser.add_argument("--stale-rollback-days", type=int, default=7)
+    # Three days rather than one: a daily sync that misses a single run has
+    # not failed, and a check that cries on every transient outage gets muted,
+    # which is the same as not having it.
+    parser.add_argument("--stale-connector-days", type=int, default=3)
     arguments = parser.parse_args()
     if not arguments.database_url:
         print("refused: --database-url or RELAY_DATABASE_URL is required")
@@ -180,6 +237,7 @@ def main() -> int:
             backup_max_age_hours=arguments.backup_max_age_hours,
             outbox_backlog_minutes=arguments.outbox_backlog_minutes,
             stale_rollback_days=arguments.stale_rollback_days,
+            stale_connector_days=arguments.stale_connector_days,
         )
     )
     for check in checks:
