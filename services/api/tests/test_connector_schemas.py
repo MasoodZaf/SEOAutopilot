@@ -75,3 +75,36 @@ def test_production_refuses_the_backend_that_does_not_exist() -> None:
             search_query_hash_key=SecretStr("q" * 32),
             connector_secret_backend="managed",
         )
+
+
+def test_a_ga4_property_is_accepted_in_both_the_forms_a_person_has() -> None:
+    """The GA4 endpoint used to take the Search Console schema.
+
+    Every valid GA4 reference was refused with "invalid Search Console
+    URL-prefix property", so the connector could not be authorized at all --
+    route right, service right, and the schema between them unable to carry the
+    argument. Both spellings normalise to the one the Admin API uses.
+    """
+    from app.api.schemas import AnalyticsAuthorizationCreate
+
+    for given in ("properties/123456789", "123456789", "  properties/123456789  "):
+        assert (
+            AnalyticsAuthorizationCreate(property_ref=given).property_ref
+            == "properties/123456789"
+        )
+
+
+def test_a_ga4_property_that_is_not_a_property_is_refused() -> None:
+    from app.api.schemas import AnalyticsAuthorizationCreate
+
+    for given in (
+        "sc-domain:example.com",
+        "https://example.com/",
+        "properties/",
+        "properties/abc",
+        "properties/123/streams/4",
+        "",
+        "   ",
+    ):
+        with pytest.raises(ValidationError):
+            AnalyticsAuthorizationCreate(property_ref=given)

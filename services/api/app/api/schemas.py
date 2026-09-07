@@ -384,6 +384,32 @@ class ConnectorRead(BaseModel):
     updated_at: datetime
 
 
+class AnalyticsAuthorizationCreate(BaseModel):
+    """A GA4 property reference, which looks nothing like a Search Console one.
+
+    Both authorize endpoints took `ConnectorAuthorizationCreate`, whose validator
+    accepts `sc-domain:` or an http(s) URL and nothing else -- so every valid GA4
+    reference was refused with "invalid Search Console URL-prefix property", and
+    the connector could not be authorized at all. The route was right, the
+    service was right, and the schema between them could not carry the argument.
+    """
+
+    property_ref: str = Field(min_length=1, max_length=64)
+
+    @field_validator("property_ref")
+    @classmethod
+    def validate_property_ref(cls, value: str) -> str:
+        candidate = value.strip().removeprefix("properties/")
+        if not candidate.isdigit():
+            raise ValueError(
+                "a GA4 property is 'properties/123456789' or the numeric id alone"
+            )
+        # Normalised to the form the Admin API and the connector both use, so a
+        # numeric id typed by a person and a reference pasted from the GA4
+        # console produce the same stored value.
+        return f"properties/{candidate}"
+
+
 class ConnectorAuthorizationCreate(BaseModel):
     property_ref: str = Field(min_length=1, max_length=2048)
 

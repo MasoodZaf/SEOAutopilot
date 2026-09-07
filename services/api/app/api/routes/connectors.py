@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
 from app.api.schemas import (
+    AnalyticsAuthorizationCreate,
     ConnectorAuthorizationCreate,
     ConnectorAuthorizationEnvelope,
     ConnectorAuthorizationRead,
@@ -117,7 +118,7 @@ async def authorize_gsc(
 )
 async def authorize_analytics(
     site_id: UUID,
-    command: ConnectorAuthorizationCreate,
+    command: AnalyticsAuthorizationCreate,
     context: TenantContextDependency,
     session: TenantSession,
 ) -> ConnectorAuthorizationEnvelope:

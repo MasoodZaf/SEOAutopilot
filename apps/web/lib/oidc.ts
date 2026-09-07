@@ -86,6 +86,14 @@ export async function authorizationUrl(state: string, challenge: string, nonce: 
   url.searchParams.set("client_id", clientId());
   url.searchParams.set("redirect_uri", redirectUri());
   url.searchParams.set("scope", "openid email profile");
+  // Ask for a refresh token. Without this Google issues none, the ID token
+  // expires in an hour, and the renewal path in `server-api.ts` can never run --
+  // a signed-in operator would simply be logged out mid-task with no
+  // explanation. `access_type` is Google's spelling and is ignored by providers
+  // that do not use it; `prompt=consent` is what makes Google reissue the
+  // refresh token on a later sign-in rather than only the first one.
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
   url.searchParams.set("state", state);
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("code_challenge", challenge);
