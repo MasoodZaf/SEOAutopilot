@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # Polling GitHub for what happened to revert pull requests. A revert is
     # merged by a person, so nothing pushes that fact here; without this a
     # rollback stays `rollback_pending` for ever.
+    # Prometheus scrape credential. Unset means the metrics endpoint is
+    # development-only, so a deployment that forgets it publishes nothing
+    # rather than publishing its operational posture to the internet.
+    metrics_scrape_token: SecretStr | None = None
+    # The interactive docs and the OpenAPI schema. Off by default and keyed on
+    # its own flag rather than on `app_env`, because the live deployment runs as
+    # `development` until the identity cutover -- an environment check would
+    # exempt the one place that matters.
+    api_docs_enabled: bool = False
     rollback_reconcile_enabled: bool = False
     rollback_reconcile_interval_seconds: int = 300
     notifications_enabled: bool = False
@@ -178,6 +187,11 @@ class Settings(BaseSettings):
             # development the only credential is a verified token, and there is
             # no provider to verify one against.
             raise ValueError("OIDC_ISSUER_URL must be configured outside development")
+        if (
+            self.metrics_scrape_token is not None
+            and len(self.metrics_scrape_token.get_secret_value()) < 32
+        ):
+            raise ValueError("METRICS_SCRAPE_TOKEN must contain at least 32 characters")
         if self.rollback_reconcile_enabled and self.rollback_reconcile_interval_seconds < 60:
             # A tighter loop is a rate limit waiting to happen against an API
             # that changes state only when a human acts.

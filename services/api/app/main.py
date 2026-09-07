@@ -67,8 +67,18 @@ async def lifespan(_: FastAPI):
         await client.aclose()
 
 
+# The schema and the interactive docs are a complete map of every endpoint,
+# parameter and payload, including the governance and deployment routes: useful
+# to hand a developer, unnecessary to hand a stranger. Off unless asked for, and
+# by its own flag rather than by `app_env`, which on the live host still says
+# "development".
 app = FastAPI(
-    title="SEO Autopilot API", version="0.1.0", redoc_url=None, lifespan=lifespan
+    title="SEO Autopilot API",
+    version="0.1.0",
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
+    redoc_url=None,
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,

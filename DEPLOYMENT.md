@@ -101,6 +101,29 @@ repository would otherwise be a wrong description of the database rather than a
 stale one. If a migration ran but the process died before the ledger was
 written, `--mark-applied <filename>` records that one file.
 
+### What the API publishes to the internet
+
+`handle_path /api/*` proxies the whole API, so anything the application serves
+without authentication is public. Until 2026-09-07 that included the OpenAPI
+schema (146 KB), the interactive docs, and the Prometheus metrics — no tenant
+data, but a complete map of every endpoint plus this deployment's operational
+posture, including whether the kill switch is on.
+
+| Path | Now |
+|---|---|
+| `/api/health` | public, deliberately — liveness |
+| `/api/v1/system/readiness` | public; discloses the deployment/autopilot flags. Accepted. |
+| `/api/v1/connectors/oauth/callback` | public, necessarily — Google redirects here |
+| `/api/metrics` | needs `Authorization: Bearer $METRICS_SCRAPE_TOKEN` |
+| `/api/docs`, `/api/openapi.json` | not served unless `API_DOCS_ENABLED=true` |
+| everything else under `/api/v1` | authenticated |
+
+Both new settings are **off by default and keyed on their own flag, not on
+`APP_ENV`**. The live host runs as `development` until the identity cutover, so
+an environment check would have exempted the one deployment that matters — the
+same shape of mistake as `OPERATOR_IPS`. `check-perimeter.sh` asserts all of it
+hourly.
+
 ### Noticing when it is quietly broken
 
 `python -m app.cli.health` counts the things that look like normal operation

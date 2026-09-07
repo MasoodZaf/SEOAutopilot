@@ -36,13 +36,22 @@ expect() {
 expect /pilot 401 "control plane is gated"
 expect /settings/connectors 401 "settings are gated"
 
+# The API's own surface. None of these carry tenant data, but between them they
+# hand a stranger a complete map of every endpoint and this deployment's
+# operational posture, including whether the kill switch is on. They were all
+# public until 2026-09-07.
+expect /api/openapi.json 404 "API schema is not published"
+expect /api/docs 404 "interactive docs are not published"
+expect /api/metrics 401 "metrics need a scrape credential"
+
 # ...and the marketing page must not be, or the check would pass on a site that
 # is simply broken.
 expect / 200 "public page still serves"
+expect /api/health 200 "the API is actually up"
 
 if [ "$FAILED" -ne 0 ]; then
   echo
-  echo "The perimeter is not refusing anonymous requests to the control plane."
+  echo "The perimeter is not refusing anonymous requests it should refuse."
   echo "Check OPERATOR_IPS in infra/local/caddy.env: it lists who may SKIP the"
   echo "prompt, so a broad range there disables the gate for everyone."
   exit 1
