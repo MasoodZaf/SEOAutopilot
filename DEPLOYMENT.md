@@ -420,6 +420,29 @@ that was never a person, so there is nobody to record as the inviter. That is
 the honest answer until the OIDC cutover; the first owner comes from
 `app.cli.bootstrap_owner` either way.
 
+**A credential that was not secret.** `LOCAL_PILOT_REVIEWER_TOKEN` — the second
+operator's bearer token, which exists so the author of a proposal cannot approve
+it — was a 36-character UUID that is also a live `proposal.id`. The config check
+requires 32 characters and a UUID satisfies it, so validation passed while the
+value failed to be a secret at all.
+
+That id appears in the pilot UI, in `audit_event` and `outbox_event` rows, and
+in every database backup, so anyone with read access to a single proposal held
+the reviewer's credential and could approve work they had authored — with
+`DEPLOYMENTS_ENABLED=true`, that reaches customer repositories. Not reachable
+from the internet: listing proposals needs authentication.
+
+Rotated 2026-09-07 to 64 random hex characters; the old value now returns 401
+and the operator token is unaffected. The previous `.env.local` is kept as
+`.env.local.bak-reviewer-*` on the host. Read the new value with:
+
+```bash
+ssh oryxen "grep '^LOCAL_PILOT_REVIEWER_TOKEN=' /opt/seo-autopilot/.env.local"
+```
+
+Both pilot tokens must be generated (`openssl rand -hex 32`), never copied from
+anything the system publishes.
+
 **Still on `APP_ENV=development`.** The identity code is deployed but no OIDC
 client is registered, so the pilot token remains the credential and the Caddy
 gate — now actually applying — is still what stands in front of it.
