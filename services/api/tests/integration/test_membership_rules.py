@@ -219,6 +219,26 @@ async def test_one_live_invitation_per_address(
         assert again.id != invitation
 
 
+async def test_an_inviter_who_is_not_a_user_is_named_as_such(
+    tenant_session_factory, tenant_with_members
+) -> None:
+    """Two constraints can refuse this insert, and they mean opposite things.
+
+    The development pilot token acts as an actor id that was never a person, so
+    `invited_by` has no `app_user` row. Reporting that as "already invited"
+    would send an operator hunting for an invitation that does not exist.
+    """
+    tenant_id, _, _ = tenant_with_members
+    async with tenant_session_factory(tenant_id) as session:
+        # An owner-role context whose actor id is not any `app_user`, which is
+        # exactly the shape of the development pilot token.
+        pilot = MembershipService(session, context(tenant_id, uuid4(), Role.OWNER))
+        with pytest.raises(HTTPException) as raised:
+            await pilot.invite("newcomer@example.com", Role.VIEWER, "t")
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "inviter_is_not_a_signed_in_user"
+
+
 async def test_a_member_from_another_tenant_is_not_found(
     tenant_session_factory, tenant_with_members
 ) -> None:

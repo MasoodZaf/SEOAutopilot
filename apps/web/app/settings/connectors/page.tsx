@@ -21,7 +21,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
   const connector = connectors.data[0];
 
   return (
-    <main className="min-h-dvh bg-slate-50">
+    <main>
       <div className="mx-auto max-w-3xl px-6 py-12">
         <p className="text-sm font-semibold text-emerald-700">SEO Autopilot</p>
         <h1 className="mt-2 text-balance text-3xl font-semibold">Connector status</h1>

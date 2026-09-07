@@ -97,11 +97,10 @@ class MembershipService:
                 self.session.add(invitation)
                 await self.session.flush()
         except IntegrityError as error:
-            # One live invitation per address per tenant. A second would let two
-            # roles race to be the one that is accepted.
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="invitation_already_open"
-            ) from error
+            # Which constraint fired, rather than assuming. Two can, and
+            # reporting a missing inviter as "already invited" would send
+            # somebody looking for an invitation that does not exist.
+            raise _invitation_conflict(error) from error
         self._audit(
             "membership.invited",
             "tenant_invitation",
@@ -236,3 +235,34 @@ class MembershipService:
                 event_hash=stable_hash(payload),
             )
         )
+
+
+def _constraint_of(error: IntegrityError) -> str:
+    """The constraint a database refusal names, however the driver reports it."""
+    named = getattr(error.orig, "constraint_name", None)
+    return named if isinstance(named, str) and named else str(error.orig)
+
+
+def _invitation_conflict(error: IntegrityError) -> HTTPException:
+    """Which rule refused this, rather than assuming it was the obvious one.
+
+    Two constraints can fire on the same insert, and they mean opposite things.
+    Reporting a missing inviter as "already invited" sends somebody looking for
+    an invitation that does not exist.
+    """
+    constraint = _constraint_of(error)
+    if "invited_by" in constraint:
+        # The acting identity has no `app_user` row. That is the development
+        # pilot token: it names an actor id that was never a person, so it
+        # cannot be recorded as having invited anybody. The first owner comes
+        # from `app.cli.bootstrap_owner` instead, which is allowed no inviter.
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="inviter_is_not_a_signed_in_user"
+        )
+    if "tenant_invitation_open_idx" in constraint or "unique" in constraint.lower():
+        # One live invitation per address per tenant. A second would let two
+        # roles race to be the one that is accepted.
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="invitation_already_open"
+        )
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invitation_refused")
