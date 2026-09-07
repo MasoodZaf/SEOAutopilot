@@ -70,35 +70,53 @@ Services: `postgres`, `redis`, `api`, `worker`, `crawler`, `web`, `caddy`.
 All carry `restart: unless-stopped`. Only `caddy` listens publicly; `web` and
 `api` are bound to loopback (`127.0.0.1:3001` and `127.0.0.1:8001`).
 
-Migrations are plain SQL, applied in order. **The loop below is for a fresh
-database only** — the files are not idempotent, so re-running an applied one
-fails on the first `CREATE TABLE`:
+### Migrations
+
+The database records what it has applied, and the runner applies what is
+missing. Naming the range by hand is no longer necessary and no longer
+supported — it was correct exactly as often as somebody counted correctly under
+deploy pressure, and both failure modes were quiet.
 
 ```bash
-for f in infra/migrations/*.sql; do
-  $DC exec -T postgres psql -q -U seo_autopilot -d seo_autopilot \
-    -v ON_ERROR_STOP=1 -f - < "$f" || break
-done
+$DC exec -T api python -m app.cli.migrate --dry-run \
+  --database-url "postgresql://seo_autopilot:$POSTGRES_PASSWORD@postgres:5432/seo_autopilot"
+$DC exec -T api python -m app.cli.migrate \
+  --database-url "postgresql://seo_autopilot:$POSTGRES_PASSWORD@postgres:5432/seo_autopilot"
 ```
 
-For an incremental deploy, name only the new range:
+The URL is the **owning** role, not `seo_autopilot_app` — migrations alter
+schema and the application role holds DML only.
+
+**One-time, on the existing production database.** It has migrations applied and
+no ledger, so replaying them would fail on the first `CREATE TABLE`. Adopt what
+is already there, then run normally from that point on:
 
 ```bash
-for f in infra/migrations/00{20,21,22,23,24,25,26}_*.sql; do
-  $DC exec -T postgres psql -q -U seo_autopilot -d seo_autopilot \
-    -v ON_ERROR_STOP=1 -f - < "$f" || break
-done
+$DC exec -T api python -m app.cli.migrate --adopt-through 37 --database-url "..."
 ```
 
-Back up first; the dump is small enough to be routine:
+It refuses a migration whose file changed after it was applied, naming it: the
+repository would otherwise be a wrong description of the database rather than a
+stale one. If a migration ran but the process died before the ledger was
+written, `--mark-applied <filename>` records that one file.
+
+### Backups
+
+`infra/scripts/backup.sh` dumps, **restores the dump into a scratch database**,
+counts what came back, and only then keeps the file and prunes old ones. An
+untested backup is a belief rather than a recovery plan, and a corrupt file in
+the backup directory is worse than none because it looks like a backup.
 
 ```bash
-mkdir -p backups
-$DC exec -T postgres pg_dump -U seo_autopilot -d seo_autopilot --format=custom \
-  > "backups/seo_autopilot_$(date -u +%Y%m%dT%H%M%SZ).dump"
+cp infra/scripts/seo-autopilot-backup.* /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now seo-autopilot-backup.timer
+systemctl list-timers seo-autopilot-backup
 ```
 
-26 migrations are applied; the database holds 52 tables.
+Nightly at 02:30 UTC, 14 days retained, `Persistent=true` so a host that was off
+takes the backup on the way back rather than skipping a day. Verification
+failure fails the unit, so a broken backup shows up in `systemctl` and the
+journal instead of passing quietly.
 
 ## 4. Secrets
 
@@ -340,6 +358,9 @@ Genuine findings, in priority order:
       once, and confirm the pilot token no longer reaches the API.
 - [ ] **Remove the Caddy basic-auth gate** once sign-in is exercised on the
       host. It is defence in depth now, not the authentication.
+- [ ] **Adopt the migration ledger** on the production database
+      (`--adopt-through 37`, §3) before the next deploy.
+- [ ] **Install the backup timer** (§3) and confirm the first verified run.
 - [ ] **Turn on rollback reconciliation** (§5a) and let it settle the
       emi-calculator rollback that has been pending since 2026-09-06.
 - [ ] **Discard the 1,996 findings from crawl `42ff78c7`** — they measure the
@@ -359,9 +380,10 @@ Genuine findings, in priority order:
   dev machine must be 3.2-compatible or use a newer bash explicitly.
 - **Verification challenges expire after 30 minutes.** Reissue rather than reusing
   stale TXT values; leftovers from earlier local runs will not match.
-- **The migration loop in §3 only works on a fresh database.** The files use bare
-  `CREATE TABLE`, so re-running an applied migration aborts the loop. Name the new
-  range explicitly on an incremental deploy.
+- **Migrations are tracked in `schema_migration` now.** The old advice — name the
+  new range by hand, because re-running an applied file aborts the loop — no
+  longer applies. The runner also refuses a file whose contents changed after it
+  was applied, so edit a migration that has shipped and the next deploy stops.
 - **The rsync excludes miss local tool caches.** `.ruff_cache/` and
   `.pytest_cache/` are shipped to the server on every deploy. Harmless, but add
   them to the exclude list when next editing the command.

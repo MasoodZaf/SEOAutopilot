@@ -1,0 +1,13 @@
+[Unit]
+Description=Verified backup of the SEO Autopilot database
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/seo-autopilot
+ExecStart=/opt/seo-autopilot/infra/scripts/backup.sh --keep-days 14
+# The unit fails loudly when verification fails, so `systemctl list-timers` and
+# the journal show a broken backup rather than a silent one.
+StandardOutput=journal
+StandardError=journal

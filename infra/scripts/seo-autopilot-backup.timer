@@ -1,0 +1,16 @@
+# Install on the host:
+#   cp infra/scripts/seo-autopilot-backup.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now seo-autopilot-backup.timer
+#   systemctl list-timers seo-autopilot-backup
+[Unit]
+Description=Nightly verified backup of the SEO Autopilot database
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+# A host that was off at 02:30 still takes the backup when it comes back, rather
+# than skipping a day silently.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

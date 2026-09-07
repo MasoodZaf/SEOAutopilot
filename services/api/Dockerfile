@@ -4,6 +4,9 @@ WORKDIR /app
 RUN addgroup --system app && adduser --system --ingroup app app
 COPY services/api/pyproject.toml ./pyproject.toml
 COPY services/api/app ./app
+# The schema this image expects, so `python -m app.cli.migrate` can apply what a
+# database is missing without the repository being present on the host.
+COPY infra/migrations ./migrations
 RUN pip install --no-cache-dir .
 USER app
 EXPOSE 8000
