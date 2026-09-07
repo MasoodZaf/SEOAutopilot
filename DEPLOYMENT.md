@@ -384,6 +384,19 @@ was undone and the records now say so. Audited as `actor_type='system'`,
 verified: 2.0 MB, restored, tenants=1 sites=3) and `seo-autopilot-health`
 hourly, which runs the perimeter check and the six invariants. Both green.
 
+**Follow-on the same day.** `/settings/members` added — list who is in the
+tenant, change a role, remove behind a confirmation step, invite an address,
+revoke an unclaimed invitation — reachable from a new Settings nav. The weekly
+report gained an engagement section from GA4 (`REPORT_SCHEMA_VERSION` 2), kept
+strictly separate from the Search Console section. Deployed and verified: page
+renders, 401 through the gate, no errors, all six invariants pass.
+
+Inviting from the app while the deployment still uses the operator token
+returns `inviter_is_not_a_signed_in_user` — the pilot token names an actor id
+that was never a person, so there is nobody to record as the inviter. That is
+the honest answer until the OIDC cutover; the first owner comes from
+`app.cli.bootstrap_owner` either way.
+
 **Still on `APP_ENV=development`.** The identity code is deployed but no OIDC
 client is registered, so the pilot token remains the credential and the Caddy
 gate — now actually applying — is still what stands in front of it.
@@ -436,8 +449,9 @@ Genuine findings, in priority order:
       first run — the pending emi-calculator rollback will be one of them.
 - [ ] **Turn on rollback reconciliation** (§5a) and let it settle the
       emi-calculator rollback that has been pending since 2026-09-06.
-- [ ] **Discard the 1,996 findings from crawl `42ff78c7`** — they measure the
-      renderer bug, not the sites.
+- [x] **Discard the findings from crawl `42ff78c7`** — done by migration `0028`.
+      Verified 2026-09-07: all 505 findings from that crawl are `suppressed`,
+      and 3,765 quarantined in total. 14 findings are open across the estate.
 - [ ] Decide whether codearc.net's tutorials should be public. If they stay
       members-only, mark them `noindex` and drop them from the sitemap; leaving
       them crawlable *and* empty is the only bad option.
