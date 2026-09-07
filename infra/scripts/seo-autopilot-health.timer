@@ -1,0 +1,12 @@
+# cp infra/scripts/seo-autopilot-health.* /etc/systemd/system/
+# systemctl daemon-reload && systemctl enable --now seo-autopilot-health.timer
+[Unit]
+Description=Check the SEO Autopilot invariants that fail quietly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

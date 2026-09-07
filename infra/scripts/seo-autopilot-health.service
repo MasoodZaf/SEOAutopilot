@@ -1,0 +1,13 @@
+[Unit]
+Description=SEO Autopilot invariant check
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/seo-autopilot
+# The relay role, because these counts span tenants. A failing check fails the
+# unit, so `systemctl --failed` and the journal carry it.
+ExecStart=/bin/sh -c 'docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m app.cli.health --backup-dir /backups'
+StandardOutput=journal
+StandardError=journal

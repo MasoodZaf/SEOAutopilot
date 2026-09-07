@@ -100,6 +100,24 @@ repository would otherwise be a wrong description of the database rather than a
 stale one. If a migration ran but the process died before the ledger was
 written, `--mark-applied <filename>` records that one file.
 
+### Noticing when it is quietly broken
+
+`python -m app.cli.health` counts the things that look like normal operation
+from outside and are not: runs leased to a worker that died, an outbox nobody is
+draining, connectors that have been asking for re-consent for days, rollbacks
+nothing has ever checked, and a backup directory that stopped being written to.
+
+```bash
+cp infra/scripts/seo-autopilot-health.* /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now seo-autopilot-health.timer
+systemctl --failed          # a failing invariant shows up here
+journalctl -u seo-autopilot-health -n 50
+```
+
+Hourly. A failing check exits non-zero, so it becomes a failed unit and a
+journal entry rather than a number on a dashboard nobody opens. It reads counts
+and ages across tenants on the relay role, never content.
+
 ### Backups
 
 `infra/scripts/backup.sh` dumps, **restores the dump into a scratch database**,
@@ -361,6 +379,8 @@ Genuine findings, in priority order:
 - [ ] **Adopt the migration ledger** on the production database
       (`--adopt-through 37`, §3) before the next deploy.
 - [ ] **Install the backup timer** (§3) and confirm the first verified run.
+- [ ] **Install the health timer** (§3) and clear whatever it reports on the
+      first run — the pending emi-calculator rollback will be one of them.
 - [ ] **Turn on rollback reconciliation** (§5a) and let it settle the
       emi-calculator rollback that has been pending since 2026-09-06.
 - [ ] **Discard the 1,996 findings from crawl `42ff78c7`** — they measure the
