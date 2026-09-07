@@ -133,11 +133,13 @@ def test_notifications_require_a_secret_backend_and_a_managed_one_in_production(
             cursor_signing_key="c" * 32,
             notifications_enabled=True,
         )
-    with pytest.raises(SettingsValidationError, match="managed connector secret backend"):
+    with pytest.raises(SettingsValidationError, match="not implemented"):
         Settings(
             _env_file=None,  # pyright: ignore[reportCallIssue]
             app_env="production",
             cursor_signing_key="c" * 32,
+            oidc_issuer_url="https://issuer.example.com",
+            oidc_audience="seo-autopilot",
             notifications_enabled=True,
-            connector_secret_backend="database_envelope",
+            connector_secret_backend="managed",
         )

@@ -52,6 +52,10 @@ def test_local_pilot_is_rejected_outside_development() -> None:
             _env_file=None,  # pyright: ignore[reportCallIssue]
             app_env="production",
             cursor_signing_key="c" * 32,
+            # A configured provider, so this asserts the pilot-token rule rather
+            # than the one that requires an issuer outside development.
+            oidc_issuer_url="https://issuer.example.com",
+            oidc_audience="seo-autopilot",
             local_pilot_auth_enabled=True,
             local_pilot_auth_token=SecretStr("p" * 32),
         )

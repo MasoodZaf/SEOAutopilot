@@ -128,12 +128,17 @@ class Settings(BaseSettings):
                     "A connector secret backend is required when a connector or notifications "
                     "are enabled"
                 )
-            if (
-                self.app_env in {"staging", "production"}
-                and self.connector_secret_backend != "managed"
-            ):
+            if self.connector_secret_backend == "managed":
+                # This used to be *required* outside development, which made
+                # production unreachable rather than safe: nothing implements a
+                # managed backend, so the only configuration the validator
+                # permitted was one that cannot start. Selecting it now fails
+                # here, loudly, instead of at the first tenant who tries to
+                # connect something.
                 raise ValueError(
-                    "Staging and production require a managed connector secret backend"
+                    "The managed connector secret backend is not implemented; use "
+                    "database_envelope and hold CONNECTOR_SECRET_ENCRYPTION_KEY outside "
+                    "the database"
                 )
             if self.connector_secret_backend == "database_envelope":
                 if not self.connector_secret_encryption_key:

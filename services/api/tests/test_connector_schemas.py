@@ -54,18 +54,24 @@ def test_sync_rejects_future_end_date() -> None:
         )
 
 
-def test_production_rejects_local_database_secret_backend() -> None:
-    with pytest.raises(ValidationError, match="managed connector secret backend"):
+def test_production_refuses_the_backend_that_does_not_exist() -> None:
+    """Production used to *require* `managed`, which nothing implements.
+
+    The rule read as a hardening measure and worked as a prohibition on running
+    in production at all, so the pilot ran with APP_ENV=development on a public
+    host. The envelope backend is now a supported production configuration and
+    asking for the one that was never built fails here instead.
+    """
+    with pytest.raises(ValidationError, match="not implemented"):
         Settings(
             _env_file=None,  # pyright: ignore[reportCallIssue]
             app_env="production",
             cursor_signing_key="c" * 32,
+            oidc_issuer_url="https://issuer.example.com",
+            oidc_audience="seo-autopilot",
             google_connectors_enabled=True,
             google_client_id="client",
             google_client_secret=SecretStr("secret"),
             search_query_hash_key=SecretStr("q" * 32),
-            connector_secret_backend="database_envelope",
-            connector_secret_encryption_key=SecretStr(
-                "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg="
-            ),
+            connector_secret_backend="managed",
         )

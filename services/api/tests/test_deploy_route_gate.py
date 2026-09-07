@@ -76,6 +76,8 @@ async def test_mock_deployments_cannot_be_opted_into_outside_development() -> No
                 google_connectors_enabled=False,
                 dns_provider_connectors_enabled=False,
                 notifications_enabled=False,
+                oidc_issuer_url="https://issuer.example.com",
+                oidc_audience="seo-autopilot",
             )
 
 
