@@ -1069,3 +1069,75 @@ class AgentMessage(Base):
     agent_task_id: Mapped[UUID | None] = mapped_column()
     evidence_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AppUser(Base):
+    """One person, as one identity provider knows them.
+
+    The provider's subject is the identity. Email is a label a provider is
+    allowed to change, so recognising a returning user by it would hand one
+    person's tenants to whoever the address was reassigned to.
+    """
+
+    __tablename__ = "app_user"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject"),
+        UniqueConstraint("email_normalized"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    issuer: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(320))
+    email_normalized: Mapped[str] = mapped_column(String(320))
+    display_name: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TenantMembership(Base):
+    """Whose data a person may see, and as what.
+
+    A verified token proves identity and nothing else. This is the only record
+    that grants authority, and it is per tenant: the same person can be an owner
+    of one and a viewer of another.
+    """
+
+    __tablename__ = "tenant_membership"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id"),
+        UniqueConstraint("id", "tenant_id"),
+        Index("tenant_membership_user_idx", "user_id", "status"),
+        Index("tenant_membership_tenant_idx", "tenant_id", "status"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    invited_by: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TenantInvitation(Base):
+    """How a membership comes to exist.
+
+    Without this the only ways in are first-login-wins or trusting an email
+    domain, and both give a tenant's data to whoever reaches it first.
+    """
+
+    __tablename__ = "tenant_invitation"
+    __table_args__ = (UniqueConstraint("id", "tenant_id"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    email_normalized: Mapped[str] = mapped_column(String(320))
+    role: Mapped[str] = mapped_column(String(24))
+    invited_by: Mapped[UUID] = mapped_column(ForeignKey("app_user.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

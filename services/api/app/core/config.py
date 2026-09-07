@@ -27,7 +27,16 @@ class Settings(BaseSettings):
     app_base_url: str = "http://localhost:3000"
     deployments_enabled: bool = False
     autopilot_enabled: bool = False
+    # Real identity. `oidc_issuer_url` used to select an error string and
+    # nothing else; it now names the provider that issues the tokens this API
+    # accepts. `oidc_audience` is this application's client id, checked against
+    # the token's `aud` so another application's token from the same provider is
+    # not accepted as one of ours. The JWKS location is discovered from the
+    # issuer unless an operator pins it.
     oidc_issuer_url: str | None = None
+    oidc_audience: str | None = None
+    oidc_jwks_uri: str | None = None
+    oidc_jwks_cache_seconds: int = 600
     llm_provider: str = "openai"
     llm_model: str | None = None
     cursor_signing_key: str = LOCAL_CURSOR_KEY
@@ -146,6 +155,19 @@ class Settings(BaseSettings):
                 from app.services.connector_secrets import decode_encryption_key
 
                 decode_encryption_key(self.connector_secret_encryption_key.get_secret_value())
+        if self.oidc_issuer_url is not None:
+            if not self.oidc_issuer_url.startswith("https://"):
+                # An http issuer means the tokens, and the keys used to check
+                # them, cross the network in the clear.
+                raise ValueError("OIDC_ISSUER_URL must be an https URL")
+            if not self.oidc_audience:
+                raise ValueError("OIDC_AUDIENCE is required when an OIDC issuer is configured")
+        if self.app_env in {"staging", "production"} and self.oidc_issuer_url is None:
+            # The condition that made production unreachable is gone, so this is
+            # what stops it becoming reachable *and* unauthenticated: outside
+            # development the only credential is a verified token, and there is
+            # no provider to verify one against.
+            raise ValueError("OIDC_ISSUER_URL must be configured outside development")
         if self.local_pilot_auth_enabled:
             if self.app_env != "development":
                 raise ValueError("Local pilot authentication is development-only")

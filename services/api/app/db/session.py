@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends
@@ -53,3 +54,23 @@ async def get_system_session() -> AsyncIterator[AsyncSession]:
 
 
 SystemSession = Annotated[AsyncSession, Depends(get_system_session)]
+
+
+@asynccontextmanager
+async def authenticating_session() -> AsyncIterator[AsyncSession]:
+    """The window in which a token becomes a tenant, and nothing wider.
+
+    Authentication has the same shape of problem the OAuth callback has: the
+    tenant is what this lookup establishes, so the lookup cannot be scoped by
+    it. It gets the same kind of narrow exception -- `app.authenticating`, which
+    only the policies on `app_user`, `tenant_membership` and `tenant_invitation`
+    accept. Every other table stays closed to this session.
+
+    It is a context manager rather than a request dependency on purpose. A
+    dependency would hold a second pooled connection for the whole request
+    alongside the tenant-scoped one; this returns it as soon as the membership
+    is resolved, before any route runs.
+    """
+    async with session_factory() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.authenticating', 'on', true)"))
+        yield session
