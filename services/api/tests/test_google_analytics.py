@@ -20,7 +20,7 @@ from app.services.google_analytics import (
 
 
 def summaries(*properties: tuple[str, str], next_token: str | None = None) -> dict:
-    payload = {
+    payload: dict[str, object] = {
         "accountSummaries": [
             {
                 "account": "accounts/1",

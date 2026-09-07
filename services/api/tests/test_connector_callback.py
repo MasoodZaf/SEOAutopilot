@@ -43,7 +43,7 @@ class FakeSecretStore:
     def __init__(self) -> None:
         self.payload: dict[str, object] | None = None
 
-    async def store(self, tenant_id, connector_id, provider, payload):
+    async def store(self, tenant_id, connector_id, provider, payload) -> str:
         assert tenant_id == TENANT_ID
         assert connector_id == CONNECTOR_ID
         assert provider == "google_search_console"
@@ -205,7 +205,7 @@ class FakeAnalytics:
 
 
 class AnalyticsSecretStore(FakeSecretStore):
-    async def store(self, tenant_id, connector_id, provider, payload):
+    async def store(self, tenant_id, connector_id, provider, payload) -> str:
         assert provider == "google_analytics"
         self.payload = payload
         return "managed-secret://analytics"
