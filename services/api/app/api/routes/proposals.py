@@ -144,9 +144,10 @@ async def deploy_proposal(
             )
 
     # The mock adapter reports a deployment nobody performed, so reaching it
-    # takes a deliberate opt-in rather than an inference from app_env. The
-    # production host runs app_env=development until real identity lands, and
-    # inferring from it would put the mock one flag flip away from live.
+    # takes a deliberate opt-in rather than an inference from app_env. Identity
+    # has landed, but the host stays on app_env=development until an operator
+    # configures the provider and flips it, so inferring from that value would
+    # still put the mock one flag away from live.
     if command.connector_type != "mock" or not settings.mock_deployments_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

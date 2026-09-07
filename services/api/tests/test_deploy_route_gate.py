@@ -1,9 +1,10 @@
 """Which adapter the deploy route will reach, and under what configuration.
 
-The mock adapter records a deployment that never happened. Production runs
-`app_env=development` until real identity lands, so a gate that infers "this is
-a safe place for a mock" from `app_env` would put the mock one flag flip away
-from the live host. It takes its own opt-in instead.
+The mock adapter records a deployment that never happened. The live host stays
+on `app_env=development` until an operator configures the identity provider and
+moves it, so a gate that infers "this is a safe place for a mock" from `app_env`
+would put the mock one flag flip away from production. It takes its own opt-in
+instead.
 """
 
 from unittest.mock import AsyncMock, patch

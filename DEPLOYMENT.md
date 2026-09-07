@@ -1,6 +1,6 @@
 # Deployment & Pilot Status
 
-Operational record for the hosted pilot. Last updated **2026-09-02**.
+Operational record for the hosted pilot. Last updated **2026-09-07**.
 
 This file is the follow-up point: where the system runs, how to operate it, what
 the first crawl found, and what is still open. No secrets are recorded here —
@@ -107,37 +107,86 @@ Server-only, never in git, all `chmod 600`:
 | File | Holds |
 |---|---|
 | `.env` | `POSTGRES_PASSWORD`, `DOMAIN` |
-| `.env.local` | API/worker runtime config, pilot token, connector keys |
-| `infra/local/web.env` | `API_BASE_URL`, pilot token for the web tier |
+| `.env.local` | API/worker runtime config, OIDC issuer/audience, connector keys |
+| `infra/local/web.env` | `API_BASE_URL`, OIDC client id/secret, `WEB_SESSION_SECRET` |
 | `infra/local/caddy.env` | `BASIC_AUTH_USER`, `BASIC_AUTH_HASH`, `OPERATOR_IPS` |
 
 `infra/local/*.env` and `.env*` are gitignored. Operator IP addresses live in
 `OPERATOR_IPS` specifically to keep them out of version control.
 
-## 5. Access control — read this before changing auth
+## 5. Access control
 
-The app **has no user accounts**. There is no `users` table, no password column,
-no per-user roles; `core/auth.py` verifies a single bearer token and returns a
-hardcoded `Role.OWNER`. `oidc_issuer_url` only selects a 401 error string — OIDC
-is not implemented.
+The app has real identity. `core/oidc.py` verifies an OIDC ID token against the
+configured provider's key set, and `tenant_membership` decides whose data the
+person behind it may act on. A verified token proves who somebody is and grants
+nothing on its own.
 
-Both `config.py` and `auth.py` require `app_env == "development"` for that token
-to work, so the app **cannot run with `APP_ENV=production`** — every authenticated
-route would return 401. This is accepted for a pilot.
+**This replaced the pilot arrangement**, which was: one bearer token compared
+against an environment variable, a hardcoded `Role.OWNER`, and a validator that
+required `app_env == "development"` for any of it to work. `APP_ENV=production`
+therefore did not harden the deployment — it returned 401 on every authenticated
+route, so the public host ran in development mode with Caddy basic auth as its
+only real authentication. That is gone.
 
-Consequence: the web tier injects an OWNER-role token server-side, so anyone who
-reaches `/pilot` has full control. **The perimeter is the only real auth.**
+### What an operator has to set
 
-Current gate (interim, in `infra/caddy/Caddyfile`):
+API (`.env.local`):
 
-- HTTP basic auth on `/pilot*` and `/settings*`
-- Addresses in `OPERATOR_IPS` skip the prompt
-- Cloudflare's published ranges are trusted proxies, so `client_ip` resolves to
-  the real visitor rather than an edge IP
+| Variable | Meaning |
+|---|---|
+| `APP_ENV` | `production`. Refused unless `OIDC_ISSUER_URL` is set. |
+| `OIDC_ISSUER_URL` | The provider, https only. Its discovery document supplies the key set. |
+| `OIDC_AUDIENCE` | This application's client id, checked against the token's `aud`. |
+| `OIDC_JWKS_URI` | Optional. Pins the key set instead of discovering it. |
 
-Planned replacement: **Cloudflare Access**, which gives named identities at the
-door without touching the codebase. Remove the `basic_auth` block once it fronts
-the app.
+Web (`infra/local/web.env`):
+
+| Variable | Meaning |
+|---|---|
+| `OIDC_ISSUER_URL` | Same issuer as the API. |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | The confidential client for the code exchange. |
+| `WEB_SESSION_SECRET` | ≥32 chars. Encrypts the session cookie. Not a credential the API trusts. |
+| `APP_BASE_URL` | Public origin, so the redirect URI is right. |
+
+Register `https://seo.oryxenlabs.com/api/auth/callback` as an allowed redirect
+URI with the provider.
+
+### The first owner
+
+Every membership comes from an invitation and every invitation comes from a
+member, which leaves the first one with nowhere to come from. That case is a
+command on the host, not a route — an endpoint that mints owners would be a way
+into any tenant:
+
+```bash
+$DC exec -T api python -m app.cli.bootstrap_owner \
+  --tenant-slug codearc-pilot --email you@example.com
+```
+
+It refuses a tenant that already has an active owner and writes an audit event
+with `actor_type='operator'`. Everyone after that is invited from the app, by an
+owner or an admin. The invitation is claimed on first sign-in, and only against
+an address the provider marked verified.
+
+### Rules the app enforces
+
+- An admin cannot create an owner; only an owner can.
+- A tenant cannot lose its last owner, by demotion or removal.
+- Nobody edits their own membership.
+- Removal suspends the membership rather than deleting it, so audit rows and
+  proposals that name the user id stay resolvable.
+
+### The perimeter
+
+The Caddy basic-auth gate on `/pilot*` and `/settings*` is now defence in depth
+rather than the authentication itself, and can be removed once sign-in is
+exercised on the host. Cloudflare's published ranges stay trusted proxies so
+`client_ip` resolves to the real visitor.
+
+Migration `0035` adds `app_user`, `tenant_membership` and `tenant_invitation`.
+It ENABLEs *and* FORCEs row-level security: these are the first tables created
+since `0027`, and enabling alone would leave them open, because the services own
+them and an owner bypasses its own policies unless they are forced.
 
 ## 6. Sites and crawls
 
@@ -249,7 +298,13 @@ Genuine findings, in priority order:
       Until then GSC cannot connect and there is no search-demand data, so
       opportunity ranking runs on crawl evidence alone.
 - [ ] **Set Cloudflare SSL mode to Full (strict).**
-- [ ] **Replace basic auth with Cloudflare Access**, then remove the interim gate.
+- [ ] **Register the OIDC client** with the provider and set the four API and
+      web variables in §5, then move the host to `APP_ENV=production`. Until
+      that happens the host still runs in development mode.
+- [ ] **Bootstrap the first owner** with `app.cli.bootstrap_owner`, sign in
+      once, and confirm the pilot token no longer reaches the API.
+- [ ] **Remove the Caddy basic-auth gate** once sign-in is exercised on the
+      host. It is defence in depth now, not the authentication.
 - [ ] **Discard the 1,996 findings from crawl `42ff78c7`** — they measure the
       renderer bug, not the sites.
 - [ ] Decide whether codearc.net's tutorials should be public. If they stay
