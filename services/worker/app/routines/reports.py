@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 TOP_OPPORTUNITY_LIMIT = 10
 
 
@@ -54,6 +54,66 @@ async def _search_totals(
         "impressions": float(row["impressions"]),
         "position": float(row["position"]),
     }
+
+
+async def _engagement_totals(
+    connection: DatabaseConnection, tenant_id: UUID, site_id: UUID, start: date, end: date
+) -> dict[str, float]:
+    """What the visits did, for a window.
+
+    Deliberately not compared against Search Console clicks anywhere. GA4
+    sessions and GSC clicks count different things over different windows with
+    different definitions of a visit, and putting them side by side invites the
+    reader to subtract one from the other and call the remainder a loss.
+    """
+    row = await connection.fetchrow(
+        """
+        SELECT COALESCE(SUM(sessions),0) AS sessions,
+               COALESCE(SUM(engaged_sessions),0) AS engaged_sessions,
+               COALESCE(SUM(key_events),0) AS key_events,
+               COALESCE(SUM(engagement_duration_seconds),0) AS engagement_seconds
+        FROM analytics_metric
+        WHERE tenant_id=$1 AND site_id=$2 AND metric_date BETWEEN $3 AND $4
+        """,
+        tenant_id, site_id, start, end,
+    )
+    if row is None:
+        return {"sessions": 0.0, "engaged_sessions": 0.0, "key_events": 0.0,
+                "engagement_seconds": 0.0}
+    return {
+        "sessions": float(row["sessions"]),
+        "engaged_sessions": float(row["engaged_sessions"]),
+        "key_events": float(row["key_events"]),
+        "engagement_seconds": float(row["engagement_seconds"]),
+    }
+
+
+def _engagement_rate(totals: dict[str, float]) -> float:
+    """Engaged sessions as a share of sessions, or zero when there were none.
+
+    A rate over no sessions is undefined, not zero, but the delta helper needs a
+    number; the section is only rendered at all when sessions exist.
+    """
+    return totals["engaged_sessions"] / totals["sessions"] if totals["sessions"] else 0.0
+
+
+async def _top_landing_pages(
+    connection: DatabaseConnection, tenant_id: UUID, site_id: UUID, start: date, end: date
+) -> list[Any]:
+    return await connection.fetch(
+        """
+        SELECT landing_page,
+               SUM(sessions) AS sessions,
+               SUM(engaged_sessions) AS engaged_sessions,
+               SUM(key_events) AS key_events
+        FROM analytics_metric
+        WHERE tenant_id=$1 AND site_id=$2 AND metric_date BETWEEN $3 AND $4
+        GROUP BY landing_page
+        ORDER BY SUM(sessions) DESC
+        LIMIT 5
+        """,
+        tenant_id, site_id, start, end,
+    )
 
 
 async def build_weekly_digest(
@@ -142,6 +202,19 @@ async def build_weekly_digest(
         tenant_id, site_id, period_start, period_end,
     )
 
+    engagement_current = await _engagement_totals(
+        connection, tenant_id, site_id, period_start, period_end
+    )
+    engagement_previous = await _engagement_totals(
+        connection, tenant_id, site_id, prior_start, prior_end
+    )
+    has_engagement_evidence = engagement_current["sessions"] > 0
+    landing_pages = (
+        await _top_landing_pages(connection, tenant_id, site_id, period_start, period_end)
+        if has_engagement_evidence
+        else []
+    )
+
     payload: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "site": {
@@ -197,6 +270,38 @@ async def build_weekly_digest(
         }
         if has_search_evidence
         else {"available": False, "reason": "no_search_console_evidence_in_window"},
+        # Search Console says a page was shown and clicked. This says what
+        # happened next, which is the half that decides whether ranking a page
+        # higher was worth doing. The two are reported separately and never
+        # subtracted from one another.
+        "engagement": {
+            "available": True,
+            "sessions": _delta(
+                engagement_current["sessions"], engagement_previous["sessions"]
+            ),
+            "engaged_sessions": _delta(
+                engagement_current["engaged_sessions"],
+                engagement_previous["engaged_sessions"],
+            ),
+            "engagement_rate": _delta(
+                _engagement_rate(engagement_current), _engagement_rate(engagement_previous)
+            ),
+            "key_events": _delta(
+                engagement_current["key_events"], engagement_previous["key_events"]
+            ),
+            "top_landing_pages": [
+                {
+                    "landing_page": row["landing_page"],
+                    "sessions": float(row["sessions"]),
+                    "engaged_sessions": float(row["engaged_sessions"]),
+                    "key_events": float(row["key_events"]),
+                }
+                for row in landing_pages
+            ],
+            "interpretation": "period_over_period_association",
+        }
+        if has_engagement_evidence
+        else {"available": False, "reason": "no_analytics_evidence_in_window"},
         "performance": {
             "available": bool(performance and performance["sampled_pages"]),
             "average_score": float(performance["performance_score"])
