@@ -1,5 +1,6 @@
 import secrets
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -227,9 +228,33 @@ async def google_oauth_callback(
             client_secret=settings.google_client_secret.get_secret_value(),
             redirect_uri=settings.google_oauth_redirect_uri,
         )
-        await ConnectorOAuthCallbackService(
-            session, provider, secret_store, AnalyticsAdminHttpClient(http_client)
-        ).complete_authorization(state, code, secrets.token_hex(16))
+        try:
+            await ConnectorOAuthCallbackService(
+                session, provider, secret_store, AnalyticsAdminHttpClient(http_client)
+            ).complete_authorization(state, code, secrets.token_hex(16))
+        except HTTPException as refusal:
+            # A person is at the end of this redirect, not a client library.
+            #
+            # Raising here renders `{"detail":"search_console_property_not_authorized"}`
+            # as a bare JSON document at an api/v1 URL, which is where a real
+            # connection attempt ended on 2026-09-08: a correct, specific,
+            # actionable refusal, shown in a form that offers no way to act on
+            # it and no way back to the page that started the flow.
+            #
+            # The settings page already knows how to say what each of these
+            # means, so the refusal is handed to it. The status code is not
+            # lost -- it was never seen by anything that reads status codes.
+            # Only a refusal is redirected; an unexpected failure still raises,
+            # because turning a 500 into a tidy error message on a page is how
+            # a broken deployment comes to look merely unlucky.
+            detail = refusal.detail if isinstance(refusal.detail, str) else "connector_refused"
+            return RedirectResponse(
+                url=(
+                    f"{settings.app_base_url.rstrip('/')}/settings/connectors"
+                    f"?error={quote(detail, safe='')}"
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
     return RedirectResponse(
         url=f"{settings.app_base_url.rstrip('/')}/settings/connectors?google=connected",
         status_code=status.HTTP_303_SEE_OTHER,

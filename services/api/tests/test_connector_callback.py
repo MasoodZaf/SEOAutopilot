@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -348,3 +348,86 @@ async def test_a_ga4_callback_without_an_analytics_client_fails_closed() -> None
 
     assert captured.value.status_code == 503
     assert captured.value.detail == "google_analytics_connector_not_configured"
+
+
+# -- the route's own behaviour, which is not the service's ---------------------
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_handed_to_the_page_that_started_the_flow() -> None:
+    """A person is at the end of this redirect, not a client library.
+
+    On 2026-09-08 a real connection attempt ended on
+    `{"detail":"search_console_property_not_authorized"}` rendered as a bare
+    JSON document at an /api/v1 URL. The refusal was correct, specific and
+    actionable, and arrived in a form that offered no way to act on it and no
+    way back. The settings page already knows what each of these codes means.
+    """
+    from app.api.routes import connectors as route
+
+    settings = MagicMock()
+    settings.google_connectors_enabled = True
+    settings.connector_secret_backend = "database_envelope"
+    settings.connector_secret_encryption_key = MagicMock(
+        get_secret_value=MagicMock(return_value="0" * 44)
+    )
+    settings.connector_secret_key_version = "v1"
+    settings.google_client_id = "client"
+    settings.google_client_secret = MagicMock(get_secret_value=MagicMock(return_value="secret"))
+    settings.google_oauth_redirect_uri = "https://app.example.com/api/v1/connectors/oauth/callback"
+    settings.app_base_url = "https://app.example.com"
+
+    refusal = HTTPException(status_code=409, detail="search_console_property_not_authorized")
+    with (
+        patch.object(route, "get_settings", return_value=settings),
+        patch.object(route, "decode_encryption_key", return_value=b"k" * 32),
+        patch.object(route, "DatabaseEnvelopeSecretStore", MagicMock()),
+        patch.object(
+            route.ConnectorOAuthCallbackService,
+            "complete_authorization",
+            new=AsyncMock(side_effect=refusal),
+        ),
+    ):
+        response = await route.google_oauth_callback(AsyncMock(), state="s" * 32, code="c")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        "https://app.example.com/settings/connectors"
+        "?error=search_console_property_not_authorized"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_failure_is_not_dressed_up_as_a_tidy_message() -> None:
+    """Only a refusal is redirected.
+
+    Turning a 500 into a sentence on a settings page is how a broken deployment
+    comes to look merely unlucky. The refusals this redirects are decisions the
+    service made on purpose; anything else still raises.
+    """
+    from app.api.routes import connectors as route
+
+    settings = MagicMock()
+    settings.google_connectors_enabled = True
+    settings.connector_secret_backend = "database_envelope"
+    settings.connector_secret_encryption_key = MagicMock(
+        get_secret_value=MagicMock(return_value="0" * 44)
+    )
+    settings.connector_secret_key_version = "v1"
+    settings.google_client_id = "client"
+    settings.google_client_secret = MagicMock(get_secret_value=MagicMock(return_value="secret"))
+    settings.google_oauth_redirect_uri = "https://app.example.com/api/v1/connectors/oauth/callback"
+    settings.app_base_url = "https://app.example.com"
+
+    with (
+        patch.object(route, "get_settings", return_value=settings),
+        patch.object(route, "decode_encryption_key", return_value=b"k" * 32),
+        patch.object(route, "DatabaseEnvelopeSecretStore", MagicMock()),
+        patch.object(
+            route.ConnectorOAuthCallbackService,
+            "complete_authorization",
+            new=AsyncMock(side_effect=RuntimeError("the provider fell over")),
+        ),
+        pytest.raises(RuntimeError, match="the provider fell over"),
+    ):
+        await route.google_oauth_callback(AsyncMock(), state="s" * 32, code="c")
