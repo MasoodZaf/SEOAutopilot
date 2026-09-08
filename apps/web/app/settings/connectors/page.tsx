@@ -4,7 +4,7 @@ import type {Metadata} from "next";
 import type {Site} from "@/app/pilot/model";
 import {ApiError, apiJson} from "@/lib/server-api";
 
-import {connectAnalyticsAction} from "./actions";
+import {connectAnalyticsAction, connectSearchConsoleAction} from "./actions";
 
 type PageProps = {searchParams: Promise<{google?: string; error?: string}>};
 
@@ -27,7 +27,14 @@ const REASONS: Record<string, string> = {
     "None of that property's data streams collect from this site's host, so it cannot be bound to it.",
   google_analytics_connector_not_configured:
     "Google connectors are not configured on this deployment.",
-  site_and_property_required: "Choose a site and enter a GA4 property.",
+  site_and_property_required: "Choose a site and enter a property.",
+  search_console_property_not_authorized:
+    "That property is not one the Google account you consented with can see. Check it is verified in Search Console under that exact form.",
+  property_site_mismatch:
+    "That property does not cover this site's host. A domain property and a URL-prefix property are different properties.",
+  google_connector_not_configured:
+    "Google connectors are not configured on this deployment.",
+  site_not_verified: "This site has not completed host verification, so no property can be bound to it.",
   oauth_scope_mismatch:
     "Google granted different scopes than were asked for. Start the consent again and accept everything requested.",
 };
@@ -142,6 +149,45 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
                     {analytics?.external_account_ref ?? "—"}
                   </dd>
                 </dl>
+
+                {search?.status === "active" ? null : (
+                  <form
+                    action={connectSearchConsoleAction}
+                    className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-200 pt-5"
+                  >
+                    <input type="hidden" name="site_id" value={site.id} />
+                    <div className="grow">
+                      <label
+                        htmlFor={`search-${site.id}`}
+                        className="block text-sm font-medium text-slate-800"
+                      >
+                        Search Console property
+                      </label>
+                      <input
+                        id={`search-${site.id}`}
+                        name="property_ref"
+                        required
+                        autoComplete="off"
+                        defaultValue={`sc-domain:${site.normalized_host}`}
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Whichever form is verified in Search Console. A domain property
+                        (<span className="font-mono">sc-domain:{site.normalized_host}</span>)
+                        covers every subdomain and both protocols; a URL-prefix property
+                        (<span className="font-mono">https://{site.normalized_host}/</span>)
+                        covers exactly what it spells. They are different properties and
+                        hold different data.
+                      </p>
+                    </div>
+                    <button
+                      type="submit"
+                      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                    >
+                      Connect Search Console
+                    </button>
+                  </form>
+                )}
 
                 {analytics?.status === "active" ? null : (
                   <form
