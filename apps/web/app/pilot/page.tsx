@@ -11,6 +11,7 @@ import {
   draftProposalAction,
   setApproverCountAction,
   setSiteModeAction,
+  withdrawProposalAction,
   connectSearchConsole,
   createDnsProviderVerification,
   createCalibrationSet,
@@ -732,14 +733,37 @@ export default async function PilotPage({searchParams}: PageProps) {
                     <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-3">
                       <span className="text-xs text-zinc-500 font-mono">Target: {prop.target_path}</span>
                       <div className="flex gap-2">
-                        {prop.status === "validated" && (
-                          <form action={approveProposalAction}>
-                            <input type="hidden" name="site_host" value={data.target.host} />
-                            <input type="hidden" name="proposal_id" value={prop.id} />
-                            <button type="submit" className="rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500">
-                              Approve
-                            </button>
-                          </form>
+                        {/*
+                          `review_required` as well as `validated`. A proposal
+                          needing two approvers is created `review_required` and
+                          stays there until enough approvals arrive, so gating
+                          this button on `validated` alone meant a two-approver
+                          change could never be approved through the app at all.
+                          The API always accepted it; nothing offered it.
+                        */}
+                        {(prop.status === "validated" || prop.status === "review_required") && (
+                          <>
+                            <form action={approveProposalAction}>
+                              <input type="hidden" name="site_host" value={data.target.host} />
+                              <input type="hidden" name="proposal_id" value={prop.id} />
+                              <button type="submit" className="rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500">
+                                Approve
+                              </button>
+                            </form>
+                            {/*
+                              An author cannot approve their own change and,
+                              until now, could not clear it either — a bad draft
+                              stayed in the queue for ever. Withdrawing ends the
+                              proposal and can never put anything on a site.
+                            */}
+                            <form action={withdrawProposalAction}>
+                              <input type="hidden" name="site_host" value={data.target.host} />
+                              <input type="hidden" name="proposal_id" value={prop.id} />
+                              <button type="submit" className="rounded border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:border-zinc-500 hover:text-white">
+                                Withdraw
+                              </button>
+                            </form>
+                          </>
                         )}
                         {prop.status === "approved" && (
                           <span className="rounded border border-amber-800 bg-amber-950 px-2.5 py-1 text-xs font-medium text-amber-300">

@@ -470,3 +470,31 @@ export async function setApproverCountAction(formData: FormData): Promise<never>
   }
   redirect(pilotPath(host, {governance: clear ? "approvers-default" : `approvers-${raw}`}));
 }
+
+/**
+ * Withdraw a proposal you wrote.
+ *
+ * An author may not approve their own change, and until now could not clear it
+ * either -- there was no reject or withdraw anywhere in this dashboard. A draft
+ * that turned out to be wrong stayed in the queue for ever, and the only way
+ * past it was an operator with the pilot token.
+ *
+ * The API has always allowed this and says why: withdrawing is a different act
+ * from approving. It ends the proposal, can never put a change on a live site,
+ * and is the only way for whoever wrote a bad draft to clear it without
+ * spending a reviewer on a change nobody wants.
+ */
+export async function withdrawProposalAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const proposalId = String(formData.get("proposal_id") ?? "");
+  try {
+    await apiJson(`/v1/proposals/${proposalId}/approvals`, {
+      method: "POST",
+      body: JSON.stringify({decision: "rejected", notes: "Withdrawn from web dashboard"}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirect(pilotPath(host, {proposal: "withdrawn"}));
+}
