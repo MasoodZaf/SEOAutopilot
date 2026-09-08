@@ -1,6 +1,6 @@
 # Deployment & Pilot Status
 
-Operational record for the hosted pilot. Last updated **2026-09-07**.
+Operational record for the hosted pilot. Last updated **2026-09-08**.
 
 This file is the follow-up point: where the system runs, how to operate it, what
 the first crawl found, and what is still open. No secrets are recorded here —
@@ -664,12 +664,19 @@ drifted is worse than none, because people act on it.
       invitation is open and unclaimed — no `app_user`, no membership. Until a
       real session exists the pilot token stays valid, deliberately: nothing
       retires the old credential before the new one is proven.
-- [ ] **Remove the Caddy basic-auth gate** once sign-in is exercised. Defence in
-      depth now, not the authentication.
+- [ ] **The Caddy basic-auth gate is removed in the repo and still running on
+      the host.** `5d84a95` takes it out; the container was never recreated, and
+      a single-file bind mount does not follow an rsync (§9), so the gate is
+      still up. Applying it is one `up -d --force-recreate caddy`. Deliberately
+      left for a moment when it is the thing being done, rather than arriving as
+      a side effect of some unrelated deploy.
 - [ ] **Set Cloudflare SSL mode to Full (strict).**
-- [ ] **codearc.net's Search Console connector is `pending_authorization`** —
-      an authorization was started and abandoned. That site now has GA4 and no
-      search data; one consent gives it both halves.
+- [x] **codearc.net's Search Console is connected** (2026-09-08). The property
+      is `https://codearc.net/`, a **URL-prefix** property — `sc-domain:` does
+      not exist for that site, and the first attempt was correctly refused. The
+      daily routine ran immediately and wrote 17 rows for 2026-08-30..09-05:
+      18 impressions, 0 clicks, average position 71.2. That site now has both
+      connectors, the only one in the estate that does.
 - [ ] **TheCalcHive has no GA4 property at all.** Measurement there needs a
       property created and the tag installed, and GA4 collects nothing
       retroactively, so the clock starts the day it goes live.
@@ -705,6 +712,25 @@ proposals and proposals for a site with no measurable traffic.
 
 ## 9. Gotchas worth remembering
 
+- **A single-file bind mount does not follow an rsync.** The Caddyfile is
+  mounted file-to-file (`./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro`).
+  rsync writes a temporary file and renames it over the target, which replaces
+  the inode, and the container goes on serving the file it was started with.
+  Found on 2026-09-08: the host file no longer contained `basic_auth` and the
+  running container still did.
+
+  A `restart` does not fix it either — the mount is resolved when the container
+  is *created*. Any Caddyfile change therefore needs
+  `$DC up -d --force-recreate caddy`, and the way to confirm it is to read the
+  file from inside:
+
+  ```bash
+  $DC exec -T caddy grep -n basic_auth /etc/caddy/Caddyfile
+  ```
+
+  The failure is quiet in the dangerous direction: a security change looks
+  deployed, is not, and then applies by surprise at whatever unrelated moment
+  something next recreates the container.
 - **Compose interpolates `$` in `env_file` values.** A bcrypt hash passed through
   `environment:` gets silently truncated. Caddy credentials therefore come from
   `env_file`, with `$` doubled in the file.
