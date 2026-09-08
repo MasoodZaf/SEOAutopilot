@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {shouldRender} from "./adaptive-fetcher.js";
+import {chromium} from "playwright";
+
+import {shouldRender, waitForRenderedContent} from "./adaptive-fetcher.js";
 import type {FetchedResource} from "./types.js";
 
 const resource = (body: string, contentType = "text/html"): FetchedResource => ({
@@ -29,4 +31,97 @@ test("auto rendering keeps content-rich HTML on the HTTP path", () => {
 test("render policy respects never and ignores non-HTML", () => {
   assert.equal(shouldRender(resource("<script></script>"), "never"), false);
   assert.equal(shouldRender(resource("<script></script>", "application/xml"), "always"), false);
+});
+
+/* The rest of this file drives a real browser against a real server, because the
+ * defect it guards only exists in one. `waitForRenderedContent` is a claim about
+ * *timing* -- that we do not snapshot a page before it has fetched its content --
+ * and timing cannot be asserted against a string.
+ *
+ * The fixture is the shape that broke: a shell that mounts navigation furniture
+ * immediately, comfortably past the 200-character threshold, and only then goes
+ * and fetches what the page is actually about. Anything keyed on "is there text
+ * yet" answers yes before the fetch is even issued.
+ *
+ * Served from 127.0.0.1, which `assertSafeUrl` forbids -- so this exercises the
+ * helper directly rather than the fetcher around it. The policy is not what is
+ * under test here.
+ */
+
+const CHROME = "Dashboard Challenges Tutorials Pricing About Sign in " +
+  "Home / Challenges / Two Sum Difficulty Acceptance Submissions Discuss Editorial " +
+  "Previous Next Bookmark Share Report an issue Keyboard shortcuts Settings";
+
+const shellPage = (delayMs: number) => `<!doctype html><html><body>
+<div id="chrome">${CHROME}</div><div id="content"></div>
+<script>
+  fetch("/content?delay=${delayMs}")
+    .then(r => r.text())
+    .then(t => { document.getElementById("content").textContent = t; });
+</script></body></html>`;
+
+const CONTENT = "UNIQUE_CONTENT_MARKER " + "the actual body of the page ".repeat(12);
+
+async function withFixture<T>(delayMs: number, fn: (url: string) => Promise<T>): Promise<T> {
+  const {createServer} = await import("node:http");
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === "/content") {
+      const delay = Number(url.searchParams.get("delay") ?? 0);
+      setTimeout(() => { res.writeHead(200, {"content-type": "text/plain"}); res.end(CONTENT); }, delay);
+      return;
+    }
+    res.writeHead(200, {"content-type": "text/html"});
+    res.end(shellPage(delayMs));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const {port} = server.address() as {port: number};
+  try {
+    return await fn(`http://127.0.0.1:${port}/`);
+  } finally {
+    await new Promise<void>(resolve => { server.close(() => resolve()); });
+  }
+}
+
+test("rendering waits for content the shell has not fetched yet", async () => {
+  // The threshold the old wait used is already met by CHROME alone. If that is
+  // the readiness signal, this snapshot is taken ~700ms before the content lands.
+  assert.ok(CHROME.length > 200, "fixture must clear the old threshold on chrome alone");
+
+  await withFixture(700, async url => {
+    const browser = await chromium.launch({headless: true});
+    try {
+      const page = await browser.newPage();
+      await page.goto(url, {waitUntil: "load"});
+      await waitForRenderedContent(page);
+      const text = await page.evaluate(() => document.body.innerText);
+      assert.ok(
+        text.includes("UNIQUE_CONTENT_MARKER"),
+        `snapshotted the shell without its content: ${JSON.stringify(text.slice(0, 200))}`,
+      );
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test("rendering still returns a page whose content never arrives", async () => {
+  // A request that never answers must not hang the crawl: the idle wait expires,
+  // the paint wait expires, and we keep what the shell did render.
+  await withFixture(60_000, async url => {
+    const browser = await chromium.launch({headless: true});
+    try {
+      const page = await browser.newPage();
+      await page.goto(url, {waitUntil: "load"});
+      const started = Date.now();
+      await waitForRenderedContent(page);
+      const elapsed = Date.now() - started;
+      const text = await page.evaluate(() => document.body.innerText);
+      assert.ok(text.includes("Dashboard"), "the shell that did render should be kept");
+      assert.ok(!text.includes("UNIQUE_CONTENT_MARKER"));
+      assert.ok(elapsed < 25_000, `waited ${elapsed}ms; both waits should be bounded`);
+    } finally {
+      await browser.close();
+    }
+  });
 });
