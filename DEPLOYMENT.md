@@ -606,6 +606,45 @@ A successful consent therefore ends on a basic-auth prompt, which reads exactly
 like a failure. It is not: the connector is already `active` by then. Worth
 knowing before the next person cancels out of a flow that had already worked.
 
+## 6e. WordKit onboarded, and three gaps the cutover exposed (2026-09-08)
+
+`wordkitapp.com` now has Search Console (`sc-domain:wordkitapp.com`), a
+repository connector (`MasoodZaf/mindTools`, `WordKit/{path}.html`) and twelve
+drafted proposals awaiting review.
+
+**The diagnosis.** All 13 pages carry one H1 — "The word toolkit for every
+game", a layout hero. Titles are specific and good; the heading is not, so the
+strongest on-page signal says nothing about the page. Search Console for
+2026-08-30..09-05: 19 impressions, 2 clicks, average position 26.0 — which is
+an artefact. The homepage sits at position 1-2 on brand queries and
+`/random-tool` at 70-81; **the other eleven tool pages have no impressions at
+all.** Do not read that average as strength.
+
+**The re-crawl mattered.** The findings predating 2026-09-06 were built from
+welded text: the page's H1 is `The word<br>toolkit for<br><em>every game</em>`
+and the old extractor joined it into "The wordtoolkit forevery game". The fresh
+crawl reads it correctly, and produced a *better* finding —
+`h1.duplicate_across_site` at medium, which the corrupt crawl never raised,
+resolving six of the low-severity mismatches in the process. Corrupt input did
+not merely add noise; it pointed at the wrong problem.
+
+**Three gaps, all the same shape.** Search Console authorization, the
+repository connector, and drafting a proposal from an opportunity: each had a
+working endpoint, no caller in the UI, and an operator holding the pilot token
+quietly bridging it. Retiring that token in the morning turned all three from
+gaps into walls within an hour of each other. A feature reachable only by a
+credential you are about to remove is not reachable.
+
+**The path template is why a repository cannot be auto-configured.** Both sites
+live in one repository: `CalcHive/{path}.html` and `WordKit/{path}.html`. A
+quiet default of `{path}.html` produces a connector that passes its probe and
+then finds no page.
+
+Twelve proposals, all `review_required`, each replacing the shared tagline with
+a heading cut from that page's own title — Word Unscrambler, Anagram Finder,
+Wordle Helper, and so on. The homepage is refused by
+`h1_repair_refuses_site_root`: a shared tagline is the right heading there.
+
 ## 7. Audit findings (2026-08-29)
 
 Full report: https://claude.ai/code/artifact/2e4f154d-700c-4754-a997-aea9ebb83b17
