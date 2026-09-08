@@ -9,6 +9,8 @@ import {
   approveProposalAction,
   connectDnsProvider,
   draftProposalAction,
+  setApproverCountAction,
+  setSiteModeAction,
   connectSearchConsole,
   createDnsProviderVerification,
   createCalibrationSet,
@@ -89,6 +91,9 @@ type GovernanceStatus = {
   autopilot_enabled: boolean;
   emergency_freeze: boolean;
   daily_change_budget: number;
+  // Null means "use the risk tier's own floor", which is a different statement
+  // from any number and is why the API keeps clearing it as a separate act.
+  required_approver_count: number | null;
   today_deployments_count: number;
   freeze_window_start: string | null;
   freeze_window_end: string | null;
@@ -366,10 +371,46 @@ export default async function PilotPage({searchParams}: PageProps) {
 
       {/* Governance & Autopilot Status Bar */}
       {data.governance && (
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
             <p className="text-xs text-zinc-500">Operation Mode</p>
             <p className="text-lg font-semibold uppercase text-zinc-200">{data.governance.mode}</p>
+            {/*
+              Readable here since this dashboard was built, and changeable only
+              by an operator token that no longer exists. A site could sit in
+              `observe` for ever, refusing every deployment, with no way to say
+              otherwise. The reason is required by the API, not decoration: this
+              is recorded like a freeze.
+            */}
+            {data.site && (
+              <form action={setSiteModeAction} className="mt-3 space-y-2">
+                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_id" value={data.site.id} />
+                <select
+                  name="mode"
+                  defaultValue={data.governance.mode}
+                  aria-label="Operation mode"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200"
+                >
+                  <option value="observe">observe — measure only</option>
+                  <option value="recommend">recommend — deploy with approval</option>
+                  <option value="autopilot">autopilot — deploy unattended</option>
+                </select>
+                <input
+                  name="reason"
+                  required
+                  minLength={3}
+                  placeholder="Why this change"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 placeholder:text-zinc-600"
+                />
+                <button
+                  type="submit"
+                  className="w-full rounded border border-zinc-700 px-2 py-1 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:text-white"
+                >
+                  Set mode
+                </button>
+              </form>
+            )}
           </div>
           <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
             <p className="text-xs text-zinc-500">Autopilot Governor</p>
@@ -383,6 +424,42 @@ export default async function PilotPage({searchParams}: PageProps) {
               {data.governance.today_deployments_count} / {data.governance.daily_change_budget} used
             </p>
           </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+            <p className="text-xs text-zinc-500">Approvers Required</p>
+            <p className="text-lg font-semibold text-zinc-200 font-mono">
+              {data.governance.required_approver_count ?? "tier default"}
+            </p>
+            {/*
+              Raising is always allowed. Lowering stops at the tier floor for
+              anything touching canonical, robots or redirect directives, so
+              this cannot talk a dangerous change down to one pair of eyes. The
+              count is frozen into a proposal when it is drafted, so a change
+              here governs the next draft, not the ones already waiting.
+            */}
+            {data.site && (
+              <form action={setApproverCountAction} className="mt-3 flex gap-2">
+                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_id" value={data.site.id} />
+                <input
+                  name="required_approver_count"
+                  type="number"
+                  min={1}
+                  max={5}
+                  defaultValue={data.governance.required_approver_count ?? ""}
+                  placeholder="default"
+                  aria-label="Approvers required"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 placeholder:text-zinc-600"
+                />
+                <button
+                  type="submit"
+                  className="rounded border border-zinc-700 px-2 py-1 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:text-white"
+                >
+                  Set
+                </button>
+              </form>
+            )}
+          </div>
+
           <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
             <p className="text-xs text-zinc-500">Freeze Window</p>
             <p className="text-sm font-medium text-zinc-400">

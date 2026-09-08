@@ -404,3 +404,69 @@ export async function draftProposalAction(formData: FormData): Promise<never> {
   }
   redirect(pilotPath(host, {proposal: "drafted"}));
 }
+
+/**
+ * Move a site between observe, recommend and autopilot.
+ *
+ * Readable in this dashboard since it was built and changeable only by an
+ * operator holding the pilot token, which means since this morning it has been
+ * changeable by nobody. A site could be onboarded, verified, crawled, analysed
+ * and drafted against, and never leave `observe` — where every deployment is
+ * refused with `site_mode_blocks_deployment`.
+ *
+ * The API treats this as a governance decision rather than a setting: owner or
+ * admin only, a stated reason, an audit event and an outbox event, the same as
+ * a freeze. Climbing is constrained — a site must be verified and unfrozen —
+ * and descending never is, because the way to stop a site being changed must
+ * not itself be blockable.
+ */
+export async function setSiteModeAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const siteId = String(formData.get("site_id") ?? "");
+  const mode = String(formData.get("mode") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (!reason) redirect(errorUrl(host, "a_reason_is_required"));
+  try {
+    await apiJson(`/v1/sites/${siteId}/governance/mode`, {
+      method: "PATCH",
+      body: JSON.stringify({mode, reason}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirect(pilotPath(host, {governance: `mode-${mode}`}));
+}
+
+/**
+ * How many approvers this site requires, over the risk tier's own default.
+ *
+ * Raising is always allowed. Lowering stops at the tier floor for anything
+ * touching canonical, robots or redirect directives — those are forced to high
+ * risk precisely so no per-site setting can reach them — so this cannot talk a
+ * dangerous change down to one pair of eyes.
+ *
+ * Note it is read from the proposal, not the site, at approval time: the count
+ * is frozen into each proposal when it is drafted. Changing it here governs
+ * proposals drafted afterwards, and leaves existing ones as they were.
+ */
+export async function setApproverCountAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const siteId = String(formData.get("site_id") ?? "");
+  const raw = String(formData.get("required_approver_count") ?? "").trim();
+  const clear = raw === "";
+  try {
+    await apiJson(`/v1/sites/${siteId}/governance`, {
+      method: "PATCH",
+      body: JSON.stringify(
+        clear
+          ? {clear_required_approver_count: true}
+          : {required_approver_count: Number(raw)},
+      ),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirect(pilotPath(host, {governance: clear ? "approvers-default" : `approvers-${raw}`}));
+}
