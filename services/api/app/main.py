@@ -26,6 +26,7 @@ from app.api.routes.system import router as system_router
 from app.core.config import get_settings
 from app.core.logging import configure_safe_access_logging
 from app.db.session import relay_engine, tenant_scoped_session
+from app.services.proposal_drafting import run_drafting_sweep
 from app.services.rollback_reconciliation import run_reconcile_sweep
 
 settings = get_settings()
@@ -37,34 +38,64 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     """Background work this process owns, started and stopped with it.
 
-    Only the rollback reconciler lives here. A revert pull request is merged by
-    a person, so nothing pushes that fact to this service and the choice is a
-    poll or a webhook; a poll needs no public endpoint and no per-connector
-    shared secret. It holds a Postgres advisory lock, so running more than one
-    API process sweeps once rather than N times.
+    Two sweeps, both polls, both holding their own Postgres advisory lock so
+    running more than one API process sweeps once rather than N times.
+
+    The reconciler asks what happened to a revert pull request: it is merged by
+    a person, so nothing pushes that fact here and the choice is a poll or a
+    webhook. A poll needs no public endpoint and no per-connector shared secret.
+
+    The drafter turns opportunities into proposals as itself rather than as
+    whoever clicked, which is what lets a single-member tenant approve a
+    deterministic repair at all -- separation of duties is between the drafter
+    and the approver, and here the drafter is a machine. It drafts only for
+    sites whose mode says the platform may propose changes, and it deploys
+    nothing.
+
+    Each is started only if configured, and each is cancelled and awaited on
+    shutdown so a sweep in flight does not outlive the process that owns it.
     """
-    if not settings.rollback_reconcile_enabled:
-        yield
-        return
-    client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(15.0))
-    sweep = asyncio.create_task(
-        run_reconcile_sweep(
-            relay_engine,
-            tenant_scoped_session,
-            settings,
-            client,
-            interval_seconds=settings.rollback_reconcile_interval_seconds,
+    tasks: list[asyncio.Task[None]] = []
+    client: httpx.AsyncClient | None = None
+    if settings.rollback_reconcile_enabled or settings.proposal_drafting_enabled:
+        client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(15.0))
+    if settings.rollback_reconcile_enabled and client is not None:
+        tasks.append(
+            asyncio.create_task(
+                run_reconcile_sweep(
+                    relay_engine,
+                    tenant_scoped_session,
+                    settings,
+                    client,
+                    interval_seconds=settings.rollback_reconcile_interval_seconds,
+                )
+            )
         )
-    )
+    if settings.proposal_drafting_enabled and client is not None:
+        tasks.append(
+            asyncio.create_task(
+                run_drafting_sweep(
+                    relay_engine,
+                    tenant_scoped_session,
+                    settings,
+                    client,
+                    interval_seconds=settings.proposal_drafting_interval_seconds,
+                    limit=settings.proposal_drafting_batch,
+                )
+            )
+        )
     try:
         yield
     finally:
-        sweep.cancel()
-        try:
-            await sweep
-        except asyncio.CancelledError:
-            pass
-        await client.aclose()
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if client is not None:
+            await client.aclose()
 
 
 # The schema and the interactive docs are a complete map of every endpoint,

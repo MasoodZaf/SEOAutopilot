@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     api_docs_enabled: bool = False
     rollback_reconcile_enabled: bool = False
     rollback_reconcile_interval_seconds: int = 300
+    # Drafting a deterministic repair as the system rather than as whoever
+    # clicked. Off by default: a tenant that has not asked for this should not
+    # find proposals it did not make.
+    proposal_drafting_enabled: bool = False
+    proposal_drafting_interval_seconds: int = 900
+    proposal_drafting_batch: int = 20
     notifications_enabled: bool = False
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
@@ -192,6 +198,14 @@ class Settings(BaseSettings):
             and len(self.metrics_scrape_token.get_secret_value()) < 32
         ):
             raise ValueError("METRICS_SCRAPE_TOKEN must contain at least 32 characters")
+        if self.proposal_drafting_enabled:
+            if self.proposal_drafting_interval_seconds < 60:
+                # Each tick reads a repository file per candidate. A tighter
+                # loop is a rate limit against an API whose answers change only
+                # when a person edits something.
+                raise ValueError("PROPOSAL_DRAFTING_INTERVAL_SECONDS must be at least 60")
+            if not 1 <= self.proposal_drafting_batch <= 100:
+                raise ValueError("PROPOSAL_DRAFTING_BATCH must be between 1 and 100")
         if self.rollback_reconcile_enabled and self.rollback_reconcile_interval_seconds < 60:
             # A tighter loop is a rate limit waiting to happen against an API
             # that changes state only when a human acts.
