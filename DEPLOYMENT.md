@@ -294,6 +294,86 @@ It ENABLEs *and* FORCEs row-level security: these are the first tables created
 since `0027`, and enabling alone would leave them open, because the services own
 them and an owner bypasses its own policies unless they are forced.
 
+## 5b. The cutover to production mode
+
+Retiring the pilot token is a two-variable change, and getting that wrong takes
+the API down rather than leaving it insecure.
+
+`APP_ENV=production` alone **does not start**. `LOCAL_PILOT_AUTH_ENABLED` is
+`true` on the host, and the settings validator refuses that combination:
+
+```
+Value error, Local pilot authentication is development-only
+```
+
+Verified on the running host, both directions, without changing anything:
+
+```bash
+# refused
+$DC exec -T -e APP_ENV=production api python -c 'from app.core.config import Settings; Settings()'
+
+# validates
+$DC exec -T -e APP_ENV=production -e LOCAL_PILOT_AUTH_ENABLED=false api \
+  python -c 'from app.core.config import Settings; Settings()'
+```
+
+### Before
+
+The invitation must be claimed. A row here is the difference between switching
+credentials and locking everybody out:
+
+```bash
+$DC exec -T postgres psql -qAt -U seo_autopilot -d seo_autopilot \
+  -c "SELECT email_normalized FROM app_user" \
+  -c "SELECT role, status FROM tenant_membership" \
+  -c "SELECT accepted_at FROM tenant_invitation"
+```
+
+An `app_user`, an active `owner` membership, and a non-null `accepted_at`. If
+any is missing, sign-in has not completed and the cutover must wait — the token
+being replaced is the only other way in.
+
+### The change
+
+Both variables, in one edit, then recreate:
+
+```bash
+sed -i 's/^APP_ENV=.*/APP_ENV=production/' .env.local
+sed -i 's/^LOCAL_PILOT_AUTH_ENABLED=.*/LOCAL_PILOT_AUTH_ENABLED=false/' .env.local
+$DC up -d --force-recreate api
+```
+
+### After
+
+The pilot token must stop working, and the service must still be up. Both
+halves matter: a dead API also returns nothing to a pilot token.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://seo.oryxenlabs.com/api/health   # 200
+TOKEN=$(grep '^LOCAL_PILOT_AUTH_TOKEN=' .env.local | cut -d= -f2-)
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:8001/v1/sites                                                 # 401
+infra/scripts/check-perimeter.sh
+```
+
+Then load `/pilot` in the browser you signed in with. A signed-in session must
+still work when the token no longer does; if it does not, back out.
+
+### Backing out
+
+Reverse both variables and recreate. The pilot token is valid again the moment
+the API restarts — which is exactly why `.env.local` keeps it rather than
+deleting it at cutover.
+
+```bash
+sed -i 's/^APP_ENV=.*/APP_ENV=development/' .env.local
+sed -i 's/^LOCAL_PILOT_AUTH_ENABLED=.*/LOCAL_PILOT_AUTH_ENABLED=true/' .env.local
+$DC up -d --force-recreate api
+```
+
+Only after a signed-in session is confirmed against the running host should the
+Caddy basic-auth gate come off.
+
 ## 5a. Rollback reconciliation
 
 Rolling back a **merged** deployment opens a revert pull request and stops. The
