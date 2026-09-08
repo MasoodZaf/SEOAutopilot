@@ -19,7 +19,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.services.deployment_verification import unverified
+from app.services.deployment_verification import RETRY_WINDOW_DAYS, unverified
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.asyncio, requires_database]
@@ -51,6 +51,7 @@ async def _deployed(
     verification: str | None = None,
     with_receipt: bool = True,
     proposal_status: str = "deployed",
+    deployed_days_ago: float = 1 / 24,
 ) -> UUID:
     """A page, a proposal in `proposal_status`, and optionally its receipt."""
     url = f"https://{HOST}{path}"
@@ -124,7 +125,7 @@ async def _deployed(
                 "site_id": ids["site_id"],
                 "proposal_id": proposal_id,
                 "key": f"deploy-{proposal_id}",
-                "at": datetime.now(UTC) - timedelta(hours=1),
+                "at": datetime.now(UTC) - timedelta(days=deployed_days_ago),
             },
         )
         if verification is not None:
@@ -245,3 +246,40 @@ async def test_the_page_url_and_its_site_host_come_back_together(engine, ground)
     assert len(rows) == 1
     assert rows[0].url == f"https://{HOST}/word-search"
     assert rows[0].host == HOST
+
+
+async def test_an_old_failure_is_left_alone(engine, ground) -> None:
+    """A pull request unmerged for a fortnight is not about to be merged.
+
+    The other reason for failing -- superseded by a later change -- is
+    permanent. Without a bound the sweep re-fetches these pages four times an
+    hour for ever to re-learn something already written down; on 2026-09-08
+    that was sixteen thecalchive.com pages.
+    """
+    ids, factory = ground
+    async with factory() as session, session.begin():
+        await _deployed(
+            session,
+            ids,
+            "/superseded-tool",
+            verification="failed",
+            deployed_days_ago=RETRY_WINDOW_DAYS + 1,
+        )
+
+    assert await picked_up(engine, ids) == []
+
+
+async def test_an_old_deployment_nobody_ever_checked_is_still_checked(engine, ground) -> None:
+    """The bound is on retrying, not on looking.
+
+    Enabling this sweep has to reach the whole backlog once, or every
+    deployment made before it existed would be invisible to it for ever --
+    which is the exact gap it was built to close.
+    """
+    ids, factory = ground
+    async with factory() as session, session.begin():
+        proposal_id = await _deployed(
+            session, ids, "/ancient-tool", deployed_days_ago=RETRY_WINDOW_DAYS * 10
+        )
+
+    assert await picked_up(engine, ids) == [proposal_id]

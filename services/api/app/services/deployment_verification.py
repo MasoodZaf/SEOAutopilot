@@ -20,9 +20,11 @@ fetches the page and records what it saw. Two answers, both worth having:
 * **verified** -- the added lines are on the live page. The change landed, the
   receipt is stamped, and the 28-day measurement can eventually be computed.
 * **failed** -- they are not. Usually that means nobody has merged the pull
-  request yet, which is the ordinary state of a change deployed minutes ago,
-  and it is written down rather than inferred. It keeps being re-checked, so a
-  merge tomorrow is picked up tomorrow.
+  request yet, which is the ordinary state of a change deployed minutes ago;
+  sometimes it means a later, better change overwrote the same lines. From the
+  page alone those are indistinguishable, so the record says both and claims
+  neither. It is re-checked while the deployment is recent, so a merge tomorrow
+  is picked up tomorrow, and then left alone.
 
 It only ever reads. It cannot merge, deploy, revert, or change a proposal's
 status; the worst it can do is record that it could not find something.
@@ -65,11 +67,24 @@ DEFAULT_BATCH = 20
 # to run a substring search over it helps nobody.
 MAX_BODY_BYTES = 4 * 1024 * 1024
 
-# Deployed proposals whose change nobody has confirmed is live. A verification
-# that already succeeded is final -- the change was observed on the page, and
-# re-reading it later would only let a subsequent unrelated edit retract a fact
-# that was true. A failed one is re-read every sweep, because the usual reason
-# for failure is a pull request still waiting to be merged.
+# How long a change that is not on the page keeps being asked about. A pull
+# request nobody has merged in two weeks is not about to be, and the other
+# reason for failing -- a change since superseded by a better one -- is
+# permanent. Without this the sweep re-fetches those pages every tick for ever:
+# on 2026-09-08 that was sixteen thecalchive.com pages, four times an hour,
+# indefinitely, to re-learn something already written down.
+RETRY_WINDOW_DAYS = 14
+
+# Deployed proposals whose change nobody has confirmed is live.
+#
+# A verification that already succeeded is final -- the change was observed on
+# the page, and re-reading it later would only let a subsequent unrelated edit
+# retract a fact that was true when it was recorded.
+#
+# One never looked at is always looked at, however old, so enabling this sweep
+# reaches the whole backlog once. One that failed is retried only while the
+# deployment is recent, because the usual reason for failure is a pull request
+# still waiting to be merged -- and that reason expires.
 UNVERIFIED_SQL = """
 SELECT p.tenant_id, p.id AS proposal_id, pg.normalized_url, s.normalized_host
 FROM proposal p
@@ -82,6 +97,13 @@ WHERE p.status = 'deployed'
     SELECT 1 FROM post_deploy_verification v
     WHERE v.proposal_id = p.id AND v.tenant_id = p.tenant_id
       AND v.status = 'verified'
+  )
+  AND (
+    NOT EXISTS (
+      SELECT 1 FROM post_deploy_verification v
+      WHERE v.proposal_id = p.id AND v.tenant_id = p.tenant_id
+    )
+    OR r.deployed_at > now() - make_interval(days => :retry_days)
   )
 ORDER BY r.deployed_at
 LIMIT :limit
@@ -143,7 +165,9 @@ def belongs_to_site(url: str, host: str) -> bool:
 
 
 async def unverified(connection, limit: int) -> list[VerificationCandidate]:
-    rows = await connection.execute(text(UNVERIFIED_SQL).bindparams(limit=limit))
+    rows = await connection.execute(
+        text(UNVERIFIED_SQL).bindparams(limit=limit, retry_days=RETRY_WINDOW_DAYS)
+    )
     return [
         VerificationCandidate(
             tenant_id=row.tenant_id,
