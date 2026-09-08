@@ -164,7 +164,13 @@ async def test_only_permitted_sites_and_repairable_rules_are_selected() -> None:
         "c.type = 'github_repository'",
         "f.rule_key = ANY(:rules)",
         "NOT EXISTS",
-        "ORDER BY o.score DESC",
+        # One candidate per page, not per opportunity -- both halves of it.
+        # What these actually do to the rows returned is asserted against
+        # PostgreSQL in tests/integration/test_drafting_selection.py; a clause
+        # being present in a string cannot show that.
+        "p.opportunity_id = o.id OR p.page_id = o.page_id",
+        "DISTINCT ON (o.page_id)",
+        "ORDER BY ranked.score DESC",
     ):
         assert clause in DRAFTABLE_SQL, clause
 

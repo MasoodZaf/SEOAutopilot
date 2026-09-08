@@ -74,36 +74,54 @@ DRAFTABLE_MODES = ("recommend", "autopilot")
 # remainder is drafted on the next tick; there is no deadline here.
 DEFAULT_BATCH = 20
 
-# Opportunities that are open, have no live proposal, carry a rule this system
-# can repair deterministically, and belong to a site that has both said yes and
-# has somewhere to write. Ordered by score so the most valuable are drafted
-# first when the batch is the binding constraint.
+# Opportunities that are open, carry a rule this system can repair
+# deterministically, belong to a site that has both said yes and has somewhere
+# to write, and whose page nobody is already proposing a change to. Ordered by
+# score so the most valuable are drafted first when the batch is the binding
+# constraint.
 DRAFTABLE_SQL = """
-SELECT o.tenant_id, o.id AS opportunity_id, o.site_id
-FROM opportunity o
-JOIN site s ON s.id = o.site_id AND s.tenant_id = o.tenant_id
-WHERE o.status = 'open'
-  AND s.status = 'active'
-  AND s.verified_at IS NOT NULL
-  AND s.emergency_freeze = false
-  AND s.mode = ANY(:modes)
-  AND EXISTS (
-    SELECT 1 FROM connector c
-    WHERE c.site_id = s.id AND c.tenant_id = s.tenant_id
-      AND c.type = 'github_repository' AND c.status = 'active'
-  )
-  AND EXISTS (
-    SELECT 1 FROM opportunity_finding of2
-    JOIN finding f ON f.id = of2.finding_id AND f.tenant_id = of2.tenant_id
-    WHERE of2.opportunity_id = o.id AND of2.tenant_id = o.tenant_id
-      AND f.rule_key = ANY(:rules)
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM proposal p
-    WHERE p.opportunity_id = o.id AND p.tenant_id = o.tenant_id
-      AND p.status = ANY(:live)
-  )
-ORDER BY o.score DESC, o.id
+SELECT ranked.tenant_id, ranked.opportunity_id, ranked.site_id
+FROM (
+  SELECT DISTINCT ON (o.page_id)
+         o.tenant_id, o.id AS opportunity_id, o.site_id, o.score
+  FROM opportunity o
+  JOIN site s ON s.id = o.site_id AND s.tenant_id = o.tenant_id
+  WHERE o.status = 'open'
+    AND s.status = 'active'
+    AND s.verified_at IS NOT NULL
+    AND s.emergency_freeze = false
+    AND s.mode = ANY(:modes)
+    AND EXISTS (
+      SELECT 1 FROM connector c
+      WHERE c.site_id = s.id AND c.tenant_id = s.tenant_id
+        AND c.type = 'github_repository' AND c.status = 'active'
+    )
+    AND EXISTS (
+      SELECT 1 FROM opportunity_finding of2
+      JOIN finding f ON f.id = of2.finding_id AND f.tenant_id = of2.tenant_id
+      WHERE of2.opportunity_id = o.id AND of2.tenant_id = o.tenant_id
+        AND f.rule_key = ANY(:rules)
+    )
+    -- One live proposal per page, not merely per opportunity. Two open
+    -- opportunities can name the same page through different rules --
+    -- h1.duplicate_across_site and content.title_h1_mismatch both did, on six
+    -- wordkitapp.com pages -- and h1_repair answers both with the identical
+    -- edit. Guarding only on opportunity_id drafted that edit a second time,
+    -- which deploys as two pull requests changing one line to the same thing.
+    AND NOT EXISTS (
+      SELECT 1 FROM proposal p
+      WHERE p.tenant_id = o.tenant_id
+        AND p.status = ANY(:live)
+        AND (p.opportunity_id = o.id OR p.page_id = o.page_id)
+    )
+  -- The guard above only settles sweeps after the first. Within one sweep both
+  -- rows are selected before either is written, so the batch itself has to hold
+  -- the rule: one opportunity per page, the highest-scoring one. Safe to key on
+  -- page_id alone because `opportunity.page_id` is NOT NULL; DISTINCT ON treats
+  -- NULLs as equal and would fold page-less rows into a single candidate.
+  ORDER BY o.page_id, o.score DESC, o.id
+) ranked
+ORDER BY ranked.score DESC, ranked.opportunity_id
 LIMIT :limit
 """
 
