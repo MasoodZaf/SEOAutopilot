@@ -331,8 +331,9 @@ def test_a_page_is_verified_on_the_changed_line_not_on_its_indentation() -> None
     result = verify_rendered_content(both, live, 200)
     assert not result.is_verified
     assert "1 of 2" in result.notes
-    # Said plainly, because this is what an unmerged pull request looks like.
-    assert "may not be merged yet" in result.notes
+    # It cannot tell an unmerged pull request from a superseded change by
+    # looking at the page, so it says so rather than picking one.
+    assert "not merged yet or has since been superseded" in result.notes
 
 
 def test_an_error_page_is_never_verified() -> None:

@@ -82,15 +82,18 @@ def verify_rendered_content(
             ),
         )
 
-    # Said plainly, because the common reason for landing here is not a broken
-    # deployment: it is a pull request that nobody has merged yet.
+    # Two ordinary reasons to land here, and this cannot tell them apart from
+    # the page alone, so it claims neither. The first run against production
+    # found eleven changes whose pull request *was* merged and whose heading was
+    # then overwritten hours later by a better one -- "not merged yet" would
+    # have been false for every one of them.
     return VerificationResult(
         is_verified=False,
         observed_snippet=live_body[:200].strip(),
         http_status=live_status,
         notes=(
             f"{len(missing)} of {len(fragments)} expected line(s) absent from the live page. "
-            "The change may not be merged yet."
+            "The change is either not merged yet or has since been superseded."
         ),
     )
 
