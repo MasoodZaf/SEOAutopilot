@@ -8,6 +8,7 @@ import {apiJson} from "@/lib/server-api";
 import {
   approveProposalAction,
   connectDnsProvider,
+  draftProposalAction,
   connectSearchConsole,
   createDnsProviderVerification,
   createCalibrationSet,
@@ -555,6 +556,22 @@ export default async function PilotPage({searchParams}: PageProps) {
                         <span className="rounded border border-zinc-700 px-2 py-1 uppercase text-zinc-400">{opportunity.risk} risk</span>
                         <span className="rounded border border-amber-800 bg-amber-950/40 px-2 py-1 text-amber-300">Human review required</span>
                       </div>
+                      {/*
+                        Drafting is not approving. This builds the change the
+                        opportunity implies and submits it for review; it writes
+                        nothing to the site. A repairable opportunity with no
+                        button was a finding that could never become a change.
+                      */}
+                      <form action={draftProposalAction} className="mt-3">
+                        <input type="hidden" name="site_host" value={data.target.host} />
+                        <input type="hidden" name="opportunity_id" value={opportunity.id} />
+                        <button
+                          type="submit"
+                          className="rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:text-white"
+                        >
+                          Draft proposal
+                        </button>
+                      </form>
                     </div>
                     <div className="mt-3 grid gap-3 border-t border-zinc-800 pt-3 sm:grid-cols-2">
                       <div>

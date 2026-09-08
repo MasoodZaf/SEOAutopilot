@@ -378,3 +378,29 @@ export async function rollbackProposalAction(formData: FormData): Promise<never>
   }
   redirect(pilotPath(host, {proposal: "rolled_back"}));
 }
+
+/**
+ * Turn an opportunity into a proposal.
+ *
+ * The step the workspace never had. Opportunities were listed, proposals could
+ * be approved, deployed and rolled back, and nothing in the app connected the
+ * two -- so a finding became a change only if an operator holding the pilot
+ * token called the endpoint by hand. Retiring that token on 2026-09-08 left
+ * wordkitapp.com with 13 scored opportunities, a repository to write to, and no
+ * route between them.
+ *
+ * Drafting is not approving. The draft goes through `create_proposal` like any
+ * hand-authored change: classified by risk, validated, and left waiting for a
+ * human. This button writes nothing to the site.
+ */
+export async function draftProposalAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const opportunityId = String(formData.get("opportunity_id") ?? "");
+  try {
+    await apiJson(`/v1/opportunities/${opportunityId}/proposal-draft`, {method: "POST"});
+  } catch (error) {
+    unstable_rethrow(error);
+    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirect(pilotPath(host, {proposal: "drafted"}));
+}
