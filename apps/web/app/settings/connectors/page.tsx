@@ -4,7 +4,11 @@ import type {Metadata} from "next";
 import type {Site} from "@/app/pilot/model";
 import {ApiError, apiJson} from "@/lib/server-api";
 
-import {connectAnalyticsAction, connectSearchConsoleAction} from "./actions";
+import {
+  connectAnalyticsAction,
+  connectRepositoryAction,
+  connectSearchConsoleAction,
+} from "./actions";
 
 type PageProps = {searchParams: Promise<{google?: string; error?: string}>};
 
@@ -35,6 +39,11 @@ const REASONS: Record<string, string> = {
   google_connector_not_configured:
     "Google connectors are not configured on this deployment.",
   site_not_verified: "This site has not completed host verification, so no property can be bound to it.",
+  repository_and_token_required: "Enter the repository and a token that can read it.",
+  github_connector_not_configured:
+    "GitHub connectors are not configured on this deployment.",
+  github_repository_unreachable:
+    "That repository could not be read with that token. Check the name, the branch, and that the token has contents access to it.",
   oauth_scope_mismatch:
     "Google granted different scopes than were asked for. Start the consent again and accept everything requested.",
 };
@@ -121,6 +130,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
             const connectors = connectorsBySite.get(site.id) ?? [];
             const search = connectors.find((c) => c.type === "google_search_console");
             const analytics = connectors.find((c) => c.type === "google_analytics");
+            const repository = connectors.find((c) => c.type === "github_repository");
             return (
               <section
                 key={site.id}
@@ -147,6 +157,12 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
                   <dt className="text-slate-500">Property</dt>
                   <dd className="break-all font-mono text-xs">
                     {analytics?.external_account_ref ?? "—"}
+                  </dd>
+                  <dt className="text-slate-500">Repository</dt>
+                  <dd className="font-medium capitalize">{label(repository?.status)}</dd>
+                  <dt className="text-slate-500">Target</dt>
+                  <dd className="break-all font-mono text-xs">
+                    {repository?.external_account_ref ?? "—"}
                   </dd>
                 </dl>
 
@@ -185,6 +201,78 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
                       className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
                     >
                       Connect Search Console
+                    </button>
+                  </form>
+                )}
+
+                {repository?.status === "active" ? null : (
+                  <form
+                    action={connectRepositoryAction}
+                    className="mt-5 border-t border-slate-200 pt-5"
+                  >
+                    <input type="hidden" name="site_id" value={site.id} />
+                    <p className="text-sm font-medium text-slate-800">Repository</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Where approved changes are written. Without it this site can be
+                      measured and never changed — a proposal is only drafted after the
+                      real file has been read.
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="text-sm text-slate-800">
+                        Repository
+                        <input
+                          name="repository"
+                          required
+                          autoComplete="off"
+                          placeholder="owner/name"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-800">
+                        Base branch
+                        <input
+                          name="base_branch"
+                          defaultValue="main"
+                          autoComplete="off"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-800 sm:col-span-2">
+                        Path template
+                        <input
+                          name="path_template"
+                          defaultValue="{path}.html"
+                          autoComplete="off"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
+                        />
+                        <span className="mt-1 block text-xs font-normal text-slate-500">
+                          How a URL path becomes a file path. This cannot be inferred —
+                          two sites can share one repository under different directories.
+                          For <span className="font-mono">/unscramble-tool</span> stored at{" "}
+                          <span className="font-mono">WordKit/unscramble-tool.html</span>,
+                          use <span className="font-mono">{"WordKit/{path}.html"}</span>.
+                        </span>
+                      </label>
+                      <label className="text-sm text-slate-800 sm:col-span-2">
+                        Access token
+                        <input
+                          name="access_token"
+                          type="password"
+                          required
+                          autoComplete="off"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900"
+                        />
+                        <span className="mt-1 block text-xs font-normal text-slate-500">
+                          Needs contents and pull-request access to that repository.
+                          Sent once over TLS, sealed, and never returned by the API.
+                        </span>
+                      </label>
+                    </div>
+                    <button
+                      type="submit"
+                      className="mt-3 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                    >
+                      Connect repository
                     </button>
                   </form>
                 )}

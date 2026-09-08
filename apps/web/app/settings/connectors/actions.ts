@@ -74,3 +74,47 @@ export async function connectSearchConsoleAction(formData: FormData): Promise<ne
   }
   redirect(authorizationUrl);
 }
+
+/**
+ * Bind a site to the repository its pages are built from.
+ *
+ * Without this a site can be measured and never changed: the proposal drafter
+ * reads the real file from the repository before it will produce an edit, so
+ * an unconnected site has findings, opportunities, and no route to a proposal.
+ * That was wordkitapp.com on 2026-09-08 — 13 pages sharing one heading, twelve
+ * of them deriving a clean replacement, and nothing able to write it.
+ *
+ * The path template is the part worth explaining rather than defaulting. A
+ * crawled URL path is not a repository path, and the mapping is a property of
+ * how the site is built, not something that can be inferred: two sites can live
+ * in one repository under different directories, which is exactly the case
+ * here. `/unscramble-tool` is `WordKit/unscramble-tool.html`, and its sibling
+ * site in the same repository is `CalcHive/{path}.html`.
+ *
+ * The token is sent once over TLS, sealed, and never returned by the API.
+ */
+export async function connectRepositoryAction(formData: FormData): Promise<never> {
+  const siteId = String(formData.get("site_id") ?? "").trim();
+  const repository = String(formData.get("repository") ?? "").trim();
+  const baseBranch = String(formData.get("base_branch") ?? "").trim() || "main";
+  const pathTemplate = String(formData.get("path_template") ?? "").trim() || "{path}.html";
+  const accessToken = String(formData.get("access_token") ?? "").trim();
+  if (!siteId || !repository || !accessToken) {
+    redirect(`${PAGE}?error=repository_and_token_required`);
+  }
+
+  try {
+    await apiJson(`/v1/sites/${siteId}/connectors/github/token`, {
+      method: "POST",
+      body: JSON.stringify({
+        repository,
+        base_branch: baseBranch,
+        path_template: pathTemplate,
+        access_token: accessToken,
+      }),
+    });
+  } catch (error) {
+    failure(error);
+  }
+  redirect(`${PAGE}?github=connected`);
+}
