@@ -44,17 +44,27 @@ async function credential(): Promise<string> {
           refreshToken: renewed.refresh_token ?? session.refreshToken,
           expiresAt: Math.floor(Date.now() / 1000) + renewed.expires_in,
         };
-        // A Server Component cannot set a cookie, so the renewed session is used
-        // for this request and re-minted on the next one. Getting that wrong
-        // throws at runtime in Next; the cost here is one refresh per request
-        // for a session in its last minute, which is bounded and brief.
-        store.set?.(SESSION_COOKIE, seal(next), {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: process.env.NODE_ENV === "production",
-          path: "/",
-          maxAge: 60 * 60 * 12,
-        });
+        // A Server Component cannot set a cookie. `set` is *present* on the
+        // store and throws when called there, so `?.` guarded nothing: the
+        // throw was caught below and reported as `session-expired` — for a
+        // refresh that had just succeeded. Every page render past the token's
+        // first hour failed that way, while server actions kept working,
+        // because those may set cookies.
+        //
+        // Persisting is an optimisation, so it fails on its own. Losing it
+        // costs one refresh per render; treating it as a failed sign-in costs
+        // the session.
+        try {
+          store.set(SESSION_COOKIE, seal(next), {
+            httpOnly: true,
+            sameSite: "lax",
+            secure: process.env.NODE_ENV === "production",
+            path: "/",
+            maxAge: 60 * 60 * 12,
+          });
+        } catch {
+          // Rendering, not acting. The token below is still the renewed one.
+        }
         return next.accessToken;
       } catch {
         throw new ApiError(401, "session-expired");
