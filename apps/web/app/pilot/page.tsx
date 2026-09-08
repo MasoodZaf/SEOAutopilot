@@ -8,6 +8,7 @@ import {apiJson} from "@/lib/server-api";
 import {
   approveProposalAction,
   connectDnsProvider,
+  deployProposalAction,
   draftProposalAction,
   setApproverCountAction,
   setSiteModeAction,
@@ -17,6 +18,7 @@ import {
   createCalibrationSet,
   onboardPortfolioSite,
   refreshDnsChallenge,
+  rollbackProposalAction,
   runPolicySimulationAction,
   startFirstCrawl,
   startPerformanceRun,
@@ -765,15 +767,52 @@ export default async function PilotPage({searchParams}: PageProps) {
                             </form>
                           </>
                         )}
+                        {/*
+                          An approved proposal used to render the words
+                          "Connector certification required" and nothing else.
+                          The endpoint existed, the action existed, and no
+                          button in the app called it -- so a change could be
+                          drafted, validated and approved here and then had to
+                          be deployed by hand with a bearer token. The sentence
+                          was also untrue: the repository connector is active
+                          and has carried 48 deployments for another site.
+
+                          Deploying opens a pull request. It does not merge:
+                          the adapter has never had merge authority, so the
+                          change reaches the live site only when a person
+                          merges it.
+                        */}
                         {prop.status === "approved" && (
-                          <span className="rounded border border-amber-800 bg-amber-950 px-2.5 py-1 text-xs font-medium text-amber-300">
-                            Connector certification required
-                          </span>
+                          <form action={deployProposalAction}>
+                            <input type="hidden" name="site_host" value={data.target.host} />
+                            <input type="hidden" name="proposal_id" value={prop.id} />
+                            {/*
+                              Keyed on the proposal, so a double click or a
+                              retry after a timeout is the same intent rather
+                              than a second pull request.
+                            */}
+                            <input type="hidden" name="idempotency_key" value={`deploy-${prop.id}`} />
+                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-500">
+                              Deploy
+                            </button>
+                          </form>
                         )}
+                        {/*
+                          Likewise: "External rollback not configured" stood
+                          where the control belonged. Rollback is configured --
+                          it opens a revert pull request, and the reconciler
+                          watches whether anybody merges it. Requesting one is
+                          not undoing anything, which is why the label says
+                          what it does.
+                        */}
                         {prop.status === "deployed" && (
-                          <span className="rounded border border-red-800 bg-red-950 px-2.5 py-1 text-xs font-medium text-red-300">
-                            External rollback not configured
-                          </span>
+                          <form action={rollbackProposalAction}>
+                            <input type="hidden" name="site_host" value={data.target.host} />
+                            <input type="hidden" name="proposal_id" value={prop.id} />
+                            <button type="submit" className="rounded border border-red-800 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-600 hover:text-red-200">
+                              Request revert
+                            </button>
+                          </form>
                         )}
                       </div>
                     </div>
