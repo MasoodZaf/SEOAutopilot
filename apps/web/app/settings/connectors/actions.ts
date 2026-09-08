@@ -1,8 +1,23 @@
 "use server";
 
+import {revalidatePath} from "next/cache";
 import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
+
+/**
+ * Redirect, and invalidate the page being returned to.
+ *
+ * Without this the redirect is served from the client router cache, and a
+ * redirect to the URL already on screen is a no-op navigation -- the mutation
+ * lands on the API and the page silently keeps showing what it showed before.
+ * See the same helper in app/pilot/actions.ts for what that cost.
+ */
+function redirectFresh(path: string): never {
+  revalidatePath("/settings/connectors", "page");
+  redirect(path);
+}
+
 
 const PAGE = "/settings/connectors";
 
@@ -13,7 +28,7 @@ function failure(error: unknown): never {
   // own redirects are not rewritten as a generic error.
   unstable_rethrow(error);
   const code = error instanceof ApiError ? error.code : "unexpected-error";
-  redirect(`${PAGE}?error=${encodeURIComponent(code)}`);
+  redirectFresh(`${PAGE}?error=${encodeURIComponent(code)}`);
 }
 
 /**
@@ -27,7 +42,7 @@ function failure(error: unknown): never {
 export async function connectAnalyticsAction(formData: FormData): Promise<never> {
   const siteId = String(formData.get("site_id") ?? "").trim();
   const propertyRef = String(formData.get("property_ref") ?? "").trim();
-  if (!siteId || !propertyRef) redirect(`${PAGE}?error=site_and_property_required`);
+  if (!siteId || !propertyRef) redirectFresh(`${PAGE}?error=site_and_property_required`);
 
   let authorizationUrl: string;
   try {
@@ -39,7 +54,7 @@ export async function connectAnalyticsAction(formData: FormData): Promise<never>
   } catch (error) {
     failure(error);
   }
-  redirect(authorizationUrl);
+  redirectFresh(authorizationUrl);
 }
 
 /**
@@ -60,7 +75,7 @@ export async function connectAnalyticsAction(formData: FormData): Promise<never>
 export async function connectSearchConsoleAction(formData: FormData): Promise<never> {
   const siteId = String(formData.get("site_id") ?? "").trim();
   const propertyRef = String(formData.get("property_ref") ?? "").trim();
-  if (!siteId || !propertyRef) redirect(`${PAGE}?error=site_and_property_required`);
+  if (!siteId || !propertyRef) redirectFresh(`${PAGE}?error=site_and_property_required`);
 
   let authorizationUrl: string;
   try {
@@ -72,7 +87,7 @@ export async function connectSearchConsoleAction(formData: FormData): Promise<ne
   } catch (error) {
     failure(error);
   }
-  redirect(authorizationUrl);
+  redirectFresh(authorizationUrl);
 }
 
 /**
@@ -100,7 +115,7 @@ export async function connectRepositoryAction(formData: FormData): Promise<never
   const pathTemplate = String(formData.get("path_template") ?? "").trim() || "{path}.html";
   const accessToken = String(formData.get("access_token") ?? "").trim();
   if (!siteId || !repository || !accessToken) {
-    redirect(`${PAGE}?error=repository_and_token_required`);
+    redirectFresh(`${PAGE}?error=repository_and_token_required`);
   }
 
   try {
@@ -116,5 +131,5 @@ export async function connectRepositoryAction(formData: FormData): Promise<never
   } catch (error) {
     failure(error);
   }
-  redirect(`${PAGE}?github=connected`);
+  redirectFresh(`${PAGE}?github=connected`);
 }

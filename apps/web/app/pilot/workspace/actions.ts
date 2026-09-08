@@ -1,5 +1,6 @@
 "use server";
 
+import {revalidatePath} from "next/cache";
 import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
@@ -7,6 +8,20 @@ import {ApiError, apiJson} from "@/lib/server-api";
 import {resolvePortfolioSite} from "../portfolio.mjs";
 import type {AgentSession} from "./model";
 import {resolveTab, workspacePath} from "./paths";
+
+/**
+ * Redirect, and invalidate the workspace page being returned to.
+ *
+ * This module had the sharpest form of the defect. Sending a chat message
+ * redirects to `workspacePath(host, {tab: "chat", session})` -- the URL the
+ * message was typed on -- so without invalidating first, the second message in
+ * a session reached the API and never appeared in the transcript. The reply
+ * existed; the page was showing a cached render from before it was sent.
+ */
+function redirectFresh(path: string): never {
+  revalidatePath("/pilot/workspace", "page");
+  redirect(path);
+}
 
 type SiteCollection = {data: Array<{id: string; normalized_host: string}>};
 type SessionEnvelope = {data: AgentSession};
@@ -30,18 +45,18 @@ export async function startConversation(formData: FormData): Promise<never> {
   const rawTitle = formData.get("title");
   const title = typeof rawTitle === "string" && rawTitle.trim() ? rawTitle.trim() : "New conversation";
   const siteId = await siteIdFor(host);
-  if (!siteId) redirect(workspacePath(host, {error: "site_not_onboarded"}));
+  if (!siteId) redirectFresh(workspacePath(host, {error: "site_not_onboarded"}));
   try {
     const created = await apiJson<SessionEnvelope>(`/v1/sites/${siteId}/agent-sessions`, {
       method: "POST",
       body: JSON.stringify({title: title.slice(0, 200)}),
     });
-    redirect(workspacePath(host, {tab: "chat", session: created.data.id}));
+    redirectFresh(workspacePath(host, {tab: "chat", session: created.data.id}));
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    if (error instanceof ApiError) redirect(workspacePath(host, {error: safeCode(error.code)}));
+    if (error instanceof ApiError) redirectFresh(workspacePath(host, {error: safeCode(error.code)}));
     throw error;
   }
 }
@@ -51,7 +66,7 @@ export async function sendMessage(formData: FormData): Promise<never> {
   const sessionId = String(formData.get("session_id") ?? "");
   const body = String(formData.get("body") ?? "").trim();
   const skillKey = formData.get("skill_key");
-  if (!sessionId || !body) redirect(workspacePath(host, {tab: "chat", session: sessionId}));
+  if (!sessionId || !body) redirectFresh(workspacePath(host, {tab: "chat", session: sessionId}));
   try {
     await apiJson(`/v1/agent-sessions/${sessionId}/messages`, {
       method: "POST",
@@ -60,13 +75,13 @@ export async function sendMessage(formData: FormData): Promise<never> {
         skill_key: typeof skillKey === "string" && skillKey ? skillKey : null,
       }),
     });
-    redirect(workspacePath(host, {tab: "chat", session: sessionId}));
+    redirectFresh(workspacePath(host, {tab: "chat", session: sessionId}));
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
     if (error instanceof ApiError) {
-      redirect(workspacePath(host, {tab: "chat", session: sessionId, error: safeCode(error.code)}));
+      redirectFresh(workspacePath(host, {tab: "chat", session: sessionId, error: safeCode(error.code)}));
     }
     throw error;
   }
@@ -79,7 +94,7 @@ export async function scheduleRoutine(formData: FormData): Promise<never> {
   const enabled = formData.get("enabled") === "true";
   const tab = resolveTab(formData.get("tab"));
   const siteId = await siteIdFor(host);
-  if (!siteId) redirect(workspacePath(host, {error: "site_not_onboarded"}));
+  if (!siteId) redirectFresh(workspacePath(host, {error: "site_not_onboarded"}));
   try {
     await apiJson(`/v1/sites/${siteId}/routines`, {
       method: "PUT",
@@ -93,12 +108,12 @@ export async function scheduleRoutine(formData: FormData): Promise<never> {
         enabled,
       }),
     });
-    redirect(workspacePath(host, {tab}));
+    redirectFresh(workspacePath(host, {tab}));
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    if (error instanceof ApiError) redirect(workspacePath(host, {tab, error: safeCode(error.code)}));
+    if (error instanceof ApiError) redirectFresh(workspacePath(host, {tab, error: safeCode(error.code)}));
     throw error;
   }
 }
@@ -109,12 +124,12 @@ export async function runRoutineNow(formData: FormData): Promise<never> {
   const tab = resolveTab(formData.get("tab"));
   try {
     await apiJson(`/v1/routines/${routineId}/runs`, {method: "POST"});
-    redirect(workspacePath(host, {tab}));
+    redirectFresh(workspacePath(host, {tab}));
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    if (error instanceof ApiError) redirect(workspacePath(host, {tab, error: safeCode(error.code)}));
+    if (error instanceof ApiError) redirectFresh(workspacePath(host, {tab, error: safeCode(error.code)}));
     throw error;
   }
 }

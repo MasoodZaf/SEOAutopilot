@@ -1,6 +1,7 @@
 "use server";
 
 import {cookies} from "next/headers";
+import {revalidatePath} from "next/cache";
 import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
@@ -20,6 +21,30 @@ type ChallengeEnvelope = {
 };
 type ConnectorAuthorizationEnvelope = {data: {authorization_url: string}};
 type CrawlEnvelope = {data: {id: string; status: string}};
+
+/**
+ * Redirect, and make sure the page landed on is actually re-rendered.
+ *
+ * Every action here mutates through the API and then redirects back to
+ * /pilot. Without invalidating the route first, that redirect is served from
+ * the client router cache -- and when the target is the URL already on screen
+ * it is a no-op navigation, so nothing re-renders and nothing appears to have
+ * happened at all.
+ *
+ * That is not theoretical. On 2026-09-08 it made the dashboard behave as if
+ * every button but the first were dead: withdraw a proposal, and the next
+ * click did nothing, silently, until the page was reloaded by hand. Nineteen
+ * withdrawals took nineteen manual reloads. A 409 refused by the daily change
+ * budget looked identical to a click that never registered, which is the worse
+ * half -- a real refusal the operator could not see.
+ *
+ * `redirect()` throws, so this never returns and the revalidation has to come
+ * first.
+ */
+function redirectFresh(path: string): never {
+  revalidatePath("/pilot", "page");
+  redirect(path);
+}
 
 function errorUrl(host: string, code: string): string {
   const safeCode = /^[a-z0-9_-]+$/i.test(code) ? code : "unexpected-error";
@@ -74,16 +99,16 @@ export async function onboardPortfolioSite(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(target.host));
+  redirectFresh(pilotPath(target.host));
 }
 
 export async function refreshDnsChallenge(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     const challenge = await apiJson<ChallengeEnvelope>(
       `/v1/sites/${site.id}/verification-challenges`,
       {method: "POST", body: "{}"},
@@ -93,22 +118,22 @@ export async function refreshDnsChallenge(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host));
+  redirectFresh(pilotPath(host));
 }
 
 export async function verifyPortfolioDns(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const encoded = (await cookies()).get(challengeCookie)?.value;
-    if (!encoded) redirect(errorUrl(host, "verification-challenge-expired"));
+    if (!encoded) redirectFresh(errorUrl(host, "verification-challenge-expired"));
     const challenge = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
       siteId: string;
       token: string;
     };
     const site = await portfolioSite(host);
-    if (!site || site.id !== challenge.siteId) redirect(errorUrl(host, "verification-challenge-mismatch"));
+    if (!site || site.id !== challenge.siteId) redirectFresh(errorUrl(host, "verification-challenge-mismatch"));
     await apiJson(`/v1/sites/${site.id}/verify`, {
       method: "POST",
       body: JSON.stringify({token: challenge.token}),
@@ -118,9 +143,9 @@ export async function verifyPortfolioDns(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {verified: "true"}));
+  redirectFresh(pilotPath(host, {verified: "true"}));
 }
 
 export async function connectSearchConsole(formData: FormData): Promise<never> {
@@ -128,7 +153,7 @@ export async function connectSearchConsole(formData: FormData): Promise<never> {
   let authorizationUrl: string;
   try {
     const site = await portfolioSite(target.host);
-    if (!site) redirect(pilotPath(target.host));
+    if (!site) redirectFresh(pilotPath(target.host));
     const result = await apiJson<ConnectorAuthorizationEnvelope>(
       `/v1/sites/${site.id}/connectors/google_search_console/authorize`,
       {
@@ -141,9 +166,9 @@ export async function connectSearchConsole(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(authorizationUrl);
+  redirectFresh(authorizationUrl);
 }
 
 export async function connectDnsProvider(formData: FormData): Promise<never> {
@@ -152,11 +177,11 @@ export async function connectDnsProvider(formData: FormData): Promise<never> {
   const zoneId = String(formData.get("zone_id") ?? "").trim();
   const apiToken = String(formData.get("api_token") ?? "").trim();
   if (!/^[a-z0-9_-]{2,48}$/i.test(providerKey) || !/^[a-f0-9]{32}$/i.test(zoneId) || apiToken.length < 20) {
-    redirect(errorUrl(host, "dns-provider-connection-invalid"));
+    redirectFresh(errorUrl(host, "dns-provider-connection-invalid"));
   }
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     await apiJson(`/v1/sites/${site.id}/dns-connectors/${encodeURIComponent(providerKey)}`, {
       method: "POST",
       body: JSON.stringify({zone_id: zoneId.toLowerCase(), api_token: apiToken}),
@@ -165,9 +190,9 @@ export async function connectDnsProvider(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {dns_provider: "connected"}));
+  redirectFresh(pilotPath(host, {dns_provider: "connected"}));
 }
 
 export async function createDnsProviderVerification(formData: FormData): Promise<never> {
@@ -175,10 +200,10 @@ export async function createDnsProviderVerification(formData: FormData): Promise
   const providerKey = String(formData.get("provider_key") ?? "").trim();
   try {
     const encoded = (await cookies()).get(challengeCookie)?.value;
-    if (!encoded) redirect(errorUrl(host, "verification-challenge-expired"));
+    if (!encoded) redirectFresh(errorUrl(host, "verification-challenge-expired"));
     const challenge = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {siteId: string; token: string};
     const site = await portfolioSite(host);
-    if (!site || site.id !== challenge.siteId) redirect(errorUrl(host, "verification-challenge-mismatch"));
+    if (!site || site.id !== challenge.siteId) redirectFresh(errorUrl(host, "verification-challenge-mismatch"));
     await apiJson(`/v1/sites/${site.id}/dns-connectors/${encodeURIComponent(providerKey)}/verification`, {
       method: "POST",
       body: JSON.stringify({token: challenge.token}),
@@ -187,16 +212,16 @@ export async function createDnsProviderVerification(formData: FormData): Promise
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {dns_provider: "record-created"}));
+  redirectFresh(pilotPath(host, {dns_provider: "record-created"}));
 }
 
 export async function startFirstCrawl(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     const result = await apiJson<CrawlEnvelope>(`/v1/sites/${site.id}/crawls`, {
       method: "POST",
       body: JSON.stringify({
@@ -217,16 +242,16 @@ export async function startFirstCrawl(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {crawl: "queued"}));
+  redirectFresh(pilotPath(host, {crawl: "queued"}));
 }
 
 export async function startPerformanceRun(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     const idempotencyKey = String(formData.get("idempotency_key") ?? "");
     await apiJson(`/v1/sites/${site.id}/performance-runs`, {
       method: "POST",
@@ -237,16 +262,16 @@ export async function startPerformanceRun(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {performance: "queued"}));
+  redirectFresh(pilotPath(host, {performance: "queued"}));
 }
 
 export async function createCalibrationSet(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     const idempotencyKey = String(formData.get("idempotency_key") ?? "");
     await apiJson(`/v1/sites/${site.id}/calibrations`, {
       method: "POST",
@@ -257,15 +282,15 @@ export async function createCalibrationSet(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {calibration: "created"}));
+  redirectFresh(pilotPath(host, {calibration: "created"}));
 }
 
 export async function submitCalibrationReview(formData: FormData): Promise<never> {
   const itemId = String(formData.get("item_id") ?? "");
   const safeItemId = /^[0-9a-f-]{36}$/i.test(itemId) ? itemId : "";
-  if (!safeItemId) redirect(errorUrl("codearc.net", "invalid-calibration-item"));
+  if (!safeItemId) redirectFresh(errorUrl("codearc.net", "invalid-calibration-item"));
   try {
     const idempotencyKey = String(formData.get("idempotency_key") ?? "");
     await apiJson(`/v1/calibration-items/${safeItemId}/reviews`, {
@@ -283,16 +308,16 @@ export async function submitCalibrationReview(formData: FormData): Promise<never
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
     const code = error instanceof ApiError ? error.code : "unexpected-error";
-    redirect(`/pilot/review/${safeItemId}?error=${encodeURIComponent(code)}`);
+    redirectFresh(`/pilot/review/${safeItemId}?error=${encodeURIComponent(code)}`);
   }
-  redirect("/pilot?reviewed=true");
+  redirectFresh("/pilot?reviewed=true");
 }
 
 export async function toggleEmergencyFreezeAction(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     const currentFreeze = formData.get("current_freeze") === "true";
     if (currentFreeze) {
       await apiJson(`/v1/sites/${site.id}/governance/unfreeze`, {method: "POST"});
@@ -306,24 +331,24 @@ export async function toggleEmergencyFreezeAction(formData: FormData): Promise<n
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {governance: "updated"}));
+  redirectFresh(pilotPath(host, {governance: "updated"}));
 }
 
 export async function runPolicySimulationAction(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
     const site = await portfolioSite(host);
-    if (!site) redirect(pilotPath(host));
+    if (!site) redirectFresh(pilotPath(host));
     await apiJson(`/v1/sites/${site.id}/simulation`, {method: "POST"});
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {simulation: "completed"}));
+  redirectFresh(pilotPath(host, {simulation: "completed"}));
 }
 
 export async function approveProposalAction(formData: FormData): Promise<never> {
@@ -338,9 +363,9 @@ export async function approveProposalAction(formData: FormData): Promise<never> 
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {proposal: "approved"}));
+  redirectFresh(pilotPath(host, {proposal: "approved"}));
 }
 
 export async function deployProposalAction(formData: FormData): Promise<never> {
@@ -357,9 +382,9 @@ export async function deployProposalAction(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {proposal: "deployed"}));
+  redirectFresh(pilotPath(host, {proposal: "deployed"}));
 }
 
 export async function rollbackProposalAction(formData: FormData): Promise<never> {
@@ -374,9 +399,9 @@ export async function rollbackProposalAction(formData: FormData): Promise<never>
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {proposal: "rolled_back"}));
+  redirectFresh(pilotPath(host, {proposal: "rolled_back"}));
 }
 
 /**
@@ -400,9 +425,9 @@ export async function draftProposalAction(formData: FormData): Promise<never> {
     await apiJson(`/v1/opportunities/${opportunityId}/proposal-draft`, {method: "POST"});
   } catch (error) {
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {proposal: "drafted"}));
+  redirectFresh(pilotPath(host, {proposal: "drafted"}));
 }
 
 /**
@@ -425,7 +450,7 @@ export async function setSiteModeAction(formData: FormData): Promise<never> {
   const siteId = String(formData.get("site_id") ?? "");
   const mode = String(formData.get("mode") ?? "");
   const reason = String(formData.get("reason") ?? "").trim();
-  if (!reason) redirect(errorUrl(host, "a_reason_is_required"));
+  if (!reason) redirectFresh(errorUrl(host, "a_reason_is_required"));
   try {
     await apiJson(`/v1/sites/${siteId}/governance/mode`, {
       method: "PATCH",
@@ -433,9 +458,9 @@ export async function setSiteModeAction(formData: FormData): Promise<never> {
     });
   } catch (error) {
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {governance: `mode-${mode}`}));
+  redirectFresh(pilotPath(host, {governance: `mode-${mode}`}));
 }
 
 /**
@@ -466,9 +491,9 @@ export async function setApproverCountAction(formData: FormData): Promise<never>
     });
   } catch (error) {
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {governance: clear ? "approvers-default" : `approvers-${raw}`}));
+  redirectFresh(pilotPath(host, {governance: clear ? "approvers-default" : `approvers-${raw}`}));
 }
 
 /**
@@ -494,7 +519,7 @@ export async function withdrawProposalAction(formData: FormData): Promise<never>
     });
   } catch (error) {
     unstable_rethrow(error);
-    redirect(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
-  redirect(pilotPath(host, {proposal: "withdrawn"}));
+  redirectFresh(pilotPath(host, {proposal: "withdrawn"}));
 }
