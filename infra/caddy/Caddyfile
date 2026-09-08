@@ -1,5 +1,9 @@
 {
-	email ai@aurmak.com
+	# No ACME contact address, deliberately. Caddy registers with the CA
+	# anonymously and renewal is automatic either way; what is given up is
+	# Let's Encrypt's expiry warning mail, which was going to an address
+	# nobody here reads. A failed renewal surfaces as the hourly perimeter
+	# check failing on https, not as a message to a person.
 	servers {
 		# Requests arrive via the Cloudflare proxy, so without this every
 		# client looks like a Cloudflare edge IP and client_ip cannot work.
