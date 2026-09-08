@@ -12,7 +12,11 @@ from app.db.models import (
     Proposal,
     SearchMetric,
 )
-from app.domain.measurement import calculate_measurement_delta, verify_rendered_content
+from app.domain.measurement import (
+    calculate_measurement_delta,
+    changed_lines,
+    verify_rendered_content,
+)
 from app.services.measurements import MeasurementService
 
 
@@ -295,3 +299,43 @@ async def test_measurement_requires_complete_followup_window() -> None:
     assert exc.value.status_code == 409
     assert exc.value.detail == "measurement_window_incomplete"
     session.scalars.assert_not_awaited()
+
+
+def test_the_evidence_is_what_the_change_adds() -> None:
+    """Not the whole file, which is what `after_content` holds.
+
+    Requiring the entire document verbatim asks whether the served page is
+    byte-identical to the source -- a question that answers "no" the moment
+    anything else in the file changes, and that never distinguishes this change
+    from any other.
+    """
+    diff = (
+        "--- a/WordKit/rhyme-tool.html\n"
+        "+++ b/WordKit/rhyme-tool.html\n"
+        "@@ -79,7 +79,7 @@\n"
+        ' <div class="hero">\n'
+        "-    <h1>The word<br>toolkit for<em>every game</em></h1>\n"
+        "+    <h1>Rhyme Finder</h1>\n"
+        '     <p class="hero-sub">Unscramble letters</p>\n'
+    )
+    # The `+++` header line is a header, not an addition.
+    assert changed_lines(diff) == ["<h1>Rhyme Finder</h1>"]
+
+
+def test_a_page_is_verified_on_the_changed_line_not_on_its_indentation() -> None:
+    live = "<html><body><div class='hero'>\n  <h1>Rhyme Finder</h1>\n</div></body></html>"
+    assert verify_rendered_content("<h1>Rhyme Finder</h1>", live, 200).is_verified
+
+    # Every added line has to be there, not merely one of them.
+    both = "<h1>Rhyme Finder</h1>\n<title>Rhyme Finder — WordKit</title>"
+    result = verify_rendered_content(both, live, 200)
+    assert not result.is_verified
+    assert "1 of 2" in result.notes
+    # Said plainly, because this is what an unmerged pull request looks like.
+    assert "may not be merged yet" in result.notes
+
+
+def test_an_error_page_is_never_verified() -> None:
+    live = "<h1>Rhyme Finder</h1>"
+    assert not verify_rendered_content(live, live, 404).is_verified
+    assert not verify_rendered_content(live, live, 500).is_verified

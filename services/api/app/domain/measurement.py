@@ -13,6 +13,29 @@ class VerificationResult:
         return asdict(self)
 
 
+def changed_lines(diff_unified: str) -> list[str]:
+    """The lines a change introduces, as the evidence to look for on the live page.
+
+    Verification used to look for `proposal.after_content` -- the whole file --
+    inside the live HTML, which passes only when the served document is
+    byte-identical to the source. That is the wrong question twice over: it
+    fails on any unrelated later edit to the same file, and it succeeds without
+    ever establishing that *this* change is the one that landed.
+
+    The added lines of the diff are what this change actually asserts about the
+    page. For an `h1_repair` that is a single `<h1>` element, which is precisely
+    what should be visible once the pull request is merged.
+    """
+    added = []
+    for line in diff_unified.splitlines():
+        if line.startswith("+++") or not line.startswith("+"):
+            continue
+        text = line[1:].strip()
+        if text:
+            added.append(text)
+    return added
+
+
 def verify_rendered_content(
     expected_pattern: str,
     live_body: str,
@@ -27,35 +50,49 @@ def verify_rendered_content(
             notes=f"Target page returned error status {live_status}.",
         )
 
-    clean_pattern = expected_pattern.strip().lower()
     clean_body = live_body.lower()
 
-    if clean_pattern in clean_body:
-        idx = clean_body.find(clean_pattern)
-        start = max(0, idx - 40)
-        end = min(len(live_body), idx + len(clean_pattern) + 40)
-        snippet = live_body[start:end].strip()
-        return VerificationResult(
-            is_verified=True,
-            observed_snippet=snippet,
-            http_status=live_status,
-            notes="Rendered verification passed. Expected pattern observed in live HTML.",
-        )
-    else:
-        # Check partial token match
-        tokens = [t for t in clean_pattern.split() if len(t) > 3]
-        matched_tokens = [t for t in tokens if t in clean_body]
-        notes = (
-            f"Pattern not found verbatim. Partial token match: {len(matched_tokens)}/{len(tokens)} tokens."
-            if tokens
-            else "Pattern not found."
-        )
+    # Every non-blank line of the expected pattern must appear. A single-line
+    # pattern is the old containment check unchanged; a multi-line one is now
+    # "each of these lines is on the page" rather than "these exact bytes,
+    # including their indentation and line endings, appear consecutively",
+    # which no served document is obliged to preserve.
+    fragments = [line.strip().lower() for line in expected_pattern.splitlines() if line.strip()]
+    if not fragments:
         return VerificationResult(
             is_verified=False,
             observed_snippet=live_body[:200].strip(),
             http_status=live_status,
-            notes=notes,
+            notes="No expected content to look for.",
         )
+
+    missing = [fragment for fragment in fragments if fragment not in clean_body]
+    if not missing:
+        first = fragments[0]
+        idx = clean_body.find(first)
+        start = max(0, idx - 40)
+        end = min(len(live_body), idx + len(first) + 40)
+        return VerificationResult(
+            is_verified=True,
+            observed_snippet=live_body[start:end].strip(),
+            http_status=live_status,
+            notes=(
+                "Rendered verification passed. "
+                f"{len(fragments)} expected line(s) observed in live HTML."
+            ),
+        )
+
+    # Said plainly, because the common reason for landing here is not a broken
+    # deployment: it is a pull request that nobody has merged yet.
+    return VerificationResult(
+        is_verified=False,
+        observed_snippet=live_body[:200].strip(),
+        http_status=live_status,
+        notes=(
+            f"{len(missing)} of {len(fragments)} expected line(s) absent from the live page. "
+            "The change may not be merged yet."
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

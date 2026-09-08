@@ -18,7 +18,11 @@ from app.db.models import (
     Proposal,
     SearchMetric,
 )
-from app.domain.measurement import calculate_measurement_delta, verify_rendered_content
+from app.domain.measurement import (
+    calculate_measurement_delta,
+    changed_lines,
+    verify_rendered_content,
+)
 
 
 def stable_hash(payload: dict[str, Any]) -> str:
@@ -66,7 +70,15 @@ class MeasurementService:
             )
 
         # The caller must supply independently fetched connector/crawler evidence.
-        expected_pattern = proposal.after_content.strip()
+        #
+        # What is looked for is the lines this change *adds*, not the whole
+        # file. `after_content` is the entire document, so requiring it verbatim
+        # asked whether the served page is byte-identical to the source rather
+        # than whether this change is live -- a question that answers "no" the
+        # moment anything else in the file changes, and never distinguishes this
+        # change from any other.
+        added = changed_lines(proposal.diff_unified)
+        expected_pattern = "\n".join(added) if added else proposal.after_content.strip()
         ver_result = verify_rendered_content(expected_pattern, live_body, live_status)
         now = datetime.now(UTC)
         ver_status = "verified" if ver_result.is_verified else "failed"

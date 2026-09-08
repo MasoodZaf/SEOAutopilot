@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     proposal_drafting_enabled: bool = False
     proposal_drafting_interval_seconds: int = 900
     proposal_drafting_batch: int = 20
+    # Whether a deployed change is actually on the live page. Off by default
+    # like the others, and read-only: it fetches the tenant's own pages and
+    # records what it saw. Without it no measurement can ever be computed,
+    # because the measurement refuses without a verification.
+    deployment_verification_enabled: bool = False
+    deployment_verification_interval_seconds: int = 1800
+    deployment_verification_batch: int = 20
     notifications_enabled: bool = False
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
@@ -206,6 +213,14 @@ class Settings(BaseSettings):
                 raise ValueError("PROPOSAL_DRAFTING_INTERVAL_SECONDS must be at least 60")
             if not 1 <= self.proposal_drafting_batch <= 100:
                 raise ValueError("PROPOSAL_DRAFTING_BATCH must be between 1 and 100")
+        if self.deployment_verification_enabled:
+            if self.deployment_verification_interval_seconds < 300:
+                # Each tick fetches a live page per candidate, and a page that
+                # is not merged yet answers the same way every time. Asking a
+                # tenant's own site more often than this is traffic, not news.
+                raise ValueError("DEPLOYMENT_VERIFICATION_INTERVAL_SECONDS must be at least 300")
+            if not 1 <= self.deployment_verification_batch <= 100:
+                raise ValueError("DEPLOYMENT_VERIFICATION_BATCH must be between 1 and 100")
         if self.rollback_reconcile_enabled and self.rollback_reconcile_interval_seconds < 60:
             # A tighter loop is a rate limit waiting to happen against an API
             # that changes state only when a human acts.

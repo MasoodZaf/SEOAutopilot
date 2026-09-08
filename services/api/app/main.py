@@ -26,6 +26,7 @@ from app.api.routes.system import router as system_router
 from app.core.config import get_settings
 from app.core.logging import configure_safe_access_logging
 from app.db.session import relay_engine, tenant_scoped_session
+from app.services.deployment_verification import run_verification_sweep
 from app.services.proposal_drafting import run_drafting_sweep
 from app.services.rollback_reconciliation import run_reconcile_sweep
 
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     """Background work this process owns, started and stopped with it.
 
-    Two sweeps, both polls, both holding their own Postgres advisory lock so
+    Three sweeps, all polls, each holding its own Postgres advisory lock so
     running more than one API process sweeps once rather than N times.
 
     The reconciler asks what happened to a revert pull request: it is merged by
@@ -52,12 +53,23 @@ async def lifespan(_: FastAPI):
     sites whose mode says the platform may propose changes, and it deploys
     nothing.
 
+    The verifier asks the live site whether a deployed change is actually
+    there. Deploying opens a pull request and a person merges it, so the answer
+    arrives at a time nothing here controls. It is also the beginning of the
+    measurement chain: a measurement refuses without a verification, and until
+    this existed nothing ever created one, so no outcome could be computed for
+    any change on any site however long anybody waited.
+
     Each is started only if configured, and each is cancelled and awaited on
     shutdown so a sweep in flight does not outlive the process that owns it.
     """
     tasks: list[asyncio.Task[None]] = []
     client: httpx.AsyncClient | None = None
-    if settings.rollback_reconcile_enabled or settings.proposal_drafting_enabled:
+    if (
+        settings.rollback_reconcile_enabled
+        or settings.proposal_drafting_enabled
+        or settings.deployment_verification_enabled
+    ):
         client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(15.0))
     if settings.rollback_reconcile_enabled and client is not None:
         tasks.append(
@@ -81,6 +93,19 @@ async def lifespan(_: FastAPI):
                     client,
                     interval_seconds=settings.proposal_drafting_interval_seconds,
                     limit=settings.proposal_drafting_batch,
+                )
+            )
+        )
+    if settings.deployment_verification_enabled and client is not None:
+        tasks.append(
+            asyncio.create_task(
+                run_verification_sweep(
+                    relay_engine,
+                    tenant_scoped_session,
+                    settings,
+                    client,
+                    interval_seconds=settings.deployment_verification_interval_seconds,
+                    limit=settings.deployment_verification_batch,
                 )
             )
         )
