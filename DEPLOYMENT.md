@@ -552,34 +552,76 @@ Genuine findings, in priority order:
 
 ## 8. Open items
 
-- [ ] **codearc.net is being updated** — re-crawl when the owner says it's ready,
-      and diff against crawl `957079c3`. Watch two numbers: how many pages still
-      land on `/login` (was 496/500) and how many share a title (was 490/500).
-- [ ] **Register the Google OAuth redirect URI** in Google Cloud Console:
-      `https://seo.oryxenlabs.com/api/v1/connectors/oauth/callback`.
-      Until then GSC cannot connect and there is no search-demand data, so
-      opportunity ranking runs on crawl evidence alone.
+Verified against the live host on **2026-09-08**. An open-items list that has
+drifted is worse than none, because people act on it.
+
+**Done since this list was last checked:**
+
+- [x] **The Google OAuth redirect URI is registered.** Search Console and GA4
+      are both `active`; the connector callback is exercised.
+- [x] **The OIDC client is registered** and the API and web variables are set.
+      `/auth/login` redirects to Google with PKCE, state and nonce, and the
+      hourly perimeter check asserts the redirect URI is the public origin.
+- [x] **The first owner is bootstrapped** — an owner invitation for
+      `mas.zaf@gmail.com` on `codearc-pilot`, claimed on first sign-in.
+- [x] **The migration ledger is adopted** — 38 applied rows, and
+      `app.cli.schema_diff` reports the database matches the migrations.
+- [x] **The backup timer is installed and verified.** Nightly at 02:30 UTC;
+      every dump is restored into a scratch database and counted before it is
+      kept. Newest dump is hours old, not weeks.
+- [x] **The health timer is installed.** Hourly, and it runs the perimeter
+      check first, so both questions are answered by one unit. Eight invariants,
+      all clear.
+- [x] **Rollback reconciliation is on, and it settled.** The emi-calculator
+      revert (`mindTools#3`) was **closed without merging** on 2026-09-06, so
+      the receipt is `failed`, the deployment receipt is back to `applied`, and
+      the proposal is `deployed`. That is the honest end state, not a fault:
+      somebody looked at the revert and decided against it. The change is live.
+
+**Still open, and each one is blocked on a person rather than on code:**
+
+- [ ] **Sign in once**, then move the host to `APP_ENV=production`. The
+      invitation is open and unclaimed — no `app_user`, no membership. Until a
+      real session exists the pilot token stays valid, deliberately: nothing
+      retires the old credential before the new one is proven.
+- [ ] **Remove the Caddy basic-auth gate** once sign-in is exercised. Defence in
+      depth now, not the authentication.
 - [ ] **Set Cloudflare SSL mode to Full (strict).**
-- [ ] **Register the OIDC client** with the provider and set the four API and
-      web variables in §5, then move the host to `APP_ENV=production`. Until
-      that happens the host still runs in development mode.
-- [ ] **Bootstrap the first owner** with `app.cli.bootstrap_owner`, sign in
-      once, and confirm the pilot token no longer reaches the API.
-- [ ] **Remove the Caddy basic-auth gate** once sign-in is exercised on the
-      host. It is defence in depth now, not the authentication.
-- [ ] **Adopt the migration ledger** on the production database
-      (`--adopt-through 37`, §3) before the next deploy.
-- [ ] **Install the backup timer** (§3) and confirm the first verified run.
-- [ ] **Install the health timer** (§3) and clear whatever it reports on the
-      first run — the pending emi-calculator rollback will be one of them.
-- [ ] **Turn on rollback reconciliation** (§5a) and let it settle the
-      emi-calculator rollback that has been pending since 2026-09-06.
-- [x] **Discard the findings from crawl `42ff78c7`** — done by migration `0028`.
-      Verified 2026-09-07: all 505 findings from that crawl are `suppressed`,
-      and 3,765 quarantined in total. 14 findings are open across the estate.
+- [ ] **codearc.net's Search Console connector is `pending_authorization`** —
+      an authorization was started and abandoned. That site now has GA4 and no
+      search data; one consent gives it both halves.
+- [ ] **TheCalcHive has no GA4 property at all.** Measurement there needs a
+      property created and the tag installed, and GA4 collects nothing
+      retroactively, so the clock starts the day it goes live.
+- [ ] **codearc.net is being updated** — re-crawl when the owner says it is
+      ready and diff against crawl `957079c3`. Watch two numbers: how many pages
+      still land on `/login` (was 496/500) and how many share a title (was
+      490/500).
 - [ ] Decide whether codearc.net's tutorials should be public. If they stay
       members-only, mark them `noindex` and drop them from the sitemap; leaving
       them crawlable *and* empty is the only bad option.
+- [ ] **The branch is not pushed.** Everything here is committed locally and
+      deployed, and there is no remote copy of any of it.
+
+## 8a. What the search data actually says (2026-09-08)
+
+Worth stating plainly, because it changes what "measurement" means here.
+
+`search_metric` holds **75 rows over sixteen months** for TheCalcHive: 83
+impressions, 2 clicks, and nothing at all after **2026-07-18**. That is not a
+broken sync. The connector is `sc-domain:thecalchive.com`, a domain property
+that covers everything, the backfill walked 488 days, and the daily run
+completes cleanly. Later days are absent because Google suppresses dimensional
+rows below its anonymisation threshold, and this site is below it almost every
+day.
+
+So the H1 and title work cannot be evaluated on this site, and waiting longer
+will not change that. One impression a week is not a signal any test separates
+from noise. The pipeline is proven; the traffic is not there.
+
+GA4 is on **codearc.net**, a different site, whose findings were quarantined as
+invalid. So the estate currently has engagement data for a site with no
+proposals and proposals for a site with no measurable traffic.
 
 ## 9. Gotchas worth remembering
 
