@@ -89,6 +89,7 @@ class ClaimedSync:
     base_days_completed: int
     base_rows_seen: int
     base_rows_upserted: int
+    base_rows_new: int
 
 
 def decode_encryption_key(encoded: str) -> bytes:
@@ -223,6 +224,11 @@ async def claim_sync(
         base_days_completed=int(counts.get("days_completed", 0)),
         base_rows_seen=int(counts.get("rows_seen", 0)),
         base_rows_upserted=int(counts.get("rows_upserted", 0)),
+        # Absent on every sync recorded before this key existed. Reading it as
+        # 0 is right: those rows counted inserts in `rows_upserted`, so the new
+        # column starts empty rather than inheriting a number that meant
+        # something else.
+        base_rows_new=int(counts.get("rows_new", 0)),
     )
 
 
@@ -457,6 +463,35 @@ class AccessTokenManager:
         return self._credential.access_token
 
 
+@dataclass(frozen=True, slots=True)
+class Written:
+    """What a batch of rows actually did to the table.
+
+    `total` is every row written -- inserted or updated. `new` is the subset
+    that did not exist before.
+
+    Reported separately because collapsing them is actively misleading, and in
+    exactly the direction that matters. A healthy incremental sync re-reads a
+    window it has already stored: every row is an update, so a count of inserts
+    alone reads `0` and says "this sync stored nothing" about a sync that
+    stored everything it was given. That number is what an operator looks at to
+    decide whether the data path works, and on 2026-09-08 it produced exactly
+    that wrong conclusion about a GA4 sync that was working correctly.
+
+    Keeping both also preserves the signal that was worth having: `new` still
+    distinguishes a sync discovering data from one refreshing it.
+    """
+
+    total: int
+    new: int
+
+    def __add__(self, other: Written) -> Written:
+        return Written(self.total + other.total, self.new + other.new)
+
+
+ZERO_WRITTEN = Written(0, 0)
+
+
 class SyncProgress:
     """The running totals of a sync, and the only writer of its checkpoint.
 
@@ -471,6 +506,7 @@ class SyncProgress:
         self.days_completed = sync.base_days_completed
         self.rows_seen = sync.base_rows_seen
         self.rows_upserted = sync.base_rows_upserted
+        self.rows_new = sync.base_rows_new
 
     @property
     def counts(self) -> dict[str, int]:
@@ -478,6 +514,7 @@ class SyncProgress:
             "days_completed": self.days_completed,
             "rows_seen": self.rows_seen,
             "rows_upserted": self.rows_upserted,
+            "rows_new": self.rows_new,
         }
 
     async def write(
@@ -487,10 +524,12 @@ class SyncProgress:
         days_completed: int,
         rows_seen: int,
         rows_upserted: int,
+        rows_new: int = 0,
     ) -> None:
         self.days_completed = self._sync.base_days_completed + days_completed
         self.rows_seen = self._sync.base_rows_seen + rows_seen
         self.rows_upserted = self._sync.base_rows_upserted + rows_upserted
+        self.rows_new = self._sync.base_rows_new + rows_new
         async with self._pool.acquire() as connection, connection.transaction():
             await set_tenant(connection, self._sync.tenant_id)
             await connection.execute(

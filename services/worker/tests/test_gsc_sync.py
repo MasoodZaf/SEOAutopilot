@@ -2,6 +2,7 @@ from datetime import date
 from uuid import UUID
 
 import pytest
+from app.connectors.runtime import Written
 from app.gsc.client import ROW_LIMIT, SearchAnalyticsRow
 from app.gsc.sync import SyncCursor, keyed_query_hash, sync_search_analytics
 
@@ -34,6 +35,9 @@ class FakeSink:
         self.checkpoints: list[SyncCursor] = []
 
     async def upsert_metrics(self, records):
+        # Mirrors the real sink: every row is written, only an unseen key is
+        # new. Returning inserts alone was what made a healthy re-sync report
+        # that it had stored nothing.
         inserted = 0
         for record in records:
             key = (
@@ -50,7 +54,7 @@ class FakeSink:
                 self.keys.add(key)
                 self.records.append(record)
                 inserted += 1
-        return inserted
+        return Written(len(records), inserted)
 
     async def save_checkpoint(self, cursor, **counts):
         self.checkpoints.append(cursor)
@@ -117,8 +121,14 @@ async def test_replay_after_checkpoint_loss_is_idempotent() -> None:
         query_hash_key=HASH_KEY,
     )
     assert first.rows_upserted == 1
+    assert first.rows_new == 1
     assert second.rows_seen == 1
-    assert second.rows_upserted == 0
+    # The replay writes the row again and creates nothing. Both numbers are
+    # part of the claim: `rows_upserted == 1` says the sync did its work, and
+    # `rows_new == 0` says the work did not duplicate anything. Asserting only
+    # that a replay "upserted 0" described a working sync as an idle one.
+    assert second.rows_upserted == 1
+    assert second.rows_new == 0
     assert len(sink.records) == 1
 
 

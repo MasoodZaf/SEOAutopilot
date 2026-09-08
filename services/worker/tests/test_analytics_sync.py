@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 from app.analytics.client import ROW_LIMIT, LandingPagePage, LandingPageRow
 from app.analytics.sync import AnalyticsCursor, sync_landing_pages
+from app.connectors.runtime import Written
 
 TENANT = UUID("019d0000-0000-7000-8000-000000000011")
 SITE = UUID("019d0000-0000-7000-8000-000000000012")
@@ -42,6 +43,9 @@ class FakeSink:
         self.checkpoints: list[AnalyticsCursor] = []
 
     async def upsert_metrics(self, records):
+        # Mirrors the real sink: every row is written, only an unseen key is
+        # new. Returning inserts alone was what made a healthy re-sync report
+        # that it had stored nothing.
         inserted = 0
         for record in records:
             key = (
@@ -56,7 +60,7 @@ class FakeSink:
                 self.keys.add(key)
                 self.records.append(record)
                 inserted += 1
-        return inserted
+        return Written(len(records), inserted)
 
     async def save_checkpoint(self, cursor, **counts):
         self.checkpoints.append(cursor)
@@ -157,7 +161,11 @@ async def test_a_re_synced_day_overwrites_rather_than_doubling() -> None:
     result = await run(source, sink, start=day, end=day)
 
     assert result.rows_seen == 2
-    assert result.rows_upserted == 1
+    # Two rows read, two written, one of them new: the second collapses onto
+    # the first's key rather than being appended.
+    assert result.rows_upserted == 2
+    assert result.rows_new == 1
+    assert len(sink.records) == 1
 
 
 @pytest.mark.asyncio

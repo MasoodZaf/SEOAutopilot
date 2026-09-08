@@ -19,10 +19,12 @@ from redis.exceptions import ResponseError
 from app.connectors.google_oauth import TokenRefresher
 from app.connectors.runtime import (
     STREAM,
+    ZERO_WRITTEN,
     AccessTokenManager,
     ClaimedSync,
     SyncProgress,
     SyncStream,
+    Written,
     claim_sync,
     complete_sync,
     fail_sync,
@@ -134,9 +136,10 @@ class PostgresMetricSink(MetricSink):
             is_question(term),
         )
 
-    async def upsert_metrics(self, records: list[MetricRecord]) -> int:
+    async def upsert_metrics(self, records: list[MetricRecord]) -> Written:
         if not records:
-            return 0
+            return ZERO_WRITTEN
+        written = 0
         inserted = 0
         async with self.pool.acquire() as connection, connection.transaction():
             await set_tenant(connection, self.sync.tenant_id)
@@ -173,8 +176,11 @@ class PostgresMetricSink(MetricSink):
                     record.position,
                     record.source_sync_id,
                 )
+                # `result` is `xmax = 0`: true for an insert, false for an
+                # update. Both are rows written; only the first is new.
+                written += 1
                 inserted += int(bool(result))
-        return inserted
+        return Written(written, inserted)
 
     async def save_checkpoint(
         self,
@@ -183,12 +189,14 @@ class PostgresMetricSink(MetricSink):
         days_completed: int,
         rows_seen: int,
         rows_upserted: int,
+        rows_new: int,
     ) -> None:
         await self.progress.write(
             {"day": cursor.day.isoformat(), "start_row": cursor.start_row},
             days_completed=days_completed,
             rows_seen=rows_seen,
             rows_upserted=rows_upserted,
+            rows_new=rows_new,
         )
 
 

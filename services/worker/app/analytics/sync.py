@@ -20,6 +20,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.analytics.client import ROW_LIMIT, LandingPageRow, LandingPageSource
+from app.connectors.runtime import ZERO_WRITTEN, Written
 
 MAX_PAGES_PER_DAY = 20
 
@@ -53,13 +54,20 @@ class AnalyticsSyncResult:
     days_completed: int
     rows_seen: int
     rows_upserted: int
+    rows_new: int
 
 
 class AnalyticsSink(Protocol):
-    async def upsert_metrics(self, records: list[AnalyticsRecord]) -> int: ...
+    async def upsert_metrics(self, records: list[AnalyticsRecord]) -> Written: ...
 
     async def save_checkpoint(
-        self, cursor: AnalyticsCursor, *, days_completed: int, rows_seen: int, rows_upserted: int
+        self,
+        cursor: AnalyticsCursor,
+        *,
+        days_completed: int,
+        rows_seen: int,
+        rows_upserted: int,
+        rows_new: int,
     ) -> None: ...
 
 
@@ -110,7 +118,7 @@ async def sync_landing_pages(
 
     days_completed = 0
     rows_seen = 0
-    rows_upserted = 0
+    written = ZERO_WRITTEN
     while day <= range_end:
         page_count = 0
         while True:
@@ -127,7 +135,7 @@ async def sync_landing_pages(
                 for row in page.rows
             ]
             rows_seen += len(records)
-            rows_upserted += await sink.upsert_metrics(records)
+            written += await sink.upsert_metrics(records)
             offset += len(page.rows)
             if len(page.rows) < ROW_LIMIT or offset >= page.total_rows:
                 next_day = day + timedelta(days=1)
@@ -136,7 +144,8 @@ async def sync_landing_pages(
                     AnalyticsCursor(next_day, 0),
                     days_completed=days_completed,
                     rows_seen=rows_seen,
-                    rows_upserted=rows_upserted,
+                    rows_upserted=written.total,
+                    rows_new=written.new,
                 )
                 day = next_day
                 offset = 0
@@ -145,6 +154,7 @@ async def sync_landing_pages(
                 AnalyticsCursor(day, offset),
                 days_completed=days_completed,
                 rows_seen=rows_seen,
-                rows_upserted=rows_upserted,
+                rows_upserted=written.total,
+                rows_new=written.new,
             )
-    return AnalyticsSyncResult(days_completed, rows_seen, rows_upserted)
+    return AnalyticsSyncResult(days_completed, rows_seen, written.total, written.new)

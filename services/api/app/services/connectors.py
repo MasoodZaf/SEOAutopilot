@@ -261,7 +261,7 @@ class ConnectorService:
             range_start=command.range_start,
             range_end=command.range_end,
             status="queued",
-            counts_json={"days_completed": 0, "rows_seen": 0, "rows_upserted": 0},
+            counts_json={"days_completed": 0, "rows_seen": 0, "rows_upserted": 0, "rows_new": 0},
             requested_by=self.context.actor_id,
         )
         # The lookup above only serialises retries that arrive one after

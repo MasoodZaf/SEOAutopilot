@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from typing import Protocol
 from uuid import UUID
 
+from app.connectors.runtime import ZERO_WRITTEN, Written
 from app.gsc.client import ROW_LIMIT, SearchAnalyticsRow, SearchAnalyticsSource
 
 MAX_PAGES_PER_DAY = 10
@@ -45,13 +46,20 @@ class SyncResult:
     days_completed: int
     rows_seen: int
     rows_upserted: int
+    rows_new: int
 
 
 class MetricSink(Protocol):
-    async def upsert_metrics(self, records: list[MetricRecord]) -> int: ...
+    async def upsert_metrics(self, records: list[MetricRecord]) -> Written: ...
 
     async def save_checkpoint(
-        self, cursor: SyncCursor, *, days_completed: int, rows_seen: int, rows_upserted: int
+        self,
+        cursor: SyncCursor,
+        *,
+        days_completed: int,
+        rows_seen: int,
+        rows_upserted: int,
+        rows_new: int,
     ) -> None: ...
 
 
@@ -111,7 +119,7 @@ async def sync_search_analytics(
 
     days_completed = 0
     rows_seen = 0
-    rows_upserted = 0
+    written = ZERO_WRITTEN
     while day <= range_end:
         page_count = 0
         while True:
@@ -126,7 +134,8 @@ async def sync_search_analytics(
                     SyncCursor(next_day, 0),
                     days_completed=days_completed,
                     rows_seen=rows_seen,
-                    rows_upserted=rows_upserted,
+                    rows_upserted=written.total,
+                    rows_new=written.new,
                 )
                 day = next_day
                 start_row = 0
@@ -145,17 +154,18 @@ async def sync_search_analytics(
                 for row in rows
             ]
             rows_seen += len(records)
-            rows_upserted += await sink.upsert_metrics(records)
+            written += await sink.upsert_metrics(records)
             start_row += ROW_LIMIT
             await sink.save_checkpoint(
                 SyncCursor(day, start_row),
                 days_completed=days_completed,
                 rows_seen=rows_seen,
-                rows_upserted=rows_upserted,
+                rows_upserted=written.total,
+                rows_new=written.new,
             )
             if len(rows) < ROW_LIMIT:
                 # Still issue the documented empty-page request. It makes completion explicit
                 # and keeps the resume checkpoint independent of a provider's short page.
                 continue
-    return SyncResult(days_completed, rows_seen, rows_upserted)
+    return SyncResult(days_completed, rows_seen, written.total, written.new)
 

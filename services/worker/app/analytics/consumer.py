@@ -36,10 +36,12 @@ from app.analytics.sync import (
 from app.connectors.google_oauth import TokenRefresher
 from app.connectors.runtime import (
     STREAM,
+    ZERO_WRITTEN,
     AccessTokenManager,
     ClaimedSync,
     SyncProgress,
     SyncStream,
+    Written,
     claim_sync,
     complete_sync,
     fail_sync,
@@ -96,9 +98,10 @@ class PostgresAnalyticsSink(AnalyticsSink):
         self.sync = sync
         self.progress = SyncProgress(pool, sync)
 
-    async def upsert_metrics(self, records: list[AnalyticsRecord]) -> int:
+    async def upsert_metrics(self, records: list[AnalyticsRecord]) -> Written:
         if not records:
-            return 0
+            return ZERO_WRITTEN
+        written = 0
         inserted = 0
         async with self.pool.acquire() as connection, connection.transaction():
             await set_tenant(connection, self.sync.tenant_id)
@@ -145,8 +148,11 @@ class PostgresAnalyticsSink(AnalyticsSink):
                     record.source_sync_id,
                     normalized,
                 )
+                # `result` is `xmax = 0`: true for an insert, false for an
+                # update. Both are rows written; only the first is new.
+                written += 1
                 inserted += int(bool(result))
-        return inserted
+        return Written(written, inserted)
 
     async def save_checkpoint(
         self,
@@ -155,12 +161,14 @@ class PostgresAnalyticsSink(AnalyticsSink):
         days_completed: int,
         rows_seen: int,
         rows_upserted: int,
+        rows_new: int,
     ) -> None:
         await self.progress.write(
             {"day": cursor.day.isoformat(), "offset": cursor.offset},
             days_completed=days_completed,
             rows_seen=rows_seen,
             rows_upserted=rows_upserted,
+            rows_new=rows_new,
         )
 
 

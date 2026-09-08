@@ -216,6 +216,7 @@ def claimed() -> ClaimedSync:
         base_days_completed=0,
         base_rows_seen=0,
         base_rows_upserted=0,
+        base_rows_new=0,
     )
 
 
