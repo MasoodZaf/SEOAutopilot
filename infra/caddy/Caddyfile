@@ -11,27 +11,29 @@
 seo.oryxenlabs.com {
 	encode zstd gzip
 
-	# INTERIM GATE. The web tier injects an OWNER-role bearer token
-	# server-side, so /pilot and /settings expose full control to any
-	# visitor. Remove this block once Cloudflare Access fronts the app.
-	# Addresses in OPERATOR_IPS (infra/local/caddy.env, gitignored) skip the
-	# gate so the operator's browser is never prompted.
+	# The interim basic-auth gate on /pilot and /settings was removed on
+	# 2026-09-08, after sign-in was exercised end to end on this host.
 	#
-	# READ THIS BEFORE EDITING OPERATOR_IPS. The sense is inverted: it lists
-	# who is *exempt*. A broad range here does not widen access for
-	# operators, it removes the gate for everyone -- `not client_ip
-	# 0.0.0.0/0` is never true, so @protected never matches. That was the
-	# live state on 2026-09-07, with /pilot serving an OWNER-token session
-	# to anyone who asked. Nothing detected it, because every piece was
-	# individually correct. infra/scripts/check-perimeter.sh now asserts the
-	# behaviour instead, hourly.
-	@protected {
-		path /pilot* /settings*
-		not client_ip {$OPERATOR_IPS}
-	}
-	basic_auth @protected {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
+	# It existed for one reason, recorded here because what expired is the
+	# reason rather than the caution: the web tier used to inject an
+	# OWNER-role bearer token server-side, so reaching /pilot at all was full
+	# control of every site. That is no longer how it works. The web tier
+	# forwards the signed-in person's own token, the API runs with
+	# APP_ENV=production and accepts only a token it can verify against the
+	# provider's key set, and proxy.ts sends a request with no session to
+	# /login. Authentication is the application's now, which is where it
+	# belongs.
+	#
+	# The gate is not replaced by nothing. check-perimeter.sh still asserts
+	# that an anonymous request never reaches the control plane: it now
+	# expects a redirect to sign-in rather than a 401, and still fails if
+	# either path ever answers 200. That property was always the point;
+	# basic_auth was one way of holding it.
+	#
+	# OPERATOR_IPS is no longer read. Its sense was inverted -- it listed who
+	# was *exempt* -- and on 2026-09-07 it held 0.0.0.0/0, which left /pilot
+	# serving an OWNER-token session to anyone who asked. Nothing detected
+	# it, because every individual piece was correct.
 
 	handle_path /api/* {
 		reverse_proxy api:8000

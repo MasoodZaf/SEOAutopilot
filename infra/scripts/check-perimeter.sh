@@ -32,9 +32,45 @@ expect() {
   fi
 }
 
-# The control plane must refuse an anonymous request.
-expect /pilot 401 "control plane is gated"
-expect /settings/connectors 401 "settings are gated"
+# The control plane must not serve an anonymous request.
+#
+# Until 2026-09-08 that was a 401 from basic auth. The gate is gone -- the app
+# authenticates now -- so the answer is a redirect to sign-in. The question is
+# unchanged, and so is the thing that must never happen: a 200.
+#
+# Asserted as "redirects to /login, and is definitely not 200" rather than as an
+# exact code, because the mechanism has changed once and will again, and an
+# assertion pinned to the mechanism gets deleted the next time rather than
+# updated. A 200 here means the control plane is being served to strangers,
+# whatever produced it.
+signed_out() {
+  local path="$1" label="$2"
+  local response code location
+  response="$(curl -sS -o /dev/null -D - --max-time 20 "$BASE$path" 2>/dev/null || true)"
+  code="$(printf '%s' "$response" | awk 'NR==1 {print $2}')"
+  location="$(printf '%s' "$response" | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' | head -1)"
+
+  if [ "$code" = "200" ]; then
+    echo "[FAIL] $label: $path -> 200, served to an anonymous request"
+    FAILED=1
+  elif [ "${code:-000}" = "000" ]; then
+    echo "[FAIL] $label: $path -> no response"
+    FAILED=1
+  elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
+    echo "[ok]   $label: $path -> $code"
+  else
+    case "$location" in
+      */login*)
+        echo "[ok]   $label: $path -> $code to sign-in" ;;
+      *)
+        echo "[FAIL] $label: $path -> $code, Location '$location' is not sign-in"
+        FAILED=1 ;;
+    esac
+  fi
+}
+
+signed_out /pilot "control plane is not served signed out"
+signed_out /settings/connectors "settings are not served signed out"
 
 # The API's own surface. None of these carry tenant data, but between them they
 # hand a stranger a complete map of every endpoint and this deployment's
