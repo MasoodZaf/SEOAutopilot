@@ -1,6 +1,6 @@
 # Deployment & Pilot Status
 
-Operational record for the hosted pilot. Last updated **2026-09-08**.
+Operational record for the hosted pilot. Last updated **2026-09-09**.
 
 This file is the follow-up point: where the system runs, how to operate it, what
 the first crawl found, and what is still open. No secrets are recorded here —
@@ -699,16 +699,27 @@ drifted is worse than none, because people act on it.
 
 **Still open, and each one is blocked on a person rather than on code:**
 
-- [ ] **Sign in once**, then move the host to `APP_ENV=production`. The
-      invitation is open and unclaimed — no `app_user`, no membership. Until a
-      real session exists the pilot token stays valid, deliberately: nothing
-      retires the old credential before the new one is proven.
+- [x] **The host runs `APP_ENV=production`** (confirmed on the box
+      2026-09-09). `LOCAL_PILOT_AUTH_ENABLED=false`, one `app_user`, one
+      membership, one tenant. This item said the cutover was still open for a
+      day after it had happened, which is the failure mode the list's own
+      preamble warns about: an open-items list that has drifted is worse than
+      none, because people act on it.
 - [ ] **The Caddy basic-auth gate is removed in the repo and still running on
       the host.** `5d84a95` takes it out; the container was never recreated, and
       a single-file bind mount does not follow an rsync (§9), so the gate is
-      still up. Applying it is one `up -d --force-recreate caddy`. Deliberately
-      left for a moment when it is the thing being done, rather than arriving as
-      a side effect of some unrelated deploy.
+      still up. Re-confirmed 2026-09-09: the host file *and* the running
+      container both still contain `basic_auth`, and `/pilot` answers 401 with
+      no redirect. Note that deploys rsync `services/`, `apps/` and
+      `infra/migrations` — **never `infra/caddy`** — so the host file does not
+      move on its own. Applying it is that rsync plus one
+      `up -d --force-recreate caddy`. Deliberately left for a moment when it is
+      the thing being done, rather than arriving as a side effect of some
+      unrelated deploy.
+
+      **This is now the blocker for external testing.** `/login` is reachable,
+      so somebody can sign in; `/settings/*` and `/pilot*` are not, so they
+      dead-end immediately afterwards with no password to offer.
 - [ ] **Set Cloudflare SSL mode to Full (strict).**
 - [x] **codearc.net's Search Console is connected** (2026-09-08). The property
       is `https://codearc.net/`, a **URL-prefix** property — `sc-domain:` does
@@ -790,3 +801,37 @@ proposals and proposals for a site with no measurable traffic.
   When a deploy only adds files, dropping `--delete` is equivalent and safer.
   Keep it for a deploy that removes or renames files, and check what it would
   remove first with `--dry-run`.
+
+## 6f. Self-serve workspaces on their own keys (2026-09-09)
+
+Deployed: migration `0039`, the API, the worker and the web tier. Two commits,
+`8973e49` and `7c17062`.
+
+**The migration is additive** — one nullable column on `tenant`, the
+`tenant_credential` table, and a column default. Nothing is rewritten, so
+applying it before the code deploy leaves no window where new code meets an old
+schema. It was applied by piping the file into `psql` and the ledger row was
+written by hand; the checksum in `schema_migration` is the real
+`sha256(file)` so `app.cli.migrate` will not later refuse the file as modified.
+
+**The fallback is the thing to remember.** Provider credentials now resolve
+tenant-first, environment-second. `codearc-pilot` has no `tenant_credential`
+rows, so all six active connectors resolve to `GOOGLE_CLIENT_ID` /
+`GOOGLE_CLIENT_SECRET` / `GITHUB_APP_*` exactly as before, and a fresh estate
+count after the deploy confirmed it: 3 sites, 6 active connectors, 83
+proposals, 1 user, 1 membership, 1 tenant, 0 credential rows.
+
+Do **not** remove those environment variables to "finish" the migration. A
+Google refresh token is redeemable only by the client that issued it, and an
+installation only by the app that created it. Removing them strands every
+existing connector — and it fails as `invalid_grant`, which the worker reads as
+a revoked grant, so the symptom is an hourly consent prompt rather than an
+error naming the cause. `test_tenant_credential_fallback.py` pins this.
+
+**Verified after the deploy.** All seven health checks pass. `/api/v1/tenants`
+and `/api/v1/tenant/credentials` answer 401 rather than 404, so the routes are
+registered and gated. `tenant_credential` has row-level security both enabled
+and forced. No errors in the API log since restart.
+
+**Still gated by §8:** the Caddy basic-auth gate. Everything above is deployed
+and working, and an external tester still cannot reach any of it.
