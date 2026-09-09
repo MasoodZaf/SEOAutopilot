@@ -894,7 +894,16 @@ hand-maintained test-user list with no API to add to it. Publishing it
 (Google Cloud Console → **Google Auth Platform → Audience** → *Publish app*)
 is what makes the address usable by anybody it is given to. Note that Google
 has renamed this console: the old **APIs & Services → OAuth consent screen**
-page is gone, and the publishing status now lives on **Audience**. It needs no Google
+page is gone, and the publishing status now lives on **Audience**.
+
+**Branding gates the button.** *Publish app* stays disabled until the
+**Branding** page is complete, reported only as "your app's OAuth
+configuration is incomplete". It wants an application home page, a privacy
+policy link, a terms-of-service link and an authorised domain. This deployment
+had none of the legal pages, so `/privacy` and `/terms` were added and are
+live; the authorised domain is `oryxenlabs.com`. Google fetches those URLs, so
+they have to stay reachable — if the marketing page is ever restructured, the
+consent screen breaks with it. It needs no Google
 verification review: that client requests only `openid email profile`, which is
 non-sensitive. The sensitive scopes — Search Console, Analytics — moved to each
 tenant's own OAuth client in §6f, so they are no longer this client's problem.
