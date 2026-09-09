@@ -906,10 +906,11 @@ existing Search Console properties are codearc.net, thecalchive.com and
 wordkitapp.com, never the domain the control plane itself runs on. Fix: a
 **Domain** property for `oryxenlabs.com`, which covers `seo.` and every future
 subdomain in one record. Search Console recognises Cloudflare and offers a
-*Start verification* button that writes the TXT itself after an OAuth grant —
-the grant is revocable afterwards under Cloudflare's Manage Account → API
-Tokens, and the verification survives revoking it, since only the record
-matters. The manual path is the same TXT on the apex by hand.
+*Start verification* button that writes the TXT itself after a one-time
+authorisation — Cloudflare states it grants no permission to make future
+changes, so there is nothing to revoke afterwards. Verified for
+`oryxenlabs.com` on 2026-09-10; `dig +short TXT oryxenlabs.com @8.8.8.8` is the
+check that the DNS half is done, independent of what the console is showing. The manual path is the same TXT on the apex by hand.
 
 **Branding gates the button.** *Publish app* stays disabled until the
 **Branding** page is complete, reported only as "your app's OAuth
