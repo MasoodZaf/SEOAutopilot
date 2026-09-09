@@ -99,6 +99,15 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(response.status, code);
   }
+  // A 204 has no body, and `response.json()` on an empty one throws
+  // `SyntaxError`. That is not an ApiError, so every caller's catch reported it
+  // as `unexpected-error`: removing a member and revoking an invitation both
+  // succeeded on the API and told the operator they had failed. The same shape
+  // of defect as the button that worked once and then silently did nothing --
+  // the request landed, the report of it did not.
+  if (response.status === 204 || response.headers.get("content-length") === "0") {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
