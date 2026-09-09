@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     "What SEO Autopilot stores, why, who can reach it, and how to have it deleted.",
 };
 
-const CONTACT = "ai@aurmak.com";
+const CONTACT = "support@oryxenlabs.com";
 
 export default function PrivacyPage() {
   return (

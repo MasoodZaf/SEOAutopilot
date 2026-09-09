@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "The terms for using the SEO Autopilot deployment at seo.oryxenlabs.com.",
 };
 
-const CONTACT = "ai@aurmak.com";
+const CONTACT = "support@oryxenlabs.com";
 
 export default function TermsPage() {
   return (
