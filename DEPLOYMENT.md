@@ -891,8 +891,10 @@ errors in the web or API logs.
 **The one step left is not in this repo.** The Google OAuth consent screen used
 for *sign-in* is still in **Testing** publishing status, which caps access to a
 hand-maintained test-user list with no API to add to it. Publishing it
-(Google Cloud Console → APIs & Services → OAuth consent screen → *Publish app*)
-is what makes the address usable by anybody it is given to. It needs no Google
+(Google Cloud Console → **Google Auth Platform → Audience** → *Publish app*)
+is what makes the address usable by anybody it is given to. Note that Google
+has renamed this console: the old **APIs & Services → OAuth consent screen**
+page is gone, and the publishing status now lives on **Audience**. It needs no Google
 verification review: that client requests only `openid email profile`, which is
 non-sensitive. The sensitive scopes — Search Console, Analytics — moved to each
 tenant's own OAuth client in §6f, so they are no longer this client's problem.
