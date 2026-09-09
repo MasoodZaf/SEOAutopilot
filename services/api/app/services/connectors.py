@@ -1,6 +1,7 @@
 import hashlib
 import re
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
@@ -34,6 +35,7 @@ from app.services.google_analytics import (
 )
 from app.services.google_oauth import GoogleOAuthError, GoogleOAuthProvider
 from app.services.sites import SiteService, stable_hash
+from app.services.tenant_credentials import GoogleOAuthClient, google_oauth_client
 
 GSC_CONNECTOR = "google_search_console"
 DNS_PROVIDER_CONNECTOR = "dns_provider"
@@ -66,6 +68,27 @@ class ConnectorService:
         self.context = context
         self.site_service = SiteService(session, context)
 
+    async def _google_client(self, settings: Settings) -> GoogleOAuthClient:
+        """The OAuth client this tenant's consent should run through.
+
+        Their own if they have configured one, the deployment's only if an
+        operator deliberately left one set. A tenant with neither is refused
+        here rather than sent to Google to be told, unhelpfully, that the
+        client id is invalid.
+        """
+        if not settings.google_connectors_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="google_connector_not_configured",
+            )
+        client = await google_oauth_client(self.session, settings, self.context.tenant_id)
+        if client is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="google_oauth_client_not_configured",
+            )
+        return client
+
     async def list_for_site(self, site_id: UUID) -> list[Connector] | None:
         if await self.site_service.get_site(site_id) is None:
             return None
@@ -89,11 +112,7 @@ class ConnectorService:
         """
         self.context.require(Role.OWNER, Role.ADMIN)
         site = await self._verified_site(site_id)
-        if not settings.google_connectors_enabled or not settings.google_client_id:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="google_connector_not_configured",
-            )
+        client = await self._google_client(settings)
         if not _ANALYTICS_PROPERTY_PATTERN.fullmatch(property_ref):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -141,7 +160,7 @@ class ConnectorService:
         )
         query = urlencode(
             {
-                "client_id": settings.google_client_id,
+                "client_id": client.client_id,
                 "redirect_uri": settings.google_oauth_redirect_uri,
                 "response_type": "code",
                 "scope": ANALYTICS_READONLY_SCOPE,
@@ -158,11 +177,7 @@ class ConnectorService:
     ) -> tuple[Connector, str, datetime]:
         self.context.require(Role.OWNER, Role.ADMIN)
         site = await self._verified_site(site_id)
-        if not settings.google_connectors_enabled or not settings.google_client_id:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="google_connector_not_configured",
-            )
+        client = await self._google_client(settings)
         if not property_matches_site(property_ref, site.normalized_host):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -210,7 +225,7 @@ class ConnectorService:
         )
         query = urlencode(
             {
-                "client_id": settings.google_client_id,
+                "client_id": client.client_id,
                 "redirect_uri": settings.google_oauth_redirect_uri,
                 "response_type": "code",
                 "scope": GSC_READONLY_SCOPE,
@@ -456,14 +471,33 @@ class ConnectorOAuthCallbackService:
     def __init__(
         self,
         session: AsyncSession,
-        provider: GoogleOAuthProvider,
+        provider: GoogleOAuthProvider | None,
         secret_store: ConnectorSecretStore,
         analytics: AnalyticsAdminProvider | None = None,
+        *,
+        provider_factory: Callable[[UUID], Awaitable[GoogleOAuthProvider]] | None = None,
     ) -> None:
         self.session = session
-        self.provider = provider
+        self._provider = provider
         self.secret_store = secret_store
         self.analytics = analytics
+        # The code must be exchanged with the same OAuth client that issued it,
+        # and which client that is depends on the tenant -- which is precisely
+        # what the state row establishes and nothing before it knows. So the
+        # caller may hand over a factory instead of a provider, and it is
+        # called once the tenant is resolved. Tests and the single-client
+        # deployments that predate per-tenant credentials still pass a
+        # provider directly.
+        self.provider_factory = provider_factory
+
+    @property
+    def provider(self) -> GoogleOAuthProvider:
+        if self._provider is None:  # pragma: no cover - guarded by construction
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="google_oauth_client_not_configured",
+            )
+        return self._provider
 
     async def _search_console_property(self, grant, oauth_state) -> str:
         """The requested property, only if this grant actually covers it.
@@ -548,6 +582,11 @@ class ConnectorOAuthCallbackService:
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(unscoped.tenant_id)},
         )
+        # The tenant is known now, so the client that started this consent can
+        # be resolved. Done here rather than later so that a tenant whose
+        # credential was revoked mid-flow is refused before the code is spent.
+        if self.provider_factory is not None:
+            self._provider = await self.provider_factory(unscoped.tenant_id)
         self.session.expunge(unscoped)
         oauth_state = await self.session.scalar(
             select(ConnectorOauthState)

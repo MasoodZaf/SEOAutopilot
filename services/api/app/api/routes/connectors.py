@@ -40,6 +40,7 @@ from app.services.github_connector import (
 )
 from app.services.google_analytics import AnalyticsAdminHttpClient
 from app.services.google_oauth import GoogleOAuthHttpClient
+from app.services.tenant_credentials import github_app_credential, google_oauth_client
 
 router = APIRouter(prefix="/v1", tags=["connectors"])
 
@@ -209,8 +210,6 @@ async def google_oauth_callback(
         not settings.google_connectors_enabled
         or settings.connector_secret_backend != "database_envelope"
         or not settings.connector_secret_encryption_key
-        or not settings.google_client_id
-        or not settings.google_client_secret
     ):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -222,15 +221,36 @@ async def google_oauth_callback(
         settings.connector_secret_key_version,
     )
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as http_client:
-        provider = GoogleOAuthHttpClient(
-            http_client,
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret.get_secret_value(),
-            redirect_uri=settings.google_oauth_redirect_uri,
-        )
+
+        async def provider_for(tenant_id: UUID) -> GoogleOAuthHttpClient:
+            """The client that started this consent, resolved once we know whose.
+
+            A code is redeemable only by the client id it was issued to, so
+            exchanging with the deployment's client a code that a tenant's own
+            client issued fails at Google with `invalid_client`. Which one it
+            was is not knowable until the state row names the tenant, which is
+            why this is a factory and not a value.
+            """
+            client = await google_oauth_client(session, settings, tenant_id)
+            if client is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="google_oauth_client_not_configured",
+                )
+            return GoogleOAuthHttpClient(
+                http_client,
+                client_id=client.client_id,
+                client_secret=client.client_secret,
+                redirect_uri=settings.google_oauth_redirect_uri,
+            )
+
         try:
             await ConnectorOAuthCallbackService(
-                session, provider, secret_store, AnalyticsAdminHttpClient(http_client)
+                session,
+                None,
+                secret_store,
+                AnalyticsAdminHttpClient(http_client),
+                provider_factory=provider_for,
             ).complete_authorization(state, code, secrets.token_hex(16))
         except HTTPException as refusal:
             # A person is at the end of this redirect, not a client library.
@@ -325,7 +345,7 @@ async def github_installation_callback(
     setup_action: str = Query(default="install", max_length=32),
 ) -> RedirectResponse:
     settings = get_settings()
-    if not settings.github_connectors_enabled or not settings.github_app_configured:
+    if not settings.github_connectors_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="github_connector_callback_not_configured",
@@ -335,19 +355,22 @@ async def github_installation_callback(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="installation_not_completed"
         )
-    assert settings.github_app_id is not None
-    assert settings.github_app_private_key is not None
     async with httpx.AsyncClient(
         follow_redirects=False, timeout=httpx.Timeout(30.0)
     ) as http_client:
-        app_client = GitHubAppClient(
-            http_client,
-            settings.github_app_id,
-            settings.github_app_private_key.get_secret_value(),
-        )
-        await GitHubInstallationCallbackService(session, app_client).complete(
-            state, installation_id, secrets.token_hex(16)
-        )
+
+        async def app_client_for(tenant_id: UUID) -> GitHubAppClient:
+            app = await github_app_credential(session, settings, tenant_id)
+            if app is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="github_app_not_configured",
+                )
+            return GitHubAppClient(http_client, app.app_id, app.private_key)
+
+        await GitHubInstallationCallbackService(
+            session, app_client_factory=app_client_for
+        ).complete(state, installation_id, secrets.token_hex(16))
     return RedirectResponse(
         url=f"{settings.app_base_url.rstrip('/')}/settings/connectors?github=connected",
         status_code=status.HTTP_303_SEE_OTHER,

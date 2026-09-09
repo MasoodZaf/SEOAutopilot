@@ -30,7 +30,39 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(80), unique=True)
     name: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(24), default="active")
+    # Null for every tenant an operator made before self-serve signup existed.
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TenantCredential(Base):
+    """A tenant's own credential for a third-party provider.
+
+    Not a `ConnectorSecret`: that is keyed on a connector, which is per site,
+    and these exist before any site does -- you cannot authorize Search Console
+    for your first site until the OAuth client it runs through exists.
+
+    `config_json` holds the non-secret half (a Google client id, a GitHub app
+    slug) so that showing a tenant what they configured never decrypts a
+    secret.
+    """
+
+    __tablename__ = "tenant_credential"
+    __table_args__ = (Index("tenant_credential_tenant_idx", "tenant_id", "provider"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(48))
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    ciphertext: Mapped[bytes]
+    nonce: Mapped[bytes]
+    aad_hash: Mapped[str] = mapped_column(String(64))
+    key_version: Mapped[str] = mapped_column(String(80))
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Site(Base):

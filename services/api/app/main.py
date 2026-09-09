@@ -23,6 +23,8 @@ from app.api.routes.proposals import router as proposals_router
 from app.api.routes.routines import router as routines_router
 from app.api.routes.sites import router as sites_router
 from app.api.routes.system import router as system_router
+from app.api.routes.tenants import credentials_router as tenant_credentials_router
+from app.api.routes.tenants import router as tenants_router
 from app.core.config import get_settings
 from app.core.logging import configure_safe_access_logging
 from app.db.session import relay_engine, tenant_scoped_session
@@ -149,6 +151,8 @@ if settings.app_env == "development":
     app.include_router(local_pilot_router)
 app.include_router(connectors_router)
 app.include_router(members_router)
+app.include_router(tenants_router)
+app.include_router(tenant_credentials_router)
 app.include_router(sites_router)
 app.include_router(pages_router)
 app.include_router(opportunities_router)

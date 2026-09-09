@@ -14,6 +14,20 @@ from app.core.context import Role, TenantContext
 from app.db.models import AuditEvent, CrawlJob, OutboxEvent, Site, SiteVerificationChallenge
 from app.services.verification import DnsTxtVerifier
 
+# How long a DNS proof stays claimable.
+#
+# Was thirty minutes, which assumed the person could publish a TXT record
+# within thirty minutes. That is true through a Cloudflare API token and false
+# almost everywhere else: registrars that make you edit a zone by hand commonly
+# take longer than that to serve the new record, so the challenge expired
+# before the DNS it was waiting for existed, and starting again only lost the
+# same race again.
+#
+# The token is 32 random bytes, single-use, stored as a SHA-256 hash, and
+# checked against a record only the domain's controller can publish. A longer
+# window costs nothing it was protecting.
+VERIFICATION_CHALLENGE_LIFETIME = timedelta(hours=24)
+
 
 def stable_hash(value: dict[str, object]) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -91,7 +105,7 @@ class SiteService:
             method="dns_txt",
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             status="pending",
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            expires_at=datetime.now(UTC) + VERIFICATION_CHALLENGE_LIFETIME,
             created_by=self.context.actor_id,
         )
         self.session.add(challenge)

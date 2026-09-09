@@ -117,3 +117,34 @@ export async function currentSession(): Promise<Session | null> {
   const store = await cookies();
   return open<Session>(store.get(SESSION_COOKIE)?.value);
 }
+
+/**
+ * The workspaces this person is in, or an empty list when they are in none.
+ *
+ * `/v1/tenants` is one of two routes that authenticate without demanding a
+ * membership, so this is the one question a brand-new signed-in user can ask
+ * and get an answer to rather than a 403.
+ */
+export type TenantMembership = {
+  tenant_id: string;
+  slug: string;
+  name: string;
+  role: string;
+};
+
+export async function currentTenants(): Promise<TenantMembership[]> {
+  const body = await apiJson<{data: TenantMembership[]}>("/v1/tenants");
+  return body.data;
+}
+
+/**
+ * Send somebody with no workspace to make one, instead of showing them a 403.
+ *
+ * Every tenant-scoped route answers `no_tenant_membership` to a person who has
+ * signed in and been invited to nothing. That is the ordinary first minute of a
+ * new account, not an error, and the only useful thing to do with it is offer
+ * the page that fixes it. Anything else is rethrown untouched.
+ */
+export function isMissingTenant(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.code === "no_tenant_membership";
+}

@@ -1390,3 +1390,77 @@ class MemberRoleUpdate(BaseModel):
 class MemberEnvelope(BaseModel):
     data: MemberRead
     meta: dict[str, str]
+
+
+class TenantCreate(BaseModel):
+    # The slug is derived from this, never supplied: a caller who could choose
+    # their own could take a name an operator command already refers to.
+    name: str = Field(min_length=2, max_length=200)
+
+
+class TenantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    slug: str
+    name: str
+    status: str
+    created_at: datetime
+
+
+class TenantEnvelope(BaseModel):
+    data: TenantRead
+    meta: dict[str, str]
+
+
+class TenantMembershipRead(BaseModel):
+    """One workspace this person is in, and what they are in it as."""
+
+    tenant_id: UUID
+    slug: str
+    name: str
+    role: str
+
+
+class TenantMembershipCollection(BaseModel):
+    data: list[TenantMembershipRead]
+    meta: dict[str, str | int]
+
+
+class GoogleOAuthClientCreate(BaseModel):
+    """The tenant's own Google OAuth client, from their own Cloud project."""
+
+    client_id: str = Field(min_length=8, max_length=200)
+    client_secret: SecretStr
+
+
+class GitHubAppCreate(BaseModel):
+    """The tenant's own GitHub App, so deployments open PRs as their app."""
+
+    app_id: str = Field(min_length=1, max_length=32)
+    app_slug: str = Field(min_length=1, max_length=100)
+    private_key: SecretStr
+
+
+class TenantCredentialRead(BaseModel):
+    """What is configured, never what it decrypts to.
+
+    `configured_at` and the clear half only. A route that could return a
+    client secret would make the envelope pointless, and nothing in the UI
+    needs to read one back -- rotation replaces, it does not edit.
+    """
+
+    provider: str
+    source: str
+    config: dict[str, Any]
+    configured_at: datetime | None
+
+
+class TenantCredentialCollection(BaseModel):
+    data: list[TenantCredentialRead]
+    # The exact redirect URIs to register with Google and GitHub. They come
+    # from the deployment's own settings rather than a document, because a
+    # document is where they go stale -- and a redirect URI that disagrees with
+    # the deployment by one character fails at the provider with an error the
+    # person registering it cannot connect to anything they typed.
+    callbacks: dict[str, str]
+    meta: dict[str, str | int]

@@ -7,7 +7,7 @@ import {redirect, unstable_rethrow} from "next/navigation";
 import {ApiError, apiJson} from "@/lib/server-api";
 
 import {challengeCookie, type Site} from "./model";
-import {pilotPath, resolvePortfolioSite} from "./portfolio.mjs";
+import {pilotPath, safeHost} from "./site-selection.mjs";
 
 type SiteCollection = {data: Site[]};
 type SiteEnvelope = {data: Site};
@@ -52,10 +52,18 @@ function errorUrl(host: string, code: string): string {
 }
 
 function actionHost(formData: FormData): string {
-  return resolvePortfolioSite(formData.get("site_host")).host;
+  return safeHost(formData.get("site_host"));
 }
 
-async function portfolioSite(host: string): Promise<Site | undefined> {
+/**
+ * The workspace's own site with this host, if it has one.
+ *
+ * The list comes from `/v1/sites`, which is tenant scoped, so a host belonging
+ * to another workspace simply is not in it. That -- not a hardcoded list of
+ * three of our domains -- is what stops one tenant acting on another's site.
+ */
+async function ownedSite(host: string): Promise<Site | undefined> {
+  if (!host) return undefined;
   const collection = await apiJson<SiteCollection>("/v1/sites");
   return collection.data.find((site) => site.normalized_host === host);
 }
@@ -71,43 +79,22 @@ async function storeChallenge(siteId: string, challenge: ChallengeEnvelope["data
   });
 }
 
-export async function onboardPortfolioSite(formData: FormData): Promise<never> {
-  const target = resolvePortfolioSite(formData.get("site_host"));
-  try {
-    await apiJson("/v1/local-pilot/bootstrap", {method: "POST"});
-    let site = await portfolioSite(target.host);
-    if (!site) {
-      site = (
-        await apiJson<SiteEnvelope>("/v1/sites", {
-          method: "POST",
-          body: JSON.stringify({
-            name: target.name,
-            canonical_origin: target.origin,
-            mode: "observe",
-          }),
-        })
-      ).data;
-    }
-    if (site.status !== "active") {
-      const challenge = await apiJson<ChallengeEnvelope>(
-        `/v1/sites/${site.id}/verification-challenges`,
-        {method: "POST", body: "{}"},
-      );
-      await storeChallenge(site.id, challenge.data);
-    }
-  } catch (error) {
-    // `redirect()` throws; let its control-flow signal through so this
-    // action's own redirects are not rewritten as a generic error.
-    unstable_rethrow(error);
-    redirectFresh(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
-  }
-  redirectFresh(pilotPath(target.host));
-}
+/*
+ * `onboardPortfolioSite` lived here and has been removed.
+ *
+ * It created a site from a hardcoded name and origin, which is meaningless for
+ * a workspace that is not ours, and its first call was
+ * `POST /v1/local-pilot/bootstrap` -- a route that answers 404 whenever
+ * `app_env` is not `development`. So on the production host the button could
+ * not work at all: the 404 threw before a site was ever created, and every
+ * onboarding attempt redirected to a generic error. Adding a site now lives at
+ * /settings/sites, where the name and the address are the operator's to give.
+ */
 
 export async function refreshDnsChallenge(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     const challenge = await apiJson<ChallengeEnvelope>(
       `/v1/sites/${site.id}/verification-challenges`,
@@ -132,7 +119,7 @@ export async function verifyPortfolioDns(formData: FormData): Promise<never> {
       siteId: string;
       token: string;
     };
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site || site.id !== challenge.siteId) redirectFresh(errorUrl(host, "verification-challenge-mismatch"));
     await apiJson(`/v1/sites/${site.id}/verify`, {
       method: "POST",
@@ -149,16 +136,16 @@ export async function verifyPortfolioDns(formData: FormData): Promise<never> {
 }
 
 export async function connectSearchConsole(formData: FormData): Promise<never> {
-  const target = resolvePortfolioSite(formData.get("site_host"));
+  const host = actionHost(formData);
   let authorizationUrl: string;
   try {
-    const site = await portfolioSite(target.host);
-    if (!site) redirectFresh(pilotPath(target.host));
+    const site = await ownedSite(host);
+    if (!site) redirectFresh(pilotPath(host));
     const result = await apiJson<ConnectorAuthorizationEnvelope>(
       `/v1/sites/${site.id}/connectors/google_search_console/authorize`,
       {
         method: "POST",
-        body: JSON.stringify({property_ref: `${target.origin}/`}),
+        body: JSON.stringify({property_ref: `${site.canonical_origin}/`}),
       },
     );
     authorizationUrl = result.data.authorization_url;
@@ -166,7 +153,7 @@ export async function connectSearchConsole(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirectFresh(errorUrl(target.host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
   }
   redirectFresh(authorizationUrl);
 }
@@ -180,7 +167,7 @@ export async function connectDnsProvider(formData: FormData): Promise<never> {
     redirectFresh(errorUrl(host, "dns-provider-connection-invalid"));
   }
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     await apiJson(`/v1/sites/${site.id}/dns-connectors/${encodeURIComponent(providerKey)}`, {
       method: "POST",
@@ -202,7 +189,7 @@ export async function createDnsProviderVerification(formData: FormData): Promise
     const encoded = (await cookies()).get(challengeCookie)?.value;
     if (!encoded) redirectFresh(errorUrl(host, "verification-challenge-expired"));
     const challenge = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {siteId: string; token: string};
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site || site.id !== challenge.siteId) redirectFresh(errorUrl(host, "verification-challenge-mismatch"));
     await apiJson(`/v1/sites/${site.id}/dns-connectors/${encodeURIComponent(providerKey)}/verification`, {
       method: "POST",
@@ -220,7 +207,7 @@ export async function createDnsProviderVerification(formData: FormData): Promise
 export async function startFirstCrawl(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     const result = await apiJson<CrawlEnvelope>(`/v1/sites/${site.id}/crawls`, {
       method: "POST",
@@ -250,7 +237,7 @@ export async function startFirstCrawl(formData: FormData): Promise<never> {
 export async function startPerformanceRun(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     const idempotencyKey = String(formData.get("idempotency_key") ?? "");
     await apiJson(`/v1/sites/${site.id}/performance-runs`, {
@@ -270,7 +257,7 @@ export async function startPerformanceRun(formData: FormData): Promise<never> {
 export async function createCalibrationSet(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     const idempotencyKey = String(formData.get("idempotency_key") ?? "");
     await apiJson(`/v1/sites/${site.id}/calibrations`, {
@@ -316,7 +303,7 @@ export async function submitCalibrationReview(formData: FormData): Promise<never
 export async function toggleEmergencyFreezeAction(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     const currentFreeze = formData.get("current_freeze") === "true";
     if (currentFreeze) {
@@ -339,7 +326,7 @@ export async function toggleEmergencyFreezeAction(formData: FormData): Promise<n
 export async function runPolicySimulationAction(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   try {
-    const site = await portfolioSite(host);
+    const site = await ownedSite(host);
     if (!site) redirectFresh(pilotPath(host));
     await apiJson(`/v1/sites/${site.id}/simulation`, {method: "POST"});
   } catch (error) {

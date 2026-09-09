@@ -5,7 +5,7 @@ import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
 
-import {resolvePortfolioSite} from "../portfolio.mjs";
+import {safeHost} from "../site-selection.mjs";
 import type {AgentSession} from "./model";
 import {resolveTab, workspacePath} from "./paths";
 
@@ -37,7 +37,7 @@ async function siteIdFor(host: string): Promise<string | undefined> {
 }
 
 function formHost(formData: FormData): string {
-  return resolvePortfolioSite(formData.get("site_host")).host;
+  return safeHost(formData.get("site_host"));
 }
 
 export async function startConversation(formData: FormData): Promise<never> {

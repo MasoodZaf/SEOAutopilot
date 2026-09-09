@@ -16,7 +16,6 @@ import {
   connectSearchConsole,
   createDnsProviderVerification,
   createCalibrationSet,
-  onboardPortfolioSite,
   refreshDnsChallenge,
   rollbackProposalAction,
   runPolicySimulationAction,
@@ -28,9 +27,13 @@ import {
 import {advisoryFor} from "./advisory.mjs";
 import {SerpPreview} from "./components/serp-preview";
 import {challengeCookie, type CalibrationRun, type Crawl, type Site} from "./model";
-import {pilotPath, portfolioSites, resolvePortfolioSite} from "./portfolio.mjs";
+import {pilotPath, selectSite} from "./site-selection.mjs";
 
-type PortfolioSite = (typeof portfolioSites)[number];
+/**
+ * The site the dashboard is pointed at, derived from the workspace's own
+ * sites rather than from a list of three hosts compiled into the bundle.
+ */
+type Target = {host: string; name: string; origin: string};
 
 type Connector = {id: string; type: string; provider_key: string | null; status: string; external_account_ref: string | null};
 type SearchPerformance = {
@@ -151,7 +154,7 @@ const errorMessages: Record<string, string> = {
 };
 
 async function loadPilot(requestedHost: string | undefined): Promise<{
-  target: PortfolioSite;
+  target?: Target;
   sites: Site[];
   site?: Site;
   searchConsoleConnector?: Connector;
@@ -166,11 +169,19 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   performanceRun?: PerformanceRun;
   performanceSummary?: PerformanceSummary;
 }> {
-  const target = resolvePortfolioSite(requestedHost);
   try {
     const sites = await apiJson<{data: Site[]}>("/v1/sites");
-    const site = sites.data.find((item) => item.normalized_host === target.host);
-    if (!site) return {target, sites: sites.data, opportunities: [], proposals: [], measurements: []};
+    const site = selectSite(sites.data, requestedHost);
+    if (!site) {
+      // A workspace with no sites at all, or none matching. There is nothing to
+      // show and nothing to onboard from here: adding a site is /settings/sites.
+      return {sites: sites.data, opportunities: [], proposals: [], measurements: []};
+    }
+    const target: Target = {
+      host: site.normalized_host,
+      name: site.name,
+      origin: site.canonical_origin,
+    };
     const connectors = await apiJson<{data: Connector[]}>(`/v1/sites/${site.id}/connectors`);
     const oppResult = site.status === "active"
       ? await apiJson<{data: Opportunity[]}>(`/v1/sites/${site.id}/opportunities?limit=20&status=open`)
@@ -251,13 +262,21 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       performanceSummary,
     };
   } catch {
-    return {target, sites: [], opportunities: [], proposals: [], measurements: []};
+    // The API is unreachable or refused. Reporting no sites is honest here --
+    // we genuinely do not know what this workspace has -- and the page renders
+    // that as "nothing to show" rather than as somebody else's site.
+    return {sites: [], opportunities: [], proposals: [], measurements: []};
   }
 }
 
 export default async function PilotPage({searchParams}: PageProps) {
   const {error, governance: govUpdated, simulation, proposal: propMsg, site: requestedHost} = await searchParams;
   const data = await loadPilot(requestedHost);
+  // A placeholder only when the workspace has no site at all -- in which case
+  // the body below renders the "add a site" panel and nothing that reads these
+  // fields is on screen. Keeping it non-optional avoids threading a null check
+  // through every form in the page for a state that shows none of them.
+  const target = data.target ?? {host: "", name: "This workspace", origin: ""};
   const cookieStore = await cookies();
   const challengeRaw = cookieStore.get(challengeCookie)?.value;
   const challenge = challengeRaw
@@ -300,20 +319,20 @@ export default async function PilotPage({searchParams}: PageProps) {
           {data.site && data.governance && (
             <div className="flex items-center gap-2">
               <Link
-                href={`/pilot/workspace?site=${data.target.host}`}
+                href={`/pilot/workspace?site=${target.host}`}
                 className="rounded border border-emerald-800 bg-emerald-950/60 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-900/60"
               >
                 Agent workspace
               </Link>
               <form action={runPolicySimulationAction}>
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <button type="submit" className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
                   Run Policy Simulation
                 </button>
               </form>
               {!data.governance.emergency_freeze && (
                 <form action={toggleEmergencyFreezeAction}>
-                  <input type="hidden" name="site_host" value={data.target.host} />
+                  <input type="hidden" name="site_host" value={target.host} />
                   <input type="hidden" name="current_freeze" value="false" />
                   <button type="submit" className="rounded border border-red-800 bg-red-950/60 px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-red-900">
                     Emergency Freeze
@@ -324,41 +343,47 @@ export default async function PilotPage({searchParams}: PageProps) {
           )}
         </div>
         <p className="text-sm text-zinc-400">
-          Auditable, multi-tenant SEO evidence and governance control plane for <span className="font-medium text-zinc-200">{data.target.host}</span>.
+          Auditable, multi-tenant SEO evidence and governance control plane for <span className="font-medium text-zinc-200">{target.host}</span>.
         </p>
       </header>
 
       <section aria-labelledby="portfolio-heading" className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 id="portfolio-heading" className="text-sm font-semibold text-white">Owned-site evidence lab</h2>
-            <p className="text-xs text-zinc-400">Compare the same bounded workflow across three owned sites. Selection never grants permission to publish changes.</p>
+            <h2 id="portfolio-heading" className="text-sm font-semibold text-white">Your sites</h2>
+            <p className="text-xs text-zinc-400">The same bounded workflow across every site in this workspace. Selection never grants permission to publish changes.</p>
           </div>
           <span className="mt-2 w-fit rounded border border-amber-800 bg-amber-950/50 px-2 py-1 text-xs font-medium text-amber-300 sm:mt-0">
             Human consent required
           </span>
         </div>
-        <nav aria-label="Portfolio sites" className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {portfolioSites.map((portfolioSite) => {
-            const existing = data.sites.find((item) => item.normalized_host === portfolioSite.host);
-            const selected = portfolioSite.host === data.target.host;
+        <nav aria-label="Sites in this workspace" className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {data.sites.map((item) => {
+            const selected = item.normalized_host === target.host;
             return (
               <Link
-                key={portfolioSite.host}
-                href={pilotPath(portfolioSite.host)}
+                key={item.id}
+                href={pilotPath(item.normalized_host)}
                 aria-current={selected ? "page" : undefined}
                 className={`rounded border p-3 outline-none focus-visible:ring-2 focus-visible:ring-white ${selected ? "border-white bg-zinc-900" : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900"}`}
               >
                 <span className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-white">{portfolioSite.name}</span>
-                  <span className={`rounded px-2 py-0.5 text-xs ${existing?.status === "active" ? "bg-emerald-950 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}>
-                    {existing?.status ?? "Not onboarded"}
+                  <span className="text-sm font-semibold text-white">{item.name}</span>
+                  <span className={`rounded px-2 py-0.5 text-xs ${item.status === "active" ? "bg-emerald-950 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}>
+                    {item.status}
                   </span>
                 </span>
-                <span className="mt-1 block text-xs text-zinc-500">{portfolioSite.host}</span>
+                <span className="mt-1 block text-xs text-zinc-500">{item.normalized_host}</span>
               </Link>
             );
           })}
+          <Link
+            href="/settings/sites"
+            className="rounded border border-dashed border-zinc-700 p-3 text-center outline-none hover:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-white"
+          >
+            <span className="text-sm font-semibold text-zinc-300">Add a site</span>
+            <span className="mt-1 block text-xs text-zinc-500">Verify a domain you control</span>
+          </Link>
         </nav>
       </section>
 
@@ -387,7 +412,7 @@ export default async function PilotPage({searchParams}: PageProps) {
             */}
             {data.site && (
               <form action={setSiteModeAction} className="mt-3 space-y-2">
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="site_id" value={data.site.id} />
                 <select
                   name="mode"
@@ -441,7 +466,7 @@ export default async function PilotPage({searchParams}: PageProps) {
             */}
             {data.site && (
               <form action={setApproverCountAction} className="mt-3 flex gap-2">
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="site_id" value={data.site.id} />
                 <input
                   name="required_approver_count"
@@ -475,14 +500,17 @@ export default async function PilotPage({searchParams}: PageProps) {
       {/* Site Onboarding & Crawl Actions */}
       {!data.site ? (
         <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6 text-center">
-          <h2 className="text-lg font-semibold text-white">Initialize Target Site</h2>
-          <p className="mt-1 text-sm text-zinc-400">Onboard {data.target.host} in Observe mode, then prove ownership with a DNS TXT record.</p>
-          <form action={onboardPortfolioSite} className="mt-4">
-            <input type="hidden" name="site_host" value={data.target.host} />
-            <button type="submit" className="rounded bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-zinc-200">
-              Onboard {data.target.name}
-            </button>
-          </form>
+          <h2 className="text-lg font-semibold text-white">No site selected</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Add a site you control and prove it with a DNS record. Adding one lives in settings,
+            because it needs the address and a name only you can give.
+          </p>
+          <Link
+            href="/settings/sites"
+            className="mt-4 inline-block rounded bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-zinc-200"
+          >
+            Add a site
+          </Link>
         </section>
       ) : data.site.status !== "active" ? (
         <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
@@ -497,13 +525,13 @@ export default async function PilotPage({searchParams}: PageProps) {
           {!selectedChallenge && <p className="mt-3 text-xs text-amber-300">Generate a fresh site-specific TXT token before verification.</p>}
           <div className="mt-4 flex gap-3">
             <form action={verifyPortfolioDns}>
-              <input type="hidden" name="site_host" value={data.target.host} />
+              <input type="hidden" name="site_host" value={target.host} />
               <button type="submit" className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500">
                 Verify DNS Record
               </button>
             </form>
             <form action={refreshDnsChallenge}>
-              <input type="hidden" name="site_host" value={data.target.host} />
+              <input type="hidden" name="site_host" value={target.host} />
               <button type="submit" className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
                 Regenerate Token
               </button>
@@ -514,7 +542,7 @@ export default async function PilotPage({searchParams}: PageProps) {
             <p className="mt-1 text-xs text-zinc-400">The manual TXT record above works with every DNS host. This optional assistant adds provider-specific support without changing the consent policy.</p>
             {data.dnsProviderConnector?.status === "active" ? (
               <form action={createDnsProviderVerification} className="mt-3">
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="provider_key" value={data.dnsProviderConnector.provider_key ?? ""} />
                 <button type="submit" className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">
                   Create this TXT record with {data.dnsProviderConnector.provider_key ?? "your DNS provider"}
@@ -533,7 +561,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <label className="text-xs text-zinc-400">Scoped API token
                   <input required name="api_token" type="password" autoComplete="off" className="mt-1 block w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100" />
                 </label>
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <p className="text-xs text-zinc-500 sm:col-span-2">The selected adapter states its least-privilege scope. Connecting does not create or change DNS records; creation requires a second approval.</p>
                 <button type="submit" className="justify-self-start rounded border border-violet-500 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-950 sm:col-span-2">Connect selected provider</button>
               </form>
@@ -552,7 +580,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 </p>
               </div>
               <form action={startFirstCrawl} className="mt-3">
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <button type="submit" className="w-full rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700">
                   Trigger New Crawl
                 </button>
@@ -567,7 +595,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 </p>
               </div>
               <form action={connectSearchConsole} className="mt-3">
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <button type="submit" className="w-full rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700">
                   {data.searchConsoleConnector ? "Re-sync Search Console" : "Connect Search Console"}
                 </button>
@@ -586,7 +614,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 </p>
               </div>
               <form action={startPerformanceRun} className="mt-3">
-                <input type="hidden" name="site_host" value={data.target.host} />
+                <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="idempotency_key" value={performanceIdempotencyKey} />
                 <button type="submit" className="w-full rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700">
                   Run Mobile Lab Sample
@@ -643,7 +671,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         button was a finding that could never become a change.
                       */}
                       <form action={draftProposalAction} className="mt-3">
-                        <input type="hidden" name="site_host" value={data.target.host} />
+                        <input type="hidden" name="site_host" value={target.host} />
                         <input type="hidden" name="opportunity_id" value={opportunity.id} />
                         <button
                           type="submit"
@@ -679,7 +707,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               </div>
               {!data.calibration && data.opportunities.length > 0 && (
                 <form action={createCalibrationSet}>
-                  <input type="hidden" name="site_host" value={data.target.host} />
+                  <input type="hidden" name="site_host" value={target.host} />
                   <input type="hidden" name="idempotency_key" value={randomUUID()} />
                   <button type="submit" className="rounded bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-zinc-200">
                     Freeze 20-item human review set
@@ -719,7 +747,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                     <div className="mt-3">
                       <SerpPreview
                         title={prop.title}
-                        url={`${data.target.origin}/${prop.target_path.replace(/^\//, "")}`}
+                        url={`${target.origin}/${prop.target_path.replace(/^\//, "")}`}
                         description={prop.rationale}
                         isModified={true}
                       />
@@ -746,7 +774,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         {(prop.status === "validated" || prop.status === "review_required") && (
                           <>
                             <form action={approveProposalAction}>
-                              <input type="hidden" name="site_host" value={data.target.host} />
+                              <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
                               <button type="submit" className="rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500">
                                 Approve
@@ -759,7 +787,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                               proposal and can never put anything on a site.
                             */}
                             <form action={withdrawProposalAction}>
-                              <input type="hidden" name="site_host" value={data.target.host} />
+                              <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
                               <button type="submit" className="rounded border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:border-zinc-500 hover:text-white">
                                 Withdraw
@@ -784,7 +812,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         */}
                         {prop.status === "approved" && (
                           <form action={deployProposalAction}>
-                            <input type="hidden" name="site_host" value={data.target.host} />
+                            <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="proposal_id" value={prop.id} />
                             {/*
                               Keyed on the proposal, so a double click or a
@@ -807,7 +835,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         */}
                         {prop.status === "deployed" && (
                           <form action={rollbackProposalAction}>
-                            <input type="hidden" name="site_host" value={data.target.host} />
+                            <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="proposal_id" value={prop.id} />
                             <button type="submit" className="rounded border border-red-800 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-600 hover:text-red-200">
                               Request revert

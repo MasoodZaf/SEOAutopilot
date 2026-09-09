@@ -8,7 +8,7 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import Settings, get_settings
-from app.core.context import Role, TenantContext
+from app.core.context import ActorContext, Role, TenantContext
 from app.core.oidc import (
     OidcConfigurationError,
     OidcVerificationError,
@@ -133,26 +133,10 @@ async def require_tenant_context(
     if local_context is not None:
         return local_context
 
-    try:
-        verifier = await get_oidc_verifier(settings)
-    except (OidcConfigurationError, httpx.HTTPError) as error:
-        # The provider is unreachable or misconfigured. That is an outage on
-        # this side, and reporting it as 401 would send every user to log in
-        # again to fix something they cannot.
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="authentication_unavailable",
-        ) from error
-    if verifier is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_not_configured"
-        )
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
-    try:
-        identity = verifier.verify(credentials.credentials)
-    except OidcVerificationError as error:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    # The provider being unreachable is an outage on this side, and reporting
+    # it as 401 would send every user to log in again to fix something they
+    # cannot. `_verified_identity` holds that distinction for both dependencies.
+    identity = await _verified_identity(settings, credentials)
 
     # Imported here rather than at module scope: the session module depends on
     # this one for the tenant-scoped session, so importing it back at import
@@ -169,3 +153,66 @@ async def require_tenant_context(
 
 
 TenantContextDependency = Annotated[TenantContext, Depends(require_tenant_context)]
+
+
+async def _verified_identity(
+    settings: Settings, credentials: HTTPAuthorizationCredentials | None
+):
+    """The token-checking half of `require_tenant_context`, on its own.
+
+    Shared so that the two dependencies cannot drift on what a valid token is,
+    which is the kind of divergence that ends with one route accepting what the
+    other rejects.
+    """
+    try:
+        verifier = await get_oidc_verifier(settings)
+    except (OidcConfigurationError, httpx.HTTPError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="authentication_unavailable",
+        ) from error
+    if verifier is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_not_configured"
+        )
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+    try:
+        return verifier.verify(credentials.credentials)
+    except OidcVerificationError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+
+
+async def require_actor_context(
+    settings: Annotated[Settings, Depends(get_settings)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> ActorContext:
+    """Who is calling, without asking whose data they may act on.
+
+    For the two requests that have to work before a membership exists: listing
+    the tenants you are in, and creating your first one. Everything else takes
+    `require_tenant_context`, which refuses when the answer to that second
+    question is nobody's.
+    """
+    local_context = resolve_local_pilot_context(settings, credentials)
+    if local_context is not None:
+        return ActorContext(
+            actor_id=local_context.actor_id,
+            email="",
+            display_name="local pilot operator",
+            trace_id=local_context.trace_id,
+        )
+
+    identity = await _verified_identity(settings, credentials)
+
+    from app.db.session import authenticating_session
+    from app.services.identity import IdentityResolver
+
+    async with authenticating_session() as session:
+        actor, _ = await IdentityResolver(session).resolve_actor(
+            identity, trace_id=f"req-{secrets.token_hex(12)}"
+        )
+        return actor
+
+
+ActorContextDependency = Annotated[ActorContext, Depends(require_actor_context)]

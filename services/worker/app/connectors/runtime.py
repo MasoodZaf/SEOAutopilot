@@ -30,7 +30,7 @@ import hashlib
 import hmac
 import json
 import secrets as secrets_module
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
@@ -40,6 +40,10 @@ import asyncpg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.connectors.google_oauth import GoogleAuthorizationRevoked, TokenRefresher
+
+# Resolves the refresher for one tenant. A coroutine because answering may
+# mean reading and decrypting that tenant's stored OAuth client.
+RefresherFactory = Callable[[UUID], Awaitable[TokenRefresher | None]]
 
 STREAM = "seo-autopilot:events"
 SECRET_PREFIX = "db-envelope://"
@@ -414,14 +418,25 @@ class AccessTokenManager:
         key_version: str,
         refresher: TokenRefresher | None,
         expected_scopes: frozenset[str],
+        refresher_factory: RefresherFactory | None = None,
     ) -> None:
         self._pool = pool
         self._sync = sync
         self._encryption_key = encryption_key
         self._key_version = key_version
         self._refresher = refresher
+        # A refresh token is redeemable only by the client that issued it, and
+        # which client that is belongs to the tenant. When a factory is given
+        # it wins: the fixed refresher is the deployment-wide fallback, which
+        # is right only for tenants that never supplied their own client.
+        self._refresher_factory = refresher_factory
         self._expected_scopes = expected_scopes
         self._credential: StoredCredential | None = None
+
+    async def _resolve_refresher(self) -> TokenRefresher | None:
+        if self._refresher_factory is None:
+            return self._refresher
+        return await self._refresher_factory(self._sync.tenant_id)
 
     async def _current(self) -> StoredCredential:
         if self._credential is None:
@@ -441,12 +456,13 @@ class AccessTokenManager:
 
     async def renew(self) -> str:
         credential = await self._current()
-        if self._refresher is None:
+        refresher = await self._resolve_refresher()
+        if refresher is None:
             # Naming the real cause. Reporting `authorization_required` here
             # would send a tenant to a consent screen to fix a missing client
             # secret on the server, which cannot possibly work.
             raise ValueError("token_refresh_not_configured")
-        refreshed = await self._refresher.refresh(credential.refresh_token)
+        refreshed = await refresher.refresh(credential.refresh_token)
         if refreshed.scopes and set(refreshed.scopes) != set(self._expected_scopes):
             # The grant is not the one that was consented to. Writing it back
             # would silently widen what this connector can reach.

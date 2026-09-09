@@ -22,6 +22,7 @@ from app.connectors.runtime import (
     ZERO_WRITTEN,
     AccessTokenManager,
     ClaimedSync,
+    RefresherFactory,
     SyncProgress,
     SyncStream,
     Written,
@@ -209,6 +210,7 @@ async def run_gsc_consumer(
     query_hash_key: bytes,
     query_key_version: str = "local-v1",
     refresher: TokenRefresher | None = None,
+    refresher_factory: RefresherFactory | None = None,
 ) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -262,6 +264,7 @@ async def run_gsc_consumer(
                         encryption_key=encryption_key,
                         key_version=query_key_version,
                         refresher=refresher,
+                        refresher_factory=refresher_factory,
                         expected_scopes=REQUIRED_SCOPES,
                     )
                     client = SearchConsoleClient()

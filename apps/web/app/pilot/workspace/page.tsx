@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import {ApiError, apiJson} from "@/lib/server-api";
 
-import {pilotPath, portfolioSites, resolvePortfolioSite} from "../portfolio.mjs";
+import {pilotPath, selectSite} from "../site-selection.mjs";
 import {runRoutineNow, scheduleRoutine, sendMessage, startConversation} from "./actions";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {
@@ -85,12 +85,17 @@ function AgentBody({body}: {body: string}) {
 
 export default async function WorkspacePage({searchParams}: {searchParams: Promise<Search>}) {
   const params = await searchParams;
-  const target = resolvePortfolioSite(one(params.site));
   const tab: WorkspaceTab = resolveTab(one(params.tab));
   const errorCode = one(params.error);
 
   const sites = await maybe<{data: Array<{id: string; normalized_host: string; name: string}>}>("/v1/sites");
-  const site = sites?.data.find((item) => item.normalized_host === target.host);
+  const owned = sites?.data ?? [];
+  // The site is chosen from what this workspace actually has, so a host it does
+  // not own selects its own first site rather than somebody else's.
+  const site = selectSite(owned, one(params.site));
+  const target = site
+    ? {host: site.normalized_host, name: site.name}
+    : {host: "", name: "This workspace"};
   const skills = (await maybe<{data: Skill[]}>("/v1/skills"))?.data ?? [];
 
   const sessions = site ? ((await maybe<{data: AgentSession[]}>(`/v1/sites/${site.id}/agent-sessions`))?.data ?? []) : [];
@@ -129,13 +134,13 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
           </p>
         </header>
 
-        <nav aria-label="Portfolio sites" className="flex flex-wrap gap-2">
-          {portfolioSites.map((portfolioSite) => {
-            const selected = portfolioSite.host === target.host;
+        <nav aria-label="Sites in this workspace" className="flex flex-wrap gap-2">
+          {owned.map((portfolioSite) => {
+            const selected = portfolioSite.normalized_host === target.host;
             return (
               <Link
-                key={portfolioSite.host}
-                href={workspacePath(portfolioSite.host, {tab})}
+                key={portfolioSite.id}
+                href={workspacePath(portfolioSite.normalized_host, {tab})}
                 aria-current={selected ? "page" : undefined}
                 className={`rounded border px-3 py-1.5 text-xs font-medium ${
                   selected ? "border-zinc-500 bg-zinc-800 text-white" : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:bg-zinc-800"
@@ -153,7 +158,12 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
           </p>
         )}
 
-        {!site && <Empty>{target.name} is not onboarded yet. Onboard and verify it from the operations page first.</Empty>}
+        {!site && (
+          <Empty>
+            This workspace has no verified site yet. Add one under Settings &rarr; Sites and
+            prove the domain with a DNS record first.
+          </Empty>
+        )}
 
         <nav aria-label="Workspace sections" className="flex gap-1 border-b border-zinc-800">
           {workspaceTabs.map((name) => {

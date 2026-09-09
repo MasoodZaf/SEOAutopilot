@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.context import Role, TenantContext
+from app.core.context import ActorContext, Role, TenantContext
 from app.core.oidc import VerifiedIdentity
 from app.db.models import AppUser, TenantInvitation, TenantMembership
 
@@ -29,6 +29,31 @@ from app.db.models import AppUser, TenantInvitation, TenantMembership
 class IdentityResolver:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def resolve_actor(
+        self, identity: VerifiedIdentity, *, trace_id: str
+    ) -> tuple[ActorContext, list[TenantMembership]]:
+        """Establish the person, and report what they are in without demanding it.
+
+        Everything `resolve` does up to the point where it insists on a
+        membership. Signup and the tenant chooser need exactly that much: a
+        proven person, their invitations already accepted, and an honest list
+        that may be empty.
+        """
+        now = datetime.now(UTC)
+        user = await self._user(identity, now)
+        if user.status != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="account_suspended")
+        await self._accept_open_invitations(user, identity, now)
+        memberships = await self._memberships(user)
+        user.last_seen_at = now
+        actor = ActorContext(
+            actor_id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            trace_id=trace_id,
+        )
+        return actor, memberships
 
     async def resolve(
         self, identity: VerifiedIdentity, *, requested_tenant_id: UUID | None, trace_id: str

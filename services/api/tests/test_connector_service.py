@@ -29,7 +29,10 @@ async def test_authorization_is_read_only_short_lived_and_state_is_only_hashed()
         verified_at=datetime.now(UTC),
     )
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[site, None])
+    # Three reads, in order: the verified site, this tenant's own OAuth client
+    # (none, so the deployment's is used -- which is what the `client_id`
+    # assertion below now pins), and the existing connector.
+    session.scalar = AsyncMock(side_effect=[site, None, None])
     session.flush = AsyncMock()
     session.add = MagicMock()
     session.add_all = MagicMock()

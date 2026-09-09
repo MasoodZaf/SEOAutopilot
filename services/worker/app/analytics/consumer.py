@@ -39,6 +39,7 @@ from app.connectors.runtime import (
     ZERO_WRITTEN,
     AccessTokenManager,
     ClaimedSync,
+    RefresherFactory,
     SyncProgress,
     SyncStream,
     Written,
@@ -194,6 +195,7 @@ async def run_analytics_consumer(
     encryption_key: bytes,
     key_version: str = "local-v1",
     refresher: TokenRefresher | None = None,
+    refresher_factory: RefresherFactory | None = None,
 ) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -232,6 +234,7 @@ async def run_analytics_consumer(
                         encryption_key=encryption_key,
                         key_version=key_version,
                         refresher=refresher,
+                        refresher_factory=refresher_factory,
                         expected_scopes=REQUIRED_SCOPES,
                     )
                     client = AnalyticsDataClient()

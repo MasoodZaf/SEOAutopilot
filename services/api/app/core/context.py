@@ -24,3 +24,22 @@ class TenantContext:
     def require(self, *roles: Role) -> None:
         if self.role not in roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+
+
+@dataclass(frozen=True, slots=True)
+class ActorContext:
+    """A person, proven, with no authority over anybody's data yet.
+
+    The narrower half of `TenantContext`, and the only thing that can be
+    established about somebody who has just signed in for the first time. It
+    exists for the two requests that must work before a membership does:
+    asking which tenants you are in, and creating your first one.
+
+    It deliberately carries no tenant id. A route that takes this cannot read
+    tenant data by accident, because it has no scope to read it under.
+    """
+
+    actor_id: UUID
+    email: str
+    display_name: str
+    trace_id: str

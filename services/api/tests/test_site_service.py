@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -186,3 +186,20 @@ async def test_latest_crawl_is_resolved_inside_tenant_site_scope() -> None:
 
     assert result is crawl
     assert mocked.scalar.await_count == 2
+
+
+def test_a_dns_challenge_outlives_slow_dns_propagation() -> None:
+    """Twenty-four hours, not thirty minutes.
+
+    Thirty minutes was an assumption about Cloudflare's API, applied to
+    everybody. A registrar edited by hand routinely takes longer than that to
+    serve a new TXT record, so the challenge expired before the record it was
+    waiting for existed and re-issuing lost the same race again.
+
+    Pinned here because the first attempt at this fix changed only the column
+    default in the migration -- which the service overrides on every insert, so
+    nothing observable changed at all.
+    """
+    from app.services.sites import VERIFICATION_CHALLENGE_LIFETIME
+
+    assert VERIFICATION_CHALLENGE_LIFETIME >= timedelta(hours=12)

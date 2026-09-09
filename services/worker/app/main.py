@@ -15,6 +15,7 @@ from app.connectors.runtime import (
     decode_encryption_key,
     require_secret_bytes,
 )
+from app.connectors.tenant_clients import TenantTokenRefresherFactory
 from app.gsc.consumer import run_gsc_consumer
 from app.notifications.deliver import run_notification_dispatcher
 from app.outbox import DatabaseConnection, StreamClient, dispatch_batch
@@ -102,17 +103,32 @@ async def run() -> None:
     # services read one .env.local.
     google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
     google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    refresh_client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(15.0))
     token_refresher: TokenRefresher | None = None
     if google_client_id and google_client_secret:
         token_refresher = GoogleTokenHttpRefresher(
-            httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(15.0)),
+            refresh_client,
             client_id=google_client_id,
             client_secret=google_client_secret,
         )
-    else:
+
+    # Which client renews a grant is the tenant's, not the deployment's: a
+    # refresh token is redeemable only by the client it was issued to, and
+    # presenting it under another one comes back as `invalid_grant` -- which
+    # reads here as a revoked grant, so the tenant is sent round the consent
+    # screen for ever. The pair above is the fallback for tenants that never
+    # supplied their own.
+    refresher_factory = TenantTokenRefresherFactory(
+        pool,
+        refresh_client,
+        encryption_key=connector_key,
+        fallback=token_refresher,
+    )
+    if token_refresher is None:
         logger.warning(
-            "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are unset; Search Console and GA4 "
-            "syncs cannot renew an access token and stop working one hour after consent"
+            "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are unset; a tenant that has not "
+            "stored its own OAuth client cannot renew an access token, and its Search "
+            "Console and GA4 syncs stop working one hour after consent"
         )
 
     background = [
@@ -133,6 +149,7 @@ async def run() -> None:
             query_hash_key=query_hash_key,
             query_key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
             refresher=token_refresher,
+            refresher_factory=refresher_factory.for_tenant,
         ),
         # Reads the same stream as the Search Console consumer and claims only
         # `google_analytics` rows, so neither has to reject the other's work.
@@ -143,6 +160,7 @@ async def run() -> None:
             encryption_key=connector_key,
             key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
             refresher=token_refresher,
+            refresher_factory=refresher_factory.for_tenant,
         ),
         run_pagespeed_consumer(
             cast(PageSpeedPool, pool),

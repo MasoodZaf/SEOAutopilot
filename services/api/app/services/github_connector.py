@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -56,6 +57,7 @@ from app.domain.github_adapter import GitHubTarget
 from app.services.connector_secrets import ConnectorSecretReader, ConnectorSecretStore
 from app.services.github_app import GitHubAppClient, GitHubAppError
 from app.services.sites import SiteService, stable_hash
+from app.services.tenant_credentials import github_app_credential
 
 GITHUB_CONNECTOR = "github_repository"
 PROVIDER_APP = "github_app"
@@ -327,7 +329,8 @@ class GitHubConnectorService:
         """Start the install, and remember what was asked for while GitHub asks."""
         self.context.require(Role.OWNER, Role.ADMIN)
         site = await self._site(site_id)
-        if not settings.github_app_configured:
+        app = await github_app_credential(self.session, settings, self.context.tenant_id)
+        if app is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="github_app_not_configured",
@@ -381,7 +384,7 @@ class GitHubConnectorService:
             },
         )
         query = urlencode({"state": state})
-        url = f"https://github.com/apps/{settings.github_app_slug}/installations/new?{query}"
+        url = f"https://github.com/apps/{app.app_slug}/installations/new?{query}"
         return connector, url, expires_at
 
     async def resolve(
@@ -474,17 +477,16 @@ class GitHubConnectorService:
         client: httpx.AsyncClient,
     ) -> str:
         installation_id = (connector.config_json or {}).get("installation_id")
-        if not settings.github_app_configured or not isinstance(installation_id, int):
+        app = await github_app_credential(self.session, settings, connector.tenant_id)
+        if app is None or not isinstance(installation_id, int):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="github_app_not_configured"
             )
-        assert settings.github_app_id is not None
-        assert settings.github_app_private_key is not None
-        app_client = GitHubAppClient(
-            client,
-            settings.github_app_id,
-            settings.github_app_private_key.get_secret_value(),
-        )
+        # The installation belongs to whichever app it was created under, so
+        # the token must be minted by that same app. Reading the connector's
+        # tenant rather than the request context is deliberate: this is also
+        # reached from the background sweeps, where there is no request.
+        app_client = GitHubAppClient(client, app.app_id, app.private_key)
         try:
             minted = await app_client.mint_installation_token(installation_id)
         except GitHubAppError as error:
@@ -537,7 +539,20 @@ class GitHubInstallationCallbackService:
     and set as the scope before anything else is read or written.
     """
 
-    def __init__(self, session: AsyncSession, app_client: GitHubAppClient) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        app_client: GitHubAppClient | None = None,
+        *,
+        app_client_factory: Callable[[UUID], Awaitable[GitHubAppClient]] | None = None,
+    ) -> None:
+        # An installation belongs to the app it was created under, so the token
+        # that confirms it must be minted by that same app -- and which app
+        # that is depends on the tenant, which only the state row names. Hence
+        # a factory, resolved once the tenant is known. A caller that already
+        # knows the app (the tests, and a single-app deployment) still passes
+        # the client directly.
+        self.app_client_factory = app_client_factory
         self.session = session
         self.app_client = app_client
 
@@ -554,6 +569,8 @@ class GitHubInstallationCallbackService:
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(unscoped.tenant_id)},
         )
+        if self.app_client_factory is not None:
+            self.app_client = await self.app_client_factory(unscoped.tenant_id)
         self.session.expunge(unscoped)
         oauth_state = await self.session.scalar(
             select(ConnectorOauthState)
@@ -594,6 +611,14 @@ class GitHubInstallationCallbackService:
             )
 
         slug = oauth_state.requested_property_ref
+        if self.app_client is None:
+            # Neither a client nor a factory that produced one. Refusing here
+            # keeps the failure at "this tenant has no GitHub App configured"
+            # rather than an attribute error halfway through the exchange.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="github_app_not_configured",
+            )
         try:
             installation = await self.app_client.installation(installation_id)
             minted = await self.app_client.mint_installation_token(installation_id)
