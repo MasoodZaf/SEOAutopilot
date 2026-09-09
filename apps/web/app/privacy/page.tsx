@@ -3,7 +3,7 @@ import type {Metadata} from "next";
 import {Legal, Section} from "../legal/shell";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — SEO Autopilot",
+  title: "Privacy Policy",
   description:
     "What SEO Autopilot stores, why, who can reach it, and how to have it deleted.",
 };
