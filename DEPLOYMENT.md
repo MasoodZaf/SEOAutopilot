@@ -896,6 +896,17 @@ is what makes the address usable by anybody it is given to. Note that Google
 has renamed this console: the old **APIs & Services → OAuth consent screen**
 page is gone, and the publishing status now lives on **Audience**.
 
+**Search Console gates Branding.** Branding verification rejects the home page
+URL with "the website of your home page URL is not registered to you" until the
+domain is verified in **Google Search Console** under the same account that owns
+the Cloud project. It is a Search Console check, not a check on the page, so
+nothing about the deployment can satisfy it. `oryxenlabs.com` had no
+`google-site-verification` TXT record at all (confirmed by `dig`) — the estate's
+existing Search Console properties are codearc.net, thecalchive.com and
+wordkitapp.com, never the domain the control plane itself runs on. Fix: a
+**Domain** property for `oryxenlabs.com` with the TXT record on the apex in
+Cloudflare, which covers `seo.` and every future subdomain in one record.
+
 **Branding gates the button.** *Publish app* stays disabled until the
 **Branding** page is complete, reported only as "your app's OAuth
 configuration is incomplete". It wants an application home page, a privacy
