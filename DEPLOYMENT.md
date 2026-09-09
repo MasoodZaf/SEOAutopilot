@@ -919,10 +919,32 @@ policy link, a terms-of-service link and an authorised domain. This deployment
 had none of the legal pages, so `/privacy` and `/terms` were added and are
 live; the authorised domain is `oryxenlabs.com`. Google fetches those URLs, so
 they have to stay reachable — if the marketing page is ever restructured, the
-consent screen breaks with it. It needs no Google
-verification review: that client requests only `openid email profile`, which is
-non-sensitive. The sensitive scopes — Search Console, Analytics — moved to each
-tenant's own OAuth client in §6f, so they are no longer this client's problem.
+consent screen breaks with it. **Verification is a property of the project, not the client** — this is where I
+was wrong, and it is worth stating plainly because the reasoning is seductive.
+The sign-in client requests only `openid email profile`, so I recorded that
+publishing would need no verification review. Google does not look at the
+client. It looks at the consent screen, which belongs to the *project*, and
+this project holds two clients:
+
+| client | purpose | scopes |
+| --- | --- | --- |
+| `417045140496-8nfansafc…` | sign-in (web tier `OIDC_CLIENT_ID`) | openid, email, profile |
+| `417045140496-96pomo5e…` | GSC/GA4 connectors (api `GOOGLE_CLIENT_ID`) | + analytics.readonly, webmasters.readonly |
+
+Same project number, one consent screen, five scopes on it — two sensitive. So
+publishing demands scope justifications and a recorded demo video, reviewed over
+days or weeks.
+
+**The fix is two projects**, which is what the §6f architecture already implies:
+a project containing *only* the sign-in client, published and review-free; and
+this project left in Testing for the operator's own connectors, where the
+test-user list costs nothing because the only user is the operator. Tenants
+never touch it — they bring their own client.
+
+Do **not** strip the sensitive scopes out of this project to make the warning go
+away. A refresh token is redeemable only by the client that issued it, so that
+strands all six live connectors and forces a re-authorisation of each — the
+outcome the tenant-first fallback exists to prevent.
 
 Publishing it also makes sign-up open to anyone with a Google account. There is
 no allowlist; the only limit is `MAX_OWNED_TENANTS = 5` per person.
