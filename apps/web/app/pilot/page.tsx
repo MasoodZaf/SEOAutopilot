@@ -3,7 +3,9 @@ import type {Metadata} from "next";
 import {randomUUID} from "node:crypto";
 import Link from "next/link";
 
-import {apiJson} from "@/lib/server-api";
+import {redirect} from "next/navigation";
+
+import {apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {
   approveProposalAction,
@@ -261,7 +263,13 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       performanceRun,
       performanceSummary,
     };
-  } catch {
+  } catch (error) {
+    // Signed in and in no workspace yet is not a failure to report -- it is the
+    // ordinary first minute of a new account, and the one useful answer to it is
+    // the page that fixes it. Without this the fallback below renders an empty
+    // dashboard offering to add a site, which is a dead end: there is no
+    // workspace to add one to, so the offer fails wherever they accept it.
+    if (isMissingTenant(error)) redirect("/onboarding");
     // The API is unreachable or refused. Reporting no sites is honest here --
     // we genuinely do not know what this workspace has -- and the page renders
     // that as "nothing to show" rather than as somebody else's site.

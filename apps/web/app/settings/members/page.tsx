@@ -1,7 +1,9 @@
 import type {Metadata} from "next";
 
 import {cn} from "@/lib/cn";
-import {ApiError, apiJson, currentSession} from "@/lib/server-api";
+import {redirect} from "next/navigation";
+
+import {ApiError, apiJson, currentSession, isMissingTenant} from "@/lib/server-api";
 
 import {
   changeRoleAction,
@@ -93,6 +95,10 @@ export default async function MembersPage({
       apiJson<{data: Invitation[]}>("/v1/members/invitations").then((body) => body.data),
     ]);
   } catch (error) {
+    // A brand-new account is in no workspace yet. Rendering that as a load
+    // failure shows a first-time visitor the string `no_tenant_membership`,
+    // which names nothing they can act on; the page that fixes it does.
+    if (isMissingTenant(error)) redirect("/onboarding");
     loadError = error instanceof ApiError ? error.code : "unexpected-error";
   }
 

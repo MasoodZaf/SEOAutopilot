@@ -1,9 +1,9 @@
 import {randomUUID} from "node:crypto";
 import Link from "next/link";
 import type {Metadata} from "next";
-import {notFound} from "next/navigation";
+import {notFound, redirect} from "next/navigation";
 
-import {ApiError, apiJson} from "@/lib/server-api";
+import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {submitCalibrationReview} from "../../actions";
 import type {CalibrationItem} from "../../model";
@@ -30,6 +30,9 @@ export default async function CalibrationReviewPage({params, searchParams}: Page
   try {
     item = (await apiJson<{data: CalibrationItem}>(`/v1/calibration-items/${itemId}`)).data;
   } catch (error) {
+    // Before the 404: a person with no workspace gets 403, not 404, and would
+    // otherwise reach the `throw` and see a crash page on a deep link.
+    if (isMissingTenant(error)) redirect("/onboarding");
     if (error instanceof ApiError && error.status === 404) notFound();
     throw error;
   }

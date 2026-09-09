@@ -34,5 +34,10 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/pilot/:path*", "/settings/:path*"],
+  // /onboarding belongs here too: it is where a signed-in person with no
+  // workspace is sent, so it is reached by exactly the people who have just
+  // authenticated -- and by anyone who types it. Without it, arriving signed
+  // out asks the API a question with no credential and renders the 401 as a
+  // crash instead of a login page.
+  matcher: ["/pilot/:path*", "/settings/:path*", "/onboarding"],
 };

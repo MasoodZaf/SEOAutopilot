@@ -1,7 +1,9 @@
 import type {Metadata} from "next";
 import Link from "next/link";
 
-import {ApiError, apiJson} from "@/lib/server-api";
+import {redirect} from "next/navigation";
+
+import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {pilotPath, selectSite} from "../site-selection.mjs";
 import {runRoutineNow, scheduleRoutine, sendMessage, startConversation} from "./actions";
@@ -31,6 +33,11 @@ async function maybe<T>(path: string): Promise<T | null> {
   try {
     return await apiJson<T>(path);
   } catch (error) {
+    // Checked before the blanket ApiError branch below, which would otherwise
+    // absorb it: having no workspace is not a missing read model, and rendering
+    // it as one shows a new account a full set of empty panels instead of the
+    // page that gives them a workspace.
+    if (isMissingTenant(error)) redirect("/onboarding");
     // A missing read model is an expected state before the first routine runs.
     if (error instanceof ApiError) return null;
     throw error;
