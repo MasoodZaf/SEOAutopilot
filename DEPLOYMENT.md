@@ -705,21 +705,25 @@ drifted is worse than none, because people act on it.
       day after it had happened, which is the failure mode the list's own
       preamble warns about: an open-items list that has drifted is worse than
       none, because people act on it.
-- [ ] **The Caddy basic-auth gate is removed in the repo and still running on
-      the host.** `5d84a95` takes it out; the container was never recreated, and
-      a single-file bind mount does not follow an rsync (§9), so the gate is
-      still up. Re-confirmed 2026-09-09: the host file *and* the running
-      container both still contain `basic_auth`, and `/pilot` answers 401 with
-      no redirect. Note that deploys rsync `services/`, `apps/` and
-      `infra/migrations` — **never `infra/caddy`** — so the host file does not
-      move on its own. Applying it is that rsync plus one
-      `up -d --force-recreate caddy`. Deliberately left for a moment when it is
-      the thing being done, rather than arriving as a side effect of some
-      unrelated deploy.
+- [x] **The Caddy basic-auth gate is off** (2026-09-09). `5d84a95` removed it
+      from the repo on 2026-09-08 and it kept running for a further day: the
+      host file was in fact correct, but the **container** was still serving the
+      old config, because a single-file bind mount does not follow an rsync
+      (§9) and nothing had recreated it. `/pilot` answered 401 with no
+      redirect, which made external testing impossible — sign-in was reachable
+      and everything after it was not.
 
-      **This is now the blocker for external testing.** `/login` is reachable,
-      so somebody can sign in; `/settings/*` and `/pilot*` are not, so they
-      dead-end immediately afterwards with no password to offer.
+      Applied as `up -d --force-recreate caddy`. The force-recreate is the part
+      that matters; a `reload` or a plain `up -d` would have changed nothing,
+      which is exactly how it survived a day of deploys. Verified after: the
+      running container's config contains `basic_auth` only inside a comment,
+      and `/pilot`, `/settings/*` and `/onboarding` all answer 307 to
+      `/login?next=…` rather than 401. `check-perimeter.sh` passes; it had
+      already been written to accept either mechanism, so it needed no change.
+
+      Note for whoever changes the Caddyfile next: deploys rsync `services/`,
+      `apps/` and `infra/migrations`, and the full-tree rsync in §4 does carry
+      `infra/caddy` — but neither makes the *container* read it.
 - [ ] **Set Cloudflare SSL mode to Full (strict).**
 - [x] **codearc.net's Search Console is connected** (2026-09-08). The property
       is `https://codearc.net/`, a **URL-prefix** property — `sc-domain:` does
@@ -833,5 +837,65 @@ and `/api/v1/tenant/credentials` answer 401 rather than 404, so the routes are
 registered and gated. `tenant_credential` has row-level security both enabled
 and forced. No errors in the API log since restart.
 
-**Still gated by §8:** the Caddy basic-auth gate. Everything above is deployed
-and working, and an external tester still cannot reach any of it.
+**Was gated by §8:** the Caddy basic-auth gate, lifted the same day. See §6g.
+
+
+## 6g. The front door actually opens (2026-09-09)
+
+Self-serve sign-up was deployed in §6f and nobody could use it. Two things were
+in the way, and only one of them was the gate everybody knew about.
+
+**The gate.** `up -d --force-recreate caddy`, recorded in §8. The host file had
+been correct since 2026-09-08; the running container had not. `/pilot` now
+answers 307 to `/login?next=/pilot` instead of 401.
+
+**The part that was not a perimeter problem at all.** With the gate off, a new
+account could sign in and then had nowhere to go. Every tenant-scoped API route
+answers `no_tenant_membership` to somebody who has authenticated and been
+invited to nothing — which, now that sign-up is self-service, is *every* new
+person on their first request rather than a rare edge. Five pages handled that
+state, each differently, and each wrongly:
+
+- `/pilot` caught everything and rendered an empty dashboard offering to add a
+  site. A dead end: there is no workspace to add one to, so the offer fails
+  wherever it is accepted. This is where sign-in lands by default
+  (`safeNext`'s fallback), so it is what every tester would have hit first.
+- `/settings/connectors` and `/settings/members` printed the raw string
+  `no_tenant_membership` at a first-time visitor.
+- `/pilot/workspace` absorbed it into `if (error instanceof ApiError) return
+  null` and rendered a screen of empty panels.
+- `/pilot/review/[itemId]` checked for 404, then rethrew — a crash page.
+
+`/settings/keys` and `/settings/sites` already redirected to `/onboarding`.
+That was the right answer all along; it had simply never reached the other
+five. Fixed in `19a3c56`, along with adding `/onboarding` to the proxy matcher
+— it had been reachable signed out, where it asked the API a question with no
+credential and rendered the 401 as a crash instead of a login page.
+
+**Why no test caught it.** Every one of those files is valid TypeScript and
+individually self-consistent: catching an error and rendering a fallback is
+exactly what those lines are for. `tsc`, `next build` and the suite all passed
+throughout. What was missing was only visible across the set, so the guard is
+`apps/web/tests/new-account-routing.test.mjs` — a source reader in the style of
+`redirect-origin.test.mjs`. It defaults to "must handle it", takes exemptions by
+name with a written reason, and asserts it actually inspected several pages so a
+renamed directory cannot turn it into a test that always passes. It was
+confirmed to fail when the property is broken.
+
+**Verified after:** `check-perimeter.sh` fully green (11 checks); `/pilot`,
+`/settings/*` and `/onboarding` all 307 to sign-in; container config carries
+`basic_auth` only in a comment; estate unchanged at 3 sites, 6 active
+connectors, 83 proposals, 1 user, 1 membership, 1 tenant, 0 credential rows; no
+errors in the web or API logs.
+
+**The one step left is not in this repo.** The Google OAuth consent screen used
+for *sign-in* is still in **Testing** publishing status, which caps access to a
+hand-maintained test-user list with no API to add to it. Publishing it
+(Google Cloud Console → APIs & Services → OAuth consent screen → *Publish app*)
+is what makes the address usable by anybody it is given to. It needs no Google
+verification review: that client requests only `openid email profile`, which is
+non-sensitive. The sensitive scopes — Search Console, Analytics — moved to each
+tenant's own OAuth client in §6f, so they are no longer this client's problem.
+
+Publishing it also makes sign-up open to anyone with a Google account. There is
+no allowlist; the only limit is `MAX_OWNED_TENANTS = 5` per person.
