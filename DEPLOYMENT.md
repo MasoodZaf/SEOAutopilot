@@ -970,3 +970,55 @@ artifact's HTML with headless Chrome:
 `--virtual-time-budget` is not optional: the page pulls three families from
 Google Fonts, and without it Chrome prints before they land and the document
 comes out in fallback faces.
+
+
+## 6h. Sign-in published, on a project of its own (2026-09-10)
+
+Self-serve sign-up is live for anybody with a Google account. What it took was
+not code.
+
+**The split.** Sign-in moved to a second Google Cloud project,
+`96456679662` ("SEO Autopilot Sign-in"), holding one Web OAuth client
+`96456679662-p2v3lu7f…` that requests `openid email profile` and nothing else.
+Published, **In production**, no verification review. The original project
+`417045140496` keeps the connector client `…-96pomo5e…` and stays in *Testing*
+for ever: it serves only the operator's own six connectors, so a 100-user
+lifetime cap and a one-entry test-user list cost nothing.
+
+**Three variables move together**, and the third is the one that gets missed:
+
+| file | variable | read by |
+| --- | --- | --- |
+| `infra/local/web.env` | `OIDC_CLIENT_ID` | web tier, starts the flow |
+| `infra/local/web.env` | `OIDC_CLIENT_SECRET` | web tier, exchanges the code |
+| `.env.local` | `OIDC_AUDIENCE` | **api**, checks the id_token's `aud` |
+
+Change the first two alone and sign-in *appears* to work — Google returns a
+token and the cookie is set — then every API call 401s against the old
+audience, which reads as a broken deployment rather than one missed variable.
+`set-signin-client.sh` on the host does all three from the console's downloaded
+JSON, reads nothing through a shell interpolation, refuses a client whose
+`redirect_uris` lack `https://seo.oryxenlabs.com/auth/callback`, and shreds the
+JSON afterwards.
+
+**Verified after:** the live authorization request carries the new `client_id`,
+the right `redirect_uri` and `scope=openid email profile`; Google renders a
+normal consent page naming "SEO Autopilot" and `seo.oryxenlabs.com`, with no
+"unverified app" or "access blocked"; perimeter 11/11; estate unchanged at 3
+sites, 6 active connectors, 83 proposals, 1 user, 1 membership, 1 tenant, 0
+credential rows; no errors in the api or web logs.
+
+**Existing sessions were invalidated** by design — a cookie minted under the old
+audience no longer verifies. Accounts are not: `app_user` is keyed on Google's
+`sub`, which is a stable *account* identifier and does not vary by client, so
+signing in again lands in the same workspace.
+
+**Do not submit the old project for verification.** Its Verification Center will
+offer to, because its consent screen still carries the two sensitive scopes.
+Nothing needs it, and it costs a demo video and a multi-week review for a
+project no tester ever touches. Equally, do not add a sensitive scope to the
+sign-in project — that is what undoes all of this.
+
+**Still open:** there is no sign-up allowlist. Anyone with a Google account who
+has the address can create a workspace; the only limit is
+`MAX_OWNED_TENANTS = 5` per person.
