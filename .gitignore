@@ -23,3 +23,10 @@ __pycache__/
 artifacts/
 data/
 !.gitkeep
+
+# Built documentation. `docs/tester-onboarding-runbook.pdf` is rendered from
+# the published runbook artifact and is ~1MB of embedded screenshots -- a
+# binary that changes wholesale every time a sentence changes, which is the
+# worst possible thing to keep in git history. Regenerate it from the artifact
+# rather than committing it; DEPLOYMENT.md §6g names the source.
+docs/*.pdf

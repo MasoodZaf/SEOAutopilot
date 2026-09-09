@@ -899,3 +899,25 @@ tenant's own OAuth client in §6f, so they are no longer this client's problem.
 
 Publishing it also makes sign-up open to anyone with a Google account. There is
 no allowlist; the only limit is `MAX_OWNED_TENANTS = 5` per person.
+
+**The tester runbook** lives as a published artifact and is rendered to
+`docs/tester-onboarding-runbook.pdf` for handing to somebody who would rather
+have a file. That PDF is **gitignored** — it is ~1MB of embedded screenshots
+and changes wholesale whenever a sentence does. Regenerate it from the
+artifact's HTML with headless Chrome:
+
+```bash
+# The artifact host supplies <!doctype>/<head> at publish time, so the saved
+# file is a fragment; wrap it and pin data-theme="light" before printing, or
+# Chrome resolves prefers-color-scheme itself and can put a dark page on white
+# paper.
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless --disable-gpu --no-pdf-header-footer \
+  --virtual-time-budget=30000 \
+  --print-to-pdf=docs/tester-onboarding-runbook.pdf \
+  file:///path/to/wrapped.html
+```
+
+`--virtual-time-budget` is not optional: the page pulls three families from
+Google Fonts, and without it Chrome prints before they land and the document
+comes out in fallback faces.
