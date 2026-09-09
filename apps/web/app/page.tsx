@@ -166,6 +166,23 @@ export default function Home() {
             </div>
           </section>
         </div>
+
+        {/* Google will not publish an External OAuth app whose privacy policy
+            and terms are not reachable, and it checks the links rather than
+            taking the form's word for it. They belong in a footer regardless. */}
+        <footer className="border-t border-slate-200 bg-white">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-6 py-8 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <p>SEO Autopilot &middot; Oryxen Labs</p>
+            <nav className="flex gap-4">
+              <Link href="/privacy" className="hover:text-slate-900">
+                Privacy Policy
+              </Link>
+              <Link href="/terms" className="hover:text-slate-900">
+                Terms of Service
+              </Link>
+            </nav>
+          </div>
+        </footer>
       </main>
     </>
   );
