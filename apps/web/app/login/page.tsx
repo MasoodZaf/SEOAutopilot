@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import {Note, button} from "@/app/components/ui";
+import {TipDescriptions} from "@/app/components/tips";
 import {isConfigured} from "@/lib/oidc";
 import {safeNext} from "@/lib/safe-next.mjs";
 
@@ -52,7 +53,7 @@ export default async function LoginPage({
             href={`/auth/login?next=${encodeURIComponent(target)}`}
             className={button.primary}
             prefetch={false}
-           data-tip="Sign in with your Google account. We ask only for your name and email address.">
+           data-tip="Sign in with your Google account. We ask only for your name and email address." aria-describedby="tip-da1dace285">
             Continue with Google
           </Link>
           <p className="text-[12px] leading-5 text-ink-faint">
@@ -81,6 +82,7 @@ export default async function LoginPage({
           Terms
         </Link>
       </p>
+      <TipDescriptions />
     </main>
   );
 }

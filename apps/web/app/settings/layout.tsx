@@ -1,5 +1,6 @@
 import {Masthead, Tabs} from "@/app/components/ui";
 import {SessionBar} from "@/app/components/session-bar";
+import {TipDescriptions} from "@/app/components/tips";
 
 const TABS = [
   // Ordered the way a new workspace is actually set up: your keys, then a site
@@ -20,6 +21,7 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
       </Masthead>
       <Tabs items={TABS} label="Settings" />
       {children}
+      <TipDescriptions />
     </div>
   );
 }

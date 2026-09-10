@@ -340,7 +340,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 className={button.secondary}
                 data-tip="Conversations, scheduled routines, keyword clusters and content briefs for this site."
                 data-tip-side="bottom"
-              >
+               aria-describedby="tip-4b1f1f81a7">
                 Agent workspace
               </Link>
               <form action={runPolicySimulationAction}>
@@ -350,7 +350,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                   className={button.secondary}
                   data-tip="Dry run: reports what the current policy would allow or block on open proposals. Changes nothing."
                   data-tip-side="bottom"
-                >
+                 aria-describedby="tip-2d6f77dd1b">
                   Run policy simulation
                 </button>
               </form>
@@ -363,7 +363,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                     className={`${button.secondary} border-stop-rule bg-stop-soft text-stop`}
                     data-tip="Kill switch. Blocks every automated deployment for this site until an owner lifts it after an incident review."
                     data-tip-side="bottom"
-                  >
+                   aria-describedby="tip-9cb2174ecd">
                     Emergency freeze
                   </button>
                 </form>
@@ -452,7 +452,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                     defaultValue={data.governance.mode}
                     aria-label="Operation mode"
                     className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink"
-                  >
+                   aria-describedby="tip-8dcda9ad6f">
                     <option value="observe">observe — measure only</option>
                     <option value="recommend">recommend — deploy with approval</option>
                     <option value="autopilot">autopilot — deploy unattended</option>
@@ -469,13 +469,13 @@ export default async function PilotPage({searchParams}: PageProps) {
                     placeholder="Why this change"
                     aria-label="Reason for the mode change"
                     className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
-                  />
+                   aria-describedby="tip-266be79a7f"/>
                 </span>
                 <button
                   type="submit"
                   className="w-full rounded-[4px] border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:bg-sunk"
                   data-tip="Apply the selected mode. Recorded with your reason; nothing publishes without approval unless you chose autopilot."
-                >
+                 aria-describedby="tip-6f07753cce">
                   Set mode
                 </button>
               </form>
@@ -522,12 +522,12 @@ export default async function PilotPage({searchParams}: PageProps) {
                     placeholder="default"
                     aria-label="Approvers required"
                     className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
-                  />
+                   aria-describedby="tip-a909e65d70"/>
                 </span>
                 <button
                   type="submit"
                   className="rounded border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
-                 data-tip="Save this approver count. It applies to proposals drafted from now on, not to ones already waiting.">
+                 data-tip="Save this approver count. It applies to proposals drafted from now on, not to ones already waiting." aria-describedby="tip-c08dbcd0f5">
                   Set
                 </button>
               </form>
@@ -554,7 +554,7 @@ export default async function PilotPage({searchParams}: PageProps) {
           <Link
             href="/settings/sites"
             className="mt-4 inline-block rounded bg-surface px-4 py-2 text-xs font-semibold text-black hover:bg-sunk"
-          data-tip="Add a domain you control and prove it with a DNS record.">
+          data-tip="Add a domain you control and prove it with a DNS record." aria-describedby="tip-26b5b277ea">
             Add a site
           </Link>
         </section>
@@ -572,13 +572,13 @@ export default async function PilotPage({searchParams}: PageProps) {
           <div className="mt-4 flex gap-3">
             <form action={verifyPortfolioDns}>
               <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded bg-good px-3 py-1.5 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Check DNS now for the TXT record shown above. Safe to retry while it propagates.">
+              <button type="submit" className="rounded bg-good px-3 py-1.5 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Check DNS now for the TXT record shown above. Safe to retry while it propagates." aria-describedby="tip-93fc91618b">
                 Verify DNS Record
               </button>
             </form>
             <form action={refreshDnsChallenge}>
               <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded border border-rule-strong px-3 py-1.5 text-xs text-ink-soft hover:bg-sunk" data-tip="Issue a fresh verification token. The previous record stops working immediately.">
+              <button type="submit" className="rounded border border-rule-strong px-3 py-1.5 text-xs text-ink-soft hover:bg-sunk" data-tip="Issue a fresh verification token. The previous record stops working immediately." aria-describedby="tip-ad2bc41307">
                 Regenerate Token
               </button>
             </form>
@@ -627,7 +627,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               </div>
               <form action={startFirstCrawl} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Start a bounded crawl of this site now. Read-only: it gathers evidence and changes nothing on the site.">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Start a bounded crawl of this site now. Read-only: it gathers evidence and changes nothing on the site." aria-describedby="tip-e3ef53a7eb">
                   Trigger New Crawl
                 </button>
               </form>
@@ -662,7 +662,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               <form action={startPerformanceRun} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="idempotency_key" value={performanceIdempotencyKey} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals.">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals." aria-describedby="tip-728aeb6e5d">
                   Run Mobile Lab Sample
                 </button>
               </form>
@@ -722,7 +722,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         <button
                           type="submit"
                           className="rounded border border-rule-strong px-3 py-1.5 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
-                         data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing.">
+                         data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing." aria-describedby="tip-6d09637632">
                           Draft proposal
                         </button>
                       </form>
@@ -822,7 +822,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                             <form action={approveProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded bg-good px-2.5 py-1 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Record your approval. You cannot approve a change you authored yourself.">
+                              <button type="submit" className="rounded bg-good px-2.5 py-1 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Record your approval. You cannot approve a change you authored yourself." aria-describedby="tip-ec0ccb8c77">
                                 Approve
                               </button>
                             </form>
@@ -835,7 +835,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                             <form action={withdrawProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded border border-rule-strong px-2.5 py-1 text-xs font-medium text-ink-soft hover:border-rule-strong hover:text-ink" data-tip="Take this proposal off the table. It stops counting toward approvals and cannot deploy.">
+                              <button type="submit" className="rounded border border-rule-strong px-2.5 py-1 text-xs font-medium text-ink-soft hover:border-rule-strong hover:text-ink" data-tip="Take this proposal off the table. It stops counting toward approvals and cannot deploy." aria-describedby="tip-5be8fcba56">
                                 Withdraw
                               </button>
                             </form>
@@ -866,7 +866,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                               than a second pull request.
                             */}
                             <input type="hidden" name="idempotency_key" value={`deploy-${prop.id}`} />
-                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sky-500" data-tip="Open the pull request that carries this change on your repository. A human still merges it.">
+                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sky-500" data-tip="Open the pull request that carries this change on your repository. A human still merges it." aria-describedby="tip-8840e44e3f">
                               Deploy
                             </button>
                           </form>
@@ -883,7 +883,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                           <form action={rollbackProposalAction}>
                             <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="proposal_id" value={prop.id} />
-                            <button type="submit" className="rounded border border-stop-rule px-2.5 py-1 text-xs font-medium text-stop hover:border-stop-rule hover:text-stop" data-tip="Open a revert pull request. The change is only undone once someone merges it.">
+                            <button type="submit" className="rounded border border-stop-rule px-2.5 py-1 text-xs font-medium text-stop hover:border-stop-rule hover:text-stop" data-tip="Open a revert pull request. The change is only undone once someone merges it." aria-describedby="tip-638cd2f7c3">
                               Request revert
                             </button>
                           </form>

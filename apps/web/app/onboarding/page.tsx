@@ -2,6 +2,7 @@ import {redirect} from "next/navigation";
 import type {Metadata} from "next";
 
 import {Eyebrow, Note, button, input} from "@/app/components/ui";
+import {TipDescriptions} from "@/app/components/tips";
 import {currentTenants} from "@/lib/server-api";
 
 import {createWorkspaceAction} from "./actions";
@@ -62,7 +63,7 @@ export default async function OnboardingPage({searchParams}: PageProps) {
             Usually your company or your project. You can invite colleagues once it exists.
           </span>
         </label>
-        <button type="submit" className={`${button.primary} self-start`} data-tip="Create the workspace and make you its owner. You can rename or invite people afterwards.">
+        <button type="submit" className={`${button.primary} self-start`} data-tip="Create the workspace and make you its owner. You can rename or invite people afterwards." aria-describedby="tip-2a1494aec0">
           Create workspace
         </button>
       </form>
@@ -84,6 +85,7 @@ export default async function OnboardingPage({searchParams}: PageProps) {
           ))}
         </ol>
       </section>
+      <TipDescriptions />
     </main>
   );
 }

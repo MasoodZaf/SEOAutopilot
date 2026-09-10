@@ -205,7 +205,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
                     <button
                       type="submit"
                       className="rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk"
-                     data-tip="Authorise Search Console for this site through your own Google OAuth client.">
+                     data-tip="Authorise Search Console for this site through your own Google OAuth client." aria-describedby="tip-e734f40795">
                       Connect Search Console
                     </button>
                   </form>
@@ -277,7 +277,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
                     <button
                       type="submit"
                       className="mt-3 rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk"
-                     data-tip="Install your GitHub App on the repository this site deploys from.">
+                     data-tip="Install your GitHub App on the repository this site deploys from." aria-describedby="tip-fdd41a3bf5">
                       Connect repository
                     </button>
                   </form>
@@ -314,7 +314,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
                     <button
                       type="submit"
                       className="rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk"
-                     data-tip="Authorise Google Analytics 4 for this site through your own Google OAuth client.">
+                     data-tip="Authorise Google Analytics 4 for this site through your own Google OAuth client." aria-describedby="tip-e68345520a">
                       Connect analytics
                     </button>
                   </form>

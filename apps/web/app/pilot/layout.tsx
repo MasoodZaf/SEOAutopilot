@@ -1,5 +1,6 @@
 import {Masthead} from "@/app/components/ui";
 import {SessionBar} from "@/app/components/session-bar";
+import {TipDescriptions} from "@/app/components/tips";
 
 export default function PilotLayout({children}: {children: React.ReactNode}) {
   return (
@@ -8,6 +9,7 @@ export default function PilotLayout({children}: {children: React.ReactNode}) {
         <SessionBar />
       </Masthead>
       {children}
+      <TipDescriptions />
     </div>
   );
 }
