@@ -10,7 +10,6 @@ import {challengeCookie, type Site} from "./model";
 import {pilotPath, safeHost} from "./site-selection.mjs";
 
 type SiteCollection = {data: Site[]};
-type SiteEnvelope = {data: Site};
 type ChallengeEnvelope = {
   data: {
     record_name: string;

@@ -1,2 +1,195 @@
 @import "tailwindcss";
-:root{color-scheme:light;--background:#f8fafc;--foreground:#0f172a}*{box-sizing:border-box}body{margin:0;background:var(--background);color:var(--foreground)}button,input,textarea,select{font:inherit}
+
+/*
+ * One token layer for the whole product.
+ *
+ * Before this, /login was `neutral`, /onboarding and /settings were `slate`,
+ * and /pilot was `zinc-950` -- three neutral ramps and a light/dark split that
+ * a person crossed in their first session, so the product visibly changed
+ * character while they were still learning what it was.
+ *
+ * Every colour below is declared once here and consumed as a Tailwind utility
+ * (`bg-paper`, `text-ink`, `border-rule`). That is what makes the dark theme
+ * nearly free: the tokens are redefined under `prefers-color-scheme`, and
+ * anything built from them follows. It also means a page that reaches for a
+ * raw `bg-zinc-900` is now visibly off-system rather than merely inconsistent.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Ground and surfaces. Warm rather than blue-grey: this is meant to read as
+     paper an instrument prints onto, not as another dark-mode dashboard. */
+  --paper: #f7f6f2;
+  --surface: #ffffff;
+  --sunk: #efeee8;
+
+  /* Ink. Slightly cool against the warm ground so text stays crisp. */
+  --ink: #17181c;
+  --ink-soft: #55575e;
+  --ink-faint: #676970;
+  --ink-inverse: #f7f6f2;
+
+  /* Hairlines carry most of the structure here, so they get two weights. */
+  --rule: #e3e1d9;
+  --rule-strong: #cbc8bd;
+
+  /* One accent, for interaction and the current thing only. */
+  --accent: #0d5c68;
+  --accent-hover: #0a4a54;
+  /* What sits ON the accent. It has to flip with the theme: the dark palette
+     lightens the accent so it reads against a dark ground, and white text on a
+     light teal is about 1.9:1 -- unreadable, and invisible to anyone who only
+     ever reviews the light theme. */
+  --accent-ink: #ffffff;
+  --accent-soft: #e2eff1;
+  --accent-rule: #b9d6db;
+
+  /* Semantics, deliberately muted. A product whose claim is calm, reviewable
+     control should not signal with alarm colours. */
+  --good: #14654b;
+  --good-ink: #ffffff;
+  --good-soft: #e3f0ea;
+  --good-rule: #b7d8c9;
+  --warn: #7d520c;
+  --warn-ink: #ffffff;
+  --warn-soft: #faf1de;
+  --warn-rule: #e7d3ac;
+  --stop: #8c2f2a;
+  --stop-ink: #ffffff;
+  --stop-soft: #faeae8;
+  --stop-rule: #eccbc7;
+
+  --focus: #0d5c68;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --paper: #121316;
+    --surface: #191b1f;
+    --sunk: #0d0e11;
+
+    --ink: #eceae4;
+    --ink-soft: #a4a6ad;
+    --ink-faint: #84868e;
+    --ink-inverse: #121316;
+
+    --rule: #2a2d33;
+    --rule-strong: #3d414a;
+
+    --accent: #5fbecb;
+    --accent-hover: #7fcdd8;
+    --accent-ink: #08222a;
+    --accent-soft: #102f35;
+    --accent-rule: #1d4c56;
+
+    --good: #6cc7a2;
+    --good-ink: #0a2018;
+    --good-soft: #102a20;
+    --good-rule: #1d4a38;
+    --warn: #dfad63;
+    --warn-ink: #251b0c;
+    --warn-soft: #2a2114;
+    --warn-rule: #4a3a1e;
+    --stop: #e39b95;
+    --stop-ink: #2a1210;
+    --stop-soft: #2c1614;
+    --stop-rule: #4d2723;
+
+    --focus: #5fbecb;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunk: var(--sunk);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-ink-inverse: var(--ink-inverse);
+
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-rule: var(--accent-rule);
+
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-good-ink: var(--good-ink);
+  --color-good-rule: var(--good-rule);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-rule: var(--warn-rule);
+  --color-stop: var(--stop);
+  --color-stop-soft: var(--stop-soft);
+  --color-stop-ink: var(--stop-ink);
+  --color-stop-rule: var(--stop-rule);
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+  --font-display: var(--font-plex-serif), ui-serif, Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Digits that line up in columns. This app is mostly measurements -- positions,
+   impressions, scores, counts -- and proportional figures make a column of them
+   impossible to compare at a glance. */
+.tabular,
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The small uppercase mono label that names every region of the instrument. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* One focus treatment everywhere, visible on paper and on ink. */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

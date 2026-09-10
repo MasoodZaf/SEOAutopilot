@@ -1,8 +1,39 @@
 import type {Metadata} from "next";
-import {Inter} from "next/font/google";
+import {IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Serif} from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({subsets: ["latin"]});
+/*
+ * Three voices from one family, which is why the page reads as engineered
+ * rather than as three fonts sharing a page.
+ *
+ * Plex was drawn for a technology company, and it suits an instrument better
+ * than Inter -- which was here before, and is the single most recognisable
+ * "some interface" typeface there is.
+ *
+ * Mono is not decoration. This product is mostly identifiers and measurements
+ * -- hostnames, client ids, TXT records, positions, impressions, commit shas --
+ * and setting those in a proportional face makes a column of them unreadable.
+ */
+const sans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-sans",
+  display: "swap",
+});
+
+const mono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-mono",
+  display: "swap",
+});
+
+const serif = IBM_Plex_Serif({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-serif",
+  display: "swap",
+});
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://seoautopilot.dev";
 
@@ -61,8 +92,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({children}: Readonly<{children: React.ReactNode}>) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className={`${sans.variable} ${mono.variable} ${serif.variable}`}>
+      <body>{children}</body>
     </html>
   );
 }

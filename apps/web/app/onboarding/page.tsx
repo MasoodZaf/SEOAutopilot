@@ -1,6 +1,7 @@
 import {redirect} from "next/navigation";
 import type {Metadata} from "next";
 
+import {Eyebrow, Note, button, input} from "@/app/components/ui";
 import {currentTenants} from "@/lib/server-api";
 
 import {createWorkspaceAction} from "./actions";
@@ -26,30 +27,28 @@ export default async function OnboardingPage({searchParams}: PageProps) {
   if (tenants.length > 0) redirect("/pilot");
 
   return (
-    <main className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-20">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-balance text-slate-900">
-          Create your workspace
+    <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-8 px-6 py-20">
+      <header className="flex flex-col gap-3">
+        <Eyebrow>Step 1 of 3</Eyebrow>
+        <h1 className="font-display text-[30px] leading-[1.15] font-semibold tracking-tight text-balance text-ink">
+          Name your workspace
         </h1>
-        <p className="text-pretty text-sm text-slate-600">
-          A workspace holds your sites, your connectors and your data, and nobody else&rsquo;s.
-          You will be its owner, and the only people who can ever see inside it are the ones you
-          invite.
+        <p className="text-pretty text-[13px] leading-6 text-ink-soft">
+          A workspace holds your sites, your connectors and your data, and nobody
+          else&rsquo;s. You will be its owner, and the only people who can ever see inside
+          it are the ones you invite.
         </p>
       </header>
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-        >
+        <Note tone="stop" role="alert" label="Not created">
           {messageFor(error)}
-        </p>
+        </Note>
       ) : null}
 
       <form action={createWorkspaceAction} className="flex flex-col gap-4">
-        <label className="flex flex-col gap-1.5 text-sm font-medium text-slate-800">
-          Workspace name
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[13px] font-medium text-ink">Workspace name</span>
           <input
             name="name"
             required
@@ -57,26 +56,32 @@ export default async function OnboardingPage({searchParams}: PageProps) {
             maxLength={200}
             autoFocus
             placeholder="Acme Ltd"
-            className="rounded-md border border-slate-300 px-3 py-2 font-normal text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+            className={input}
           />
-          <span className="text-xs font-normal text-slate-500">
+          <span className="text-[12px] leading-5 text-ink-faint">
             Usually your company or your project. You can invite colleagues once it exists.
           </span>
         </label>
-        <button
-          type="submit"
-          className="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
-        >
+        <button type="submit" className={`${button.primary} self-start`}>
           Create workspace
         </button>
       </form>
 
-      <section className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
-        <h2 className="text-sm font-semibold text-slate-900">What happens next</h2>
-        <ol className="mt-2 flex list-decimal flex-col gap-1 pl-4 text-sm text-slate-600">
-          <li>You add your own Google and GitHub credentials, so nothing runs through ours.</li>
-          <li>You add a site and prove you control the domain with a DNS record.</li>
-          <li>The crawler reads that site, and findings become proposals you approve.</li>
+      <section className="border-t border-rule pt-5">
+        <Eyebrow>What happens next</Eyebrow>
+        <ol className="mt-3 flex flex-col gap-2.5">
+          {[
+            "You add your own Google and GitHub credentials, so nothing runs through ours.",
+            "You add a site and prove you control the domain with a DNS record.",
+            "The crawler reads that site, and findings become proposals you approve.",
+          ].map((step, index) => (
+            <li key={step} className="flex gap-3 text-[13px] leading-6 text-ink-soft">
+              <span className="mt-0.5 font-mono text-[11px] text-ink-faint tabular">
+                {String(index + 2).padStart(2, "0")}
+              </span>
+              <span className="text-pretty">{step}</span>
+            </li>
+          ))}
         </ol>
       </section>
     </main>

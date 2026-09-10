@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import {Note, button} from "@/app/components/ui";
 import {isConfigured} from "@/lib/oidc";
 import {safeNext} from "@/lib/safe-next.mjs";
 
@@ -22,36 +23,64 @@ export default async function LoginPage({
   const target = safeNext(next, process.env.APP_BASE_URL ?? "http://localhost:3000");
 
   return (
-    <main className="mx-auto flex max-w-md flex-col gap-6 px-6 py-24">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-balance">Sign in</h1>
-        <p className="text-pretty text-sm text-neutral-600">
-          The control plane is limited to people who have been invited to a tenant.
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-8 px-6 py-20">
+      <div className="flex flex-col gap-3">
+        <p className="eyebrow">SEO Autopilot</p>
+        <h1 className="font-display text-[32px] leading-[1.15] font-semibold tracking-tight text-balance text-ink">
+          Sign in
+        </h1>
+        {/* This used to say access was "limited to people who have been invited
+            to a tenant". That stopped being true the day sign-up became
+            self-service, and it is the first sentence a new tester reads --
+            telling them they are probably not allowed in. */}
+        <p className="text-pretty text-[13px] leading-6 text-ink-soft">
+          Sign in with Google. If this is your first visit you will be asked to name a
+          workspace &mdash; it holds your sites, your keys and your data, and nobody
+          else&rsquo;s.
         </p>
       </div>
 
       {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <Note tone="stop" role="alert" label="Sign-in did not complete">
           {MESSAGES[error] ?? "Sign-in did not complete. Try again."}
-        </p>
+        </Note>
       ) : null}
 
       {configured ? (
-        <Link
-          href={`/auth/login?next=${encodeURIComponent(target)}`}
-          className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900"
-          prefetch={false}
-        >
-          Continue with your identity provider
-        </Link>
+        <div className="flex flex-col gap-3">
+          <Link
+            href={`/auth/login?next=${encodeURIComponent(target)}`}
+            className={button.primary}
+            prefetch={false}
+          >
+            Continue with Google
+          </Link>
+          <p className="text-[12px] leading-5 text-ink-faint">
+            We ask Google only for your name and email address. Search Console and
+            Analytics are connected later, from your own account, and only if you want
+            them.
+          </p>
+        </div>
       ) : (
-        <p className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700">
-          No identity provider is configured on this deployment, so there is nothing to sign in
-          to. An operator sets <code className="font-mono text-xs">OIDC_ISSUER_URL</code>,{" "}
-          <code className="font-mono text-xs">OIDC_CLIENT_ID</code> and{" "}
-          <code className="font-mono text-xs">OIDC_CLIENT_SECRET</code>.
-        </p>
+        <Note tone="warn" label="Not configured">
+          No identity provider is configured on this deployment, so there is nothing to
+          sign in to. An operator sets <code className="font-mono">OIDC_ISSUER_URL</code>,{" "}
+          <code className="font-mono">OIDC_CLIENT_ID</code> and{" "}
+          <code className="font-mono">OIDC_CLIENT_SECRET</code>.
+        </Note>
       )}
+
+      <p className="mt-2 border-t border-rule pt-4 text-[12px] text-ink-faint">
+        <Link href="/privacy" className="underline underline-offset-4 hover:text-ink-soft">
+          Privacy
+        </Link>
+        <span aria-hidden="true" className="px-2">
+          &middot;
+        </span>
+        <Link href="/terms" className="underline underline-offset-4 hover:text-ink-soft">
+          Terms
+        </Link>
+      </p>
     </main>
   );
 }

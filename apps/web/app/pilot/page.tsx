@@ -299,42 +299,47 @@ export default async function PilotPage({searchParams}: PageProps) {
   const performanceIdempotencyKey = randomUUID();
 
   return (
-    <main className="min-h-dvh bg-zinc-950 text-zinc-100">
+    <main className="min-h-dvh bg-paper text-ink">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
       {/* Emergency Freeze Banner */}
       {data.governance?.emergency_freeze && (
-        <div className="flex items-center justify-between rounded-lg border border-red-500 bg-red-950/40 p-4 text-red-200">
+        <div className="flex items-center justify-between rounded-[4px] border border-stop-rule bg-stop-soft p-4 text-stop">
           <div className="flex items-center gap-3">
             <span aria-hidden="true" className="text-xl">!</span>
             <div>
               <p className="font-semibold">EMERGENCY KILL-SWITCH ACTIVE</p>
-              <p className="text-xs text-red-300">Automated deployment is blocked site-wide.</p>
+              <p className="text-xs text-stop">Automated deployment is blocked site-wide.</p>
             </div>
           </div>
-          <p className="max-w-56 text-right text-xs text-red-300">An owner must complete incident review before lifting this freeze through the governed API.</p>
+          <p className="max-w-56 text-right text-xs text-stop">An owner must complete incident review before lifting this freeze through the governed API.</p>
         </div>
       )}
 
-      {/* Header */}
-      <header className="flex flex-col gap-1 border-b border-zinc-800 pb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-white">SEO Autopilot Operations</h1>
-            <span className="rounded-full bg-emerald-950 border border-emerald-800 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
-              Internal Alpha
-            </span>
+      {/* The masthead in the layout carries the product name now, so this
+          heading names the thing the page is actually about: the site being
+          operated on. It used to read "SEO Autopilot Operations" above a
+          masthead already saying "SEO Autopilot", and the host -- the one fact
+          that changes what every control below does -- was a grey sentence
+          underneath. */}
+      <header className="flex flex-col gap-2 border-b border-rule pb-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="eyebrow">Operating on</p>
+            <h1 className="mt-1 font-display text-[26px] leading-tight font-semibold tracking-tight text-ink">
+              {target.host || target.name}
+            </h1>
           </div>
           {data.site && data.governance && (
             <div className="flex items-center gap-2">
               <Link
                 href={`/pilot/workspace?site=${target.host}`}
-                className="rounded border border-emerald-800 bg-emerald-950/60 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-900/60"
+                className="rounded border border-good-rule bg-good-soft px-3 py-1.5 text-xs font-medium text-good hover:bg-good-soft"
               >
                 Agent workspace
               </Link>
               <form action={runPolicySimulationAction}>
                 <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
+                <button type="submit" className="rounded border border-rule-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink-soft hover:bg-sunk">
                   Run Policy Simulation
                 </button>
               </form>
@@ -342,7 +347,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <form action={toggleEmergencyFreezeAction}>
                   <input type="hidden" name="site_host" value={target.host} />
                   <input type="hidden" name="current_freeze" value="false" />
-                  <button type="submit" className="rounded border border-red-800 bg-red-950/60 px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-red-900">
+                  <button type="submit" className="rounded border border-stop-rule bg-stop-soft px-3 py-1.5 text-xs font-medium text-stop hover:bg-stop-soft">
                     Emergency Freeze
                   </button>
                 </form>
@@ -350,18 +355,15 @@ export default async function PilotPage({searchParams}: PageProps) {
             </div>
           )}
         </div>
-        <p className="text-sm text-zinc-400">
-          Auditable, multi-tenant SEO evidence and governance control plane for <span className="font-medium text-zinc-200">{target.host}</span>.
-        </p>
       </header>
 
-      <section aria-labelledby="portfolio-heading" className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+      <section aria-labelledby="portfolio-heading" className="rounded-[4px] border border-rule bg-paper p-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 id="portfolio-heading" className="text-sm font-semibold text-white">Your sites</h2>
-            <p className="text-xs text-zinc-400">The same bounded workflow across every site in this workspace. Selection never grants permission to publish changes.</p>
+            <h2 id="portfolio-heading" className="text-sm font-semibold text-ink">Your sites</h2>
+            <p className="text-xs text-ink-faint">The same bounded workflow across every site in this workspace. Selection never grants permission to publish changes.</p>
           </div>
-          <span className="mt-2 w-fit rounded border border-amber-800 bg-amber-950/50 px-2 py-1 text-xs font-medium text-amber-300 sm:mt-0">
+          <span className="mt-2 w-fit rounded border border-warn-rule bg-warn-soft px-2 py-1 text-xs font-medium text-warn sm:mt-0">
             Human consent required
           </span>
         </div>
@@ -373,44 +375,44 @@ export default async function PilotPage({searchParams}: PageProps) {
                 key={item.id}
                 href={pilotPath(item.normalized_host)}
                 aria-current={selected ? "page" : undefined}
-                className={`rounded border p-3 outline-none focus-visible:ring-2 focus-visible:ring-white ${selected ? "border-white bg-zinc-900" : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900"}`}
+                className={`rounded border p-3 outline-none focus-visible:ring-2 focus-visible:ring-white ${selected ? "border-white bg-surface" : "border-rule bg-paper hover:bg-surface"}`}
               >
                 <span className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-white">{item.name}</span>
-                  <span className={`rounded px-2 py-0.5 text-xs ${item.status === "active" ? "bg-emerald-950 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}>
+                  <span className="text-sm font-semibold text-ink">{item.name}</span>
+                  <span className={`rounded px-2 py-0.5 text-xs ${item.status === "active" ? "bg-good-soft text-good" : "bg-sunk text-ink-faint"}`}>
                     {item.status}
                   </span>
                 </span>
-                <span className="mt-1 block text-xs text-zinc-500">{item.normalized_host}</span>
+                <span className="mt-1 block text-xs text-ink-faint">{item.normalized_host}</span>
               </Link>
             );
           })}
           <Link
             href="/settings/sites"
-            className="rounded border border-dashed border-zinc-700 p-3 text-center outline-none hover:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-white"
+            className="rounded border border-dashed border-rule-strong p-3 text-center outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-white"
           >
-            <span className="text-sm font-semibold text-zinc-300">Add a site</span>
-            <span className="mt-1 block text-xs text-zinc-500">Verify a domain you control</span>
+            <span className="text-sm font-semibold text-ink-soft">Add a site</span>
+            <span className="mt-1 block text-xs text-ink-faint">Verify a domain you control</span>
           </Link>
         </nav>
       </section>
 
       {/* Notifications */}
       {error && (
-        <div role="alert" className="rounded border border-red-800 bg-red-950/50 p-3 text-xs text-red-300">
+        <div role="alert" className="rounded border border-stop-rule bg-stop-soft p-3 text-xs text-stop">
           {errorMessages[error] ?? `Error: ${error}`}
         </div>
       )}
-      {govUpdated && <div role="status" aria-live="polite" className="rounded border border-emerald-800 bg-emerald-950/40 p-3 text-xs text-emerald-300">Governance settings updated.</div>}
+      {govUpdated && <div role="status" aria-live="polite" className="rounded border border-good-rule bg-good-soft p-3 text-xs text-good">Governance settings updated.</div>}
       {simulation && <div role="status" aria-live="polite" className="rounded border border-sky-800 bg-sky-950/40 p-3 text-xs text-sky-300">Policy simulation completed successfully.</div>}
-      {propMsg && <div role="status" aria-live="polite" className="rounded border border-emerald-800 bg-emerald-950/40 p-3 text-xs text-emerald-300">Proposal status transition applied: {propMsg}.</div>}
+      {propMsg && <div role="status" aria-live="polite" className="rounded border border-good-rule bg-good-soft p-3 text-xs text-good">Proposal status transition applied: {propMsg}.</div>}
 
       {/* Governance & Autopilot Status Bar */}
       {data.governance && (
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-            <p className="text-xs text-zinc-500">Operation Mode</p>
-            <p className="text-lg font-semibold uppercase text-zinc-200">{data.governance.mode}</p>
+          <div className="rounded-[4px] border border-rule bg-paper p-4">
+            <p className="text-xs text-ink-faint">Operation Mode</p>
+            <p className="text-lg font-semibold uppercase text-ink">{data.governance.mode}</p>
             {/*
               Readable here since this dashboard was built, and changeable only
               by an operator token that no longer exists. A site could sit in
@@ -426,7 +428,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                   name="mode"
                   defaultValue={data.governance.mode}
                   aria-label="Operation mode"
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200"
+                  className="w-full rounded border border-rule-strong bg-surface px-2 py-1 text-xs text-ink"
                 >
                   <option value="observe">observe — measure only</option>
                   <option value="recommend">recommend — deploy with approval</option>
@@ -437,32 +439,32 @@ export default async function PilotPage({searchParams}: PageProps) {
                   required
                   minLength={3}
                   placeholder="Why this change"
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 placeholder:text-zinc-600"
+                  className="w-full rounded border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-soft"
                 />
                 <button
                   type="submit"
-                  className="w-full rounded border border-zinc-700 px-2 py-1 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:text-white"
+                  className="w-full rounded border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
                 >
                   Set mode
                 </button>
               </form>
             )}
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-            <p className="text-xs text-zinc-500">Autopilot Governor</p>
-            <p className={`text-lg font-semibold ${data.governance.autopilot_enabled ? "text-emerald-400" : "text-amber-400"}`}>
+          <div className="rounded-[4px] border border-rule bg-paper p-4">
+            <p className="text-xs text-ink-faint">Autopilot Governor</p>
+            <p className={`text-lg font-semibold ${data.governance.autopilot_enabled ? "text-good" : "text-warn"}`}>
               {data.governance.autopilot_enabled ? "Active" : "Human Approvals Only"}
             </p>
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-            <p className="text-xs text-zinc-500">Daily Change Budget</p>
-            <p className="text-lg font-semibold text-zinc-200 font-mono">
+          <div className="rounded-[4px] border border-rule bg-paper p-4">
+            <p className="text-xs text-ink-faint">Daily Change Budget</p>
+            <p className="text-lg font-semibold text-ink font-mono">
               {data.governance.today_deployments_count} / {data.governance.daily_change_budget} used
             </p>
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-            <p className="text-xs text-zinc-500">Approvers Required</p>
-            <p className="text-lg font-semibold text-zinc-200 font-mono">
+          <div className="rounded-[4px] border border-rule bg-paper p-4">
+            <p className="text-xs text-ink-faint">Approvers Required</p>
+            <p className="text-lg font-semibold text-ink font-mono">
               {data.governance.required_approver_count ?? "tier default"}
             </p>
             {/*
@@ -484,11 +486,11 @@ export default async function PilotPage({searchParams}: PageProps) {
                   defaultValue={data.governance.required_approver_count ?? ""}
                   placeholder="default"
                   aria-label="Approvers required"
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 placeholder:text-zinc-600"
+                  className="w-full rounded border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-soft"
                 />
                 <button
                   type="submit"
-                  className="rounded border border-zinc-700 px-2 py-1 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:text-white"
+                  className="rounded border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
                 >
                   Set
                 </button>
@@ -496,9 +498,9 @@ export default async function PilotPage({searchParams}: PageProps) {
             )}
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-            <p className="text-xs text-zinc-500">Freeze Window</p>
-            <p className="text-sm font-medium text-zinc-400">
+          <div className="rounded-[4px] border border-rule bg-paper p-4">
+            <p className="text-xs text-ink-faint">Freeze Window</p>
+            <p className="text-sm font-medium text-ink-faint">
               {data.governance.freeze_window_start ? "Scheduled" : "None Active"}
             </p>
           </div>
@@ -507,70 +509,70 @@ export default async function PilotPage({searchParams}: PageProps) {
 
       {/* Site Onboarding & Crawl Actions */}
       {!data.site ? (
-        <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6 text-center">
-          <h2 className="text-lg font-semibold text-white">No site selected</h2>
-          <p className="mt-1 text-sm text-zinc-400">
+        <section className="rounded-[4px] border border-rule bg-paper p-6 text-center">
+          <h2 className="text-lg font-semibold text-ink">No site selected</h2>
+          <p className="mt-1 text-sm text-ink-faint">
             Add a site you control and prove it with a DNS record. Adding one lives in settings,
             because it needs the address and a name only you can give.
           </p>
           <Link
             href="/settings/sites"
-            className="mt-4 inline-block rounded bg-white px-4 py-2 text-xs font-semibold text-black hover:bg-zinc-200"
+            className="mt-4 inline-block rounded bg-surface px-4 py-2 text-xs font-semibold text-black hover:bg-sunk"
           >
             Add a site
           </Link>
         </section>
       ) : data.site.status !== "active" ? (
-        <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-          <h2 className="text-base font-semibold text-white">DNS Ownership Verification</h2>
-          <p className="mt-1 text-xs text-zinc-400">Add the following DNS TXT record to verify ownership of {data.site.canonical_origin}:</p>
+        <section className="rounded-[4px] border border-rule bg-paper p-6">
+          <h2 className="text-base font-semibold text-ink">DNS Ownership Verification</h2>
+          <p className="mt-1 text-xs text-ink-faint">Add the following DNS TXT record to verify ownership of {data.site.canonical_origin}:</p>
           {selectedChallenge && (
-            <div className="mt-3 rounded border border-zinc-800 bg-zinc-900 p-3 font-mono text-xs text-zinc-300">
-              <p><span className="text-zinc-500">Host:</span> {selectedChallenge.record_name}</p>
-              <p><span className="text-zinc-500">Value:</span> {selectedChallenge.record_value}</p>
+            <div className="mt-3 rounded border border-rule bg-surface p-3 font-mono text-xs text-ink-soft">
+              <p><span className="text-ink-faint">Host:</span> {selectedChallenge.record_name}</p>
+              <p><span className="text-ink-faint">Value:</span> {selectedChallenge.record_value}</p>
             </div>
           )}
-          {!selectedChallenge && <p className="mt-3 text-xs text-amber-300">Generate a fresh site-specific TXT token before verification.</p>}
+          {!selectedChallenge && <p className="mt-3 text-xs text-warn">Generate a fresh site-specific TXT token before verification.</p>}
           <div className="mt-4 flex gap-3">
             <form action={verifyPortfolioDns}>
               <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500">
+              <button type="submit" className="rounded bg-good px-3 py-1.5 text-xs font-semibold text-good-ink hover:bg-good">
                 Verify DNS Record
               </button>
             </form>
             <form action={refreshDnsChallenge}>
               <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
+              <button type="submit" className="rounded border border-rule-strong px-3 py-1.5 text-xs text-ink-soft hover:bg-sunk">
                 Regenerate Token
               </button>
             </form>
           </div>
-          <section className="mt-5 rounded border border-zinc-800 bg-zinc-900/50 p-4">
-            <h3 className="text-sm font-semibold text-zinc-100">DNS provider assistant</h3>
-            <p className="mt-1 text-xs text-zinc-400">The manual TXT record above works with every DNS host. This optional assistant adds provider-specific support without changing the consent policy.</p>
+          <section className="mt-5 rounded border border-rule bg-surface/50 p-4">
+            <h3 className="text-sm font-semibold text-ink">DNS provider assistant</h3>
+            <p className="mt-1 text-xs text-ink-faint">The manual TXT record above works with every DNS host. This optional assistant adds provider-specific support without changing the consent policy.</p>
             {data.dnsProviderConnector?.status === "active" ? (
               <form action={createDnsProviderVerification} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="provider_key" value={data.dnsProviderConnector.provider_key ?? ""} />
-                <button type="submit" className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500">
+                <button type="submit" className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-violet-500">
                   Create this TXT record with {data.dnsProviderConnector.provider_key ?? "your DNS provider"}
                 </button>
               </form>
             ) : (
               <form action={connectDnsProvider} className="mt-3 grid gap-2 sm:grid-cols-2">
-                <label className="text-xs text-zinc-400">Provider
-                  <select name="provider_key" defaultValue="cloudflare" className="mt-1 block w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100">
+                <label className="text-xs text-ink-faint">Provider
+                  <select name="provider_key" defaultValue="cloudflare" className="mt-1 block w-full rounded border border-rule-strong bg-paper px-2 py-1.5 text-xs text-ink">
                     <option value="cloudflare">Cloudflare (available now)</option>
                   </select>
                 </label>
-                <label className="text-xs text-zinc-400">Zone ID
-                  <input required name="zone_id" pattern="[A-Fa-f0-9]{32}" className="mt-1 block w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100" />
+                <label className="text-xs text-ink-faint">Zone ID
+                  <input required name="zone_id" pattern="[A-Fa-f0-9]{32}" className="mt-1 block w-full rounded border border-rule-strong bg-paper px-2 py-1.5 font-mono text-xs text-ink" />
                 </label>
-                <label className="text-xs text-zinc-400">Scoped API token
-                  <input required name="api_token" type="password" autoComplete="off" className="mt-1 block w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100" />
+                <label className="text-xs text-ink-faint">Scoped API token
+                  <input required name="api_token" type="password" autoComplete="off" className="mt-1 block w-full rounded border border-rule-strong bg-paper px-2 py-1.5 text-xs text-ink" />
                 </label>
                 <input type="hidden" name="site_host" value={target.host} />
-                <p className="text-xs text-zinc-500 sm:col-span-2">The selected adapter states its least-privilege scope. Connecting does not create or change DNS records; creation requires a second approval.</p>
+                <p className="text-xs text-ink-faint sm:col-span-2">The selected adapter states its least-privilege scope. Connecting does not create or change DNS records; creation requires a second approval.</p>
                 <button type="submit" className="justify-self-start rounded border border-violet-500 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-950 sm:col-span-2">Connect selected provider</button>
               </form>
             )}
@@ -580,40 +582,40 @@ export default async function PilotPage({searchParams}: PageProps) {
         <>
           {/* Quick Actions Grid */}
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="flex flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+            <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
               <div>
-                <h3 className="text-sm font-semibold text-white">Bounded Crawl Engine</h3>
-                <p className="mt-1 text-xs text-zinc-400">
+                <h3 className="text-sm font-semibold text-ink">Bounded Crawl Engine</h3>
+                <p className="mt-1 text-xs text-ink-faint">
                   {data.latestCrawl ? `Last crawl: ${data.latestCrawl.status}` : "No crawl executed yet."}
                 </p>
               </div>
               <form action={startFirstCrawl} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="w-full rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
                   Trigger New Crawl
                 </button>
               </form>
             </div>
 
-            <div className="flex flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+            <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
               <div>
-                <h3 className="text-sm font-semibold text-white">Search Console Connector</h3>
-                <p className="mt-1 text-xs text-zinc-400">
+                <h3 className="text-sm font-semibold text-ink">Search Console Connector</h3>
+                <p className="mt-1 text-xs text-ink-faint">
                   {data.searchPerformance ? `${data.searchPerformance.clicks} clicks / ${data.searchPerformance.impressions} impressions` : "Google Search Console ready."}
                 </p>
               </div>
               <form action={connectSearchConsole} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="w-full rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
                   {data.searchConsoleConnector ? "Re-sync Search Console" : "Connect Search Console"}
                 </button>
               </form>
             </div>
 
-            <div className="flex flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+            <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
               <div>
-                <h3 className="text-sm font-semibold text-white">Mobile Lighthouse Lab</h3>
-                <p className="mt-1 text-xs text-zinc-400">
+                <h3 className="text-sm font-semibold text-ink">Mobile Lighthouse Lab</h3>
+                <p className="mt-1 text-xs text-ink-faint">
                   {data.performanceSummary
                     ? `${data.performanceSummary.sample_count}/${data.performanceSummary.required_sample_count} samples · ${data.performanceSummary.status}`
                     : data.performanceRun?.observation
@@ -624,53 +626,53 @@ export default async function PilotPage({searchParams}: PageProps) {
               <form action={startPerformanceRun} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="idempotency_key" value={performanceIdempotencyKey} />
-                <button type="submit" className="w-full rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
                   Run Mobile Lab Sample
                 </button>
               </form>
             </div>
           </section>
 
-          <section aria-labelledby="advisory-heading" className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-            <div className="flex flex-col gap-3 border-b border-zinc-800 pb-4 sm:flex-row sm:items-start sm:justify-between">
+          <section aria-labelledby="advisory-heading" className="rounded-[4px] border border-rule bg-paper p-6">
+            <div className="flex flex-col gap-3 border-b border-rule pb-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 id="advisory-heading" className="text-base font-semibold text-white">Auto-correction Advisory Queue</h2>
-                <p className="mt-1 max-w-3xl text-xs text-zinc-400">
+                <h2 id="advisory-heading" className="text-base font-semibold text-ink">Auto-correction Advisory Queue</h2>
+                <p className="mt-1 max-w-3xl text-xs text-ink-faint">
                   Ranked candidates only. Every correction must pass evidence review, validation, and explicit human approval before a certified connector may act.
                 </p>
               </div>
-              <span className="w-fit rounded border border-amber-800 bg-amber-950/50 px-2 py-1 text-xs font-medium text-amber-300">
+              <span className="w-fit rounded border border-warn-rule bg-warn-soft px-2 py-1 text-xs font-medium text-warn">
                 0 automatic changes
               </span>
             </div>
 
             {data.opportunities.length === 0 ? (
               <div className="py-8 text-center">
-                <p className="text-sm font-medium text-zinc-300">No ranked advisory candidates yet.</p>
-                <p className="mt-1 text-xs text-zinc-500">Complete a bounded crawl and analysis to generate the top 20 evidence-backed opportunities.</p>
+                <p className="text-sm font-medium text-ink-soft">No ranked advisory candidates yet.</p>
+                <p className="mt-1 text-xs text-ink-faint">Complete a bounded crawl and analysis to generate the top 20 evidence-backed opportunities.</p>
               </div>
             ) : (
               <div className="mt-4 flex flex-col gap-3">
                 {data.opportunities.map((opportunity, index) => (
-                  <article key={opportunity.id} className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                  <article key={opportunity.id} className="rounded border border-rule bg-surface/40 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex gap-3">
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded bg-zinc-800 text-xs font-semibold tabular-nums text-zinc-300">
+                        <span className="flex size-7 shrink-0 items-center justify-center rounded bg-sunk text-xs font-semibold tabular-nums text-ink-soft">
                           {index + 1}
                         </span>
                         <div>
-                          <h3 className="text-sm font-medium text-white">{opportunity.title}</h3>
-                          <p className="mt-1 text-xs text-zinc-500">{opportunity.type.replaceAll("_", " ")}</p>
+                          <h3 className="text-sm font-medium text-ink">{opportunity.title}</h3>
+                          <p className="mt-1 text-xs text-ink-faint">{opportunity.type.replaceAll("_", " ")}</p>
                           {opportunity.page_url && (
                             <p className="mt-2 break-all font-mono text-xs text-sky-300">{opportunity.page_url}</p>
                           )}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2 text-xs tabular-nums">
-                        <span className="rounded bg-zinc-800 px-2 py-1 text-zinc-300">Score {Math.round(opportunity.score)}</span>
-                        <span className="rounded bg-zinc-800 px-2 py-1 text-zinc-300">Confidence {Math.round(opportunity.confidence * 100)}%</span>
-                        <span className="rounded border border-zinc-700 px-2 py-1 uppercase text-zinc-400">{opportunity.risk} risk</span>
-                        <span className="rounded border border-amber-800 bg-amber-950/40 px-2 py-1 text-amber-300">Human review required</span>
+                        <span className="rounded bg-sunk px-2 py-1 text-ink-soft">Score {Math.round(opportunity.score)}</span>
+                        <span className="rounded bg-sunk px-2 py-1 text-ink-soft">Confidence {Math.round(opportunity.confidence * 100)}%</span>
+                        <span className="rounded border border-rule-strong px-2 py-1 uppercase text-ink-faint">{opportunity.risk} risk</span>
+                        <span className="rounded border border-warn-rule bg-warn-soft px-2 py-1 text-warn">Human review required</span>
                       </div>
                       {/*
                         Drafting is not approving. This builds the change the
@@ -683,20 +685,20 @@ export default async function PilotPage({searchParams}: PageProps) {
                         <input type="hidden" name="opportunity_id" value={opportunity.id} />
                         <button
                           type="submit"
-                          className="rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:border-zinc-500 hover:text-white"
+                          className="rounded border border-rule-strong px-3 py-1.5 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
                         >
                           Draft proposal
                         </button>
                       </form>
                     </div>
-                    <div className="mt-3 grid gap-3 border-t border-zinc-800 pt-3 sm:grid-cols-2">
+                    <div className="mt-3 grid gap-3 border-t border-rule pt-3 sm:grid-cols-2">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Suggested correction</p>
-                        <p className="mt-1 text-xs leading-5 text-zinc-300">{advisoryFor(opportunity.title).correction}</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Suggested correction</p>
+                        <p className="mt-1 text-xs leading-5 text-ink-soft">{advisoryFor(opportunity.title).correction}</p>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Required validation</p>
-                        <p className="mt-1 text-xs leading-5 text-zinc-300">{advisoryFor(opportunity.title).validation}</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Required validation</p>
+                        <p className="mt-1 text-xs leading-5 text-ink-soft">{advisoryFor(opportunity.title).validation}</p>
                       </div>
                     </div>
                   </article>
@@ -704,10 +706,10 @@ export default async function PilotPage({searchParams}: PageProps) {
               </div>
             )}
 
-            <div className="mt-4 flex flex-col gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs font-medium text-zinc-300">Human quality calibration</p>
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs font-medium text-ink-soft">Human quality calibration</p>
+                <p className="text-xs text-ink-faint">
                   {data.calibration
                     ? `${data.calibration.summary.reviewed}/${data.calibration.target_size} reviewed${data.calibration.summary.precision === null ? "" : ` · ${Math.round(data.calibration.summary.precision * 100)}% precision`}`
                     : "Freeze a reproducible 20-item review set before trusting advisory accuracy."}
@@ -717,7 +719,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <form action={createCalibrationSet}>
                   <input type="hidden" name="site_host" value={target.host} />
                   <input type="hidden" name="idempotency_key" value={randomUUID()} />
-                  <button type="submit" className="rounded bg-white px-3 py-2 text-xs font-semibold text-black hover:bg-zinc-200">
+                  <button type="submit" className="rounded bg-surface px-3 py-2 text-xs font-semibold text-black hover:bg-sunk">
                     Freeze 20-item human review set
                   </button>
                 </form>
@@ -726,30 +728,30 @@ export default async function PilotPage({searchParams}: PageProps) {
           </section>
 
           {/* Proposals & Review Studio */}
-          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+          <section className="rounded-[4px] border border-rule bg-paper p-6">
+            <div className="flex items-center justify-between border-b border-rule pb-3">
               <div>
-                <h2 className="text-base font-semibold text-white">Proposals & Review Studio</h2>
-                <p className="text-xs text-zinc-400">Auditable diffs and policy evaluations. External deployment connectors are not yet certified.</p>
+                <h2 className="text-base font-semibold text-ink">Proposals & Review Studio</h2>
+                <p className="text-xs text-ink-faint">Auditable diffs and policy evaluations. External deployment connectors are not yet certified.</p>
               </div>
-              <span className="rounded bg-zinc-900 px-2 py-1 text-xs font-mono text-zinc-400">{data.proposals.length} Proposals</span>
+              <span className="rounded bg-surface px-2 py-1 text-xs font-mono text-ink-faint">{data.proposals.length} Proposals</span>
             </div>
             {data.proposals.length === 0 ? (
-              <p className="py-6 text-center text-xs text-zinc-500">No active proposals generated yet. Run analysis to create proposals.</p>
+              <p className="py-6 text-center text-xs text-ink-faint">No active proposals generated yet. Run analysis to create proposals.</p>
             ) : (
               <div className="mt-4 flex flex-col gap-4">
                 {data.proposals.map((prop) => (
-                  <div key={prop.id} className="rounded border border-zinc-800/80 bg-zinc-900/50 p-4">
+                  <div key={prop.id} className="rounded border border-rule/80 bg-surface/50 p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${prop.risk === "low" ? "bg-emerald-950 text-emerald-400 border border-emerald-800" : prop.risk === "prohibited" ? "bg-red-950 text-red-400 border border-red-800" : "bg-amber-950 text-amber-400 border border-amber-800"}`}>
+                        <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${prop.risk === "low" ? "bg-good-soft text-good border border-good-rule" : prop.risk === "prohibited" ? "bg-stop-soft text-stop border border-stop-rule" : "bg-warn-soft text-warn border border-warn-rule"}`}>
                           {prop.risk}
                         </span>
-                        <h4 className="text-sm font-medium text-white">{prop.title}</h4>
+                        <h4 className="text-sm font-medium text-ink">{prop.title}</h4>
                       </div>
-                      <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs font-mono text-zinc-300">{prop.status}</span>
+                      <span className="rounded bg-sunk px-2 py-0.5 text-xs font-mono text-ink-soft">{prop.status}</span>
                     </div>
-                    <p className="mt-1 text-xs text-zinc-400">{prop.rationale}</p>
+                    <p className="mt-1 text-xs text-ink-faint">{prop.rationale}</p>
                     
                     {/* Visual SERP Preview */}
                     <div className="mt-3">
@@ -763,13 +765,13 @@ export default async function PilotPage({searchParams}: PageProps) {
 
                     {/* Unified Diff View */}
                     {prop.diff_unified && (
-                      <div className="mt-3 rounded border border-zinc-800 bg-black/60 p-3 font-mono text-xs text-zinc-300 overflow-x-auto">
-                        <pre className="text-zinc-400">{prop.diff_unified}</pre>
+                      <div className="mt-3 rounded border border-rule bg-black/60 p-3 font-mono text-xs text-ink-soft overflow-x-auto">
+                        <pre className="text-ink-faint">{prop.diff_unified}</pre>
                       </div>
                     )}
 
-                    <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-3">
-                      <span className="text-xs text-zinc-500 font-mono">Target: {prop.target_path}</span>
+                    <div className="mt-3 flex items-center justify-between border-t border-rule/60 pt-3">
+                      <span className="text-xs text-ink-faint font-mono">Target: {prop.target_path}</span>
                       <div className="flex gap-2">
                         {/*
                           `review_required` as well as `validated`. A proposal
@@ -784,7 +786,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                             <form action={approveProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500">
+                              <button type="submit" className="rounded bg-good px-2.5 py-1 text-xs font-semibold text-good-ink hover:bg-good">
                                 Approve
                               </button>
                             </form>
@@ -797,7 +799,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                             <form action={withdrawProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:border-zinc-500 hover:text-white">
+                              <button type="submit" className="rounded border border-rule-strong px-2.5 py-1 text-xs font-medium text-ink-soft hover:border-rule-strong hover:text-ink">
                                 Withdraw
                               </button>
                             </form>
@@ -828,7 +830,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                               than a second pull request.
                             */}
                             <input type="hidden" name="idempotency_key" value={`deploy-${prop.id}`} />
-                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-500">
+                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sky-500">
                               Deploy
                             </button>
                           </form>
@@ -845,7 +847,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                           <form action={rollbackProposalAction}>
                             <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="proposal_id" value={prop.id} />
-                            <button type="submit" className="rounded border border-red-800 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-600 hover:text-red-200">
+                            <button type="submit" className="rounded border border-stop-rule px-2.5 py-1 text-xs font-medium text-stop hover:border-stop-rule hover:text-stop">
                               Request revert
                             </button>
                           </form>
@@ -859,30 +861,30 @@ export default async function PilotPage({searchParams}: PageProps) {
           </section>
 
           {/* 28-Day Outcome Tracking Dashboard */}
-          <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+          <section className="rounded-[4px] border border-rule bg-paper p-6">
+            <div className="flex items-center justify-between border-b border-rule pb-3">
               <div>
-                <h2 className="text-base font-semibold text-white">28-Day Outcome Tracking</h2>
-                <p className="text-xs text-zinc-400">Before-and-after association after independent deployment verification; this does not establish causation.</p>
+                <h2 className="text-base font-semibold text-ink">28-Day Outcome Tracking</h2>
+                <p className="text-xs text-ink-faint">Before-and-after association after independent deployment verification; this does not establish causation.</p>
               </div>
-              <span className="rounded bg-zinc-900 px-2 py-1 text-xs font-mono text-zinc-400">{data.measurements.length} Series</span>
+              <span className="rounded bg-surface px-2 py-1 text-xs font-mono text-ink-faint">{data.measurements.length} Series</span>
             </div>
             {data.measurements.length === 0 ? (
-              <p className="py-6 text-center text-xs text-zinc-500">No measurement series recorded yet. Deployed proposals will track here over 28-day windows.</p>
+              <p className="py-6 text-center text-xs text-ink-faint">No measurement series recorded yet. Deployed proposals will track here over 28-day windows.</p>
             ) : (
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {data.measurements.map((m) => (
-                  <div key={m.id} className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
+                  <div key={m.id} className="rounded border border-rule bg-surface/40 p-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-zinc-400">Evidence Completeness</span>
-                      <span className="rounded bg-emerald-950 border border-emerald-800 px-2 py-0.5 text-xs font-mono text-emerald-300">
+                      <span className="text-xs font-medium text-ink-faint">Evidence Completeness</span>
+                      <span className="rounded bg-good-soft border border-good-rule px-2 py-0.5 text-xs font-mono text-good">
                         {Math.round(m.confidence_score * 100)}%
                       </span>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded bg-zinc-900 p-2">
-                        <p className="text-zinc-500">Clicks Delta</p>
-                        <p className="text-base font-semibold font-mono text-white">
+                      <div className="rounded bg-surface p-2">
+                        <p className="text-ink-faint">Clicks Delta</p>
+                        <p className="text-base font-semibold font-mono text-ink">
                           {typeof m.delta_metrics?.clicks_delta === "number"
                             ? m.delta_metrics.clicks_delta >= 0
                               ? `+${m.delta_metrics.clicks_delta}`
@@ -890,9 +892,9 @@ export default async function PilotPage({searchParams}: PageProps) {
                             : "N/A"}
                         </p>
                       </div>
-                      <div className="rounded bg-zinc-900 p-2">
-                        <p className="text-zinc-500">Position Delta</p>
-                        <p className="text-base font-semibold font-mono text-white">
+                      <div className="rounded bg-surface p-2">
+                        <p className="text-ink-faint">Position Delta</p>
+                        <p className="text-base font-semibold font-mono text-ink">
                           {typeof m.delta_metrics?.position_delta === "number"
                             ? m.delta_metrics.position_delta >= 0
                               ? `+${m.delta_metrics.position_delta} ranks`
@@ -902,7 +904,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                       </div>
                     </div>
                     {m.annotations?.length > 0 && (
-                      <p className="mt-2 text-xs italic text-zinc-500">{m.annotations[0]}</p>
+                      <p className="mt-2 text-xs italic text-ink-faint">{m.annotations[0]}</p>
                     )}
                   </div>
                 ))}

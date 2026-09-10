@@ -44,26 +44,26 @@ async function maybe<T>(path: string): Promise<T | null> {
   }
 }
 
-const panel = "rounded-lg border border-zinc-800 bg-zinc-950 p-5";
-const heading = "text-base font-semibold text-white";
-const muted = "text-xs text-zinc-400";
+const panel = "rounded-[4px] border border-rule bg-paper p-5";
+const heading = "text-base font-semibold text-ink";
+const muted = "text-xs text-ink-faint";
 const chip = "rounded border px-2 py-0.5 text-[11px] font-medium";
 
 function Empty({children}: {children: React.ReactNode}) {
-  return <p className="rounded border border-dashed border-zinc-800 p-4 text-sm text-zinc-400">{children}</p>;
+  return <p className="rounded border border-dashed border-rule p-4 text-sm text-ink-faint">{children}</p>;
 }
 
 function statusChip(status: string): string {
-  if (status === "completed" || status === "delivered") return `${chip} border-emerald-800 bg-emerald-950/50 text-emerald-300`;
-  if (status === "failed" || status === "blocked") return `${chip} border-red-800 bg-red-950/50 text-red-300`;
-  if (status === "skipped") return `${chip} border-amber-800 bg-amber-950/50 text-amber-300`;
-  return `${chip} border-zinc-700 bg-zinc-900 text-zinc-300`;
+  if (status === "completed" || status === "delivered") return `${chip} border-good-rule bg-good-soft text-good`;
+  if (status === "failed" || status === "blocked") return `${chip} border-stop-rule bg-stop-soft text-stop`;
+  if (status === "skipped") return `${chip} border-warn-rule bg-warn-soft text-warn`;
+  return `${chip} border-rule-strong bg-surface text-ink-soft`;
 }
 
 /** Renders the agent's bounded markup: paragraphs, bullets, and **bold**. */
 function AgentBody({body}: {body: string}) {
   return (
-    <div className="space-y-1.5 text-sm text-zinc-200">
+    <div className="space-y-1.5 text-sm text-ink">
       {body.split("\n").map((line, index) => {
         const trimmed = line.trim();
         if (!trimmed) return null;
@@ -72,14 +72,14 @@ function AgentBody({body}: {body: string}) {
         const parts = text.split(/\*\*(.+?)\*\*/g);
         const rendered = parts.map((part, partIndex) =>
           partIndex % 2 === 1 ? (
-            <strong key={partIndex} className="font-semibold text-white">{part}</strong>
+            <strong key={partIndex} className="font-semibold text-ink">{part}</strong>
           ) : (
             <span key={partIndex}>{part}</span>
           ),
         );
         return bullet ? (
           <div key={index} className="flex gap-2 pl-1">
-            <span className="text-zinc-600">•</span>
+            <span className="text-ink-soft">•</span>
             <span>{rendered}</span>
           </div>
         ) : (
@@ -123,20 +123,20 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
   const routineByKind = new Map(routines.map((item) => [item.kind, item]));
 
   return (
-    <main className="min-h-dvh bg-zinc-950 text-zinc-100">
+    <main className="min-h-dvh bg-paper text-ink">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
-        <header className="flex flex-col gap-2 border-b border-zinc-800 pb-4">
+        <header className="flex flex-col gap-2 border-b border-rule pb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-white">Agent workspace</h1>
-              <span className={`${chip} border-emerald-800 bg-emerald-950 text-emerald-400`}>Internal Alpha</span>
+              <h1 className="text-2xl font-bold tracking-tight text-ink">Agent workspace</h1>
+              <span className={`${chip} border-good-rule bg-good-soft text-good`}>Internal Alpha</span>
             </div>
-            <Link href={pilotPath(target.host)} className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
+            <Link href={pilotPath(target.host)} className="rounded border border-rule-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink-soft hover:bg-sunk">
               Back to operations
             </Link>
           </div>
-          <p className="text-sm text-zinc-400">
-            Ask for work on <span className="font-medium text-zinc-200">{target.host}</span>. The agent answers from stored
+          <p className="text-sm text-ink-faint">
+            Ask for work on <span className="font-medium text-ink">{target.host}</span>. The agent answers from stored
             evidence and can queue analysis. It cannot publish a change: every change still goes through a reviewed proposal.
           </p>
         </header>
@@ -150,7 +150,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 href={workspacePath(portfolioSite.normalized_host, {tab})}
                 aria-current={selected ? "page" : undefined}
                 className={`rounded border px-3 py-1.5 text-xs font-medium ${
-                  selected ? "border-zinc-500 bg-zinc-800 text-white" : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:bg-zinc-800"
+                  selected ? "border-rule-strong bg-sunk text-ink" : "border-rule bg-surface text-ink-faint hover:bg-sunk"
                 }`}
               >
                 {portfolioSite.name}
@@ -160,7 +160,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
         </nav>
 
         {errorCode && (
-          <p role="alert" className="rounded border border-red-800 bg-red-950/60 px-3 py-2 text-sm text-red-300">
+          <p role="alert" className="rounded border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop">
             The last action did not complete: <code>{errorCode}</code>
           </p>
         )}
@@ -172,7 +172,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
           </Empty>
         )}
 
-        <nav aria-label="Workspace sections" className="flex gap-1 border-b border-zinc-800">
+        <nav aria-label="Workspace sections" className="flex gap-1 border-b border-rule">
           {workspaceTabs.map((name) => {
             const selected = name === tab;
             return (
@@ -181,7 +181,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 href={workspacePath(target.host, {tab: name, session: activeSession?.id})}
                 aria-current={selected ? "page" : undefined}
                 className={`rounded-t border-b-2 px-4 py-2 text-sm font-medium capitalize ${
-                  selected ? "border-emerald-500 text-white" : "border-transparent text-zinc-400 hover:text-zinc-200"
+                  selected ? "border-good-rule text-ink" : "border-transparent text-ink-faint hover:text-ink"
                 }`}
               >
                 {name}
@@ -202,9 +202,9 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                   name="title"
                   maxLength={200}
                   placeholder="New conversation"
-                  className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600"
+                  className="rounded border border-rule-strong bg-surface px-2 py-1.5 text-sm text-ink placeholder:text-ink-soft"
                 />
-                <button type="submit" disabled={!site} className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+                <button type="submit" disabled={!site} className="rounded border border-rule-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk disabled:opacity-40">
                   Start
                 </button>
               </form>
@@ -214,7 +214,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                     <Link
                       href={workspacePath(target.host, {tab: "chat", session: item.id})}
                       className={`block truncate rounded px-2 py-1.5 text-xs ${
-                        item.id === activeSession?.id ? "bg-zinc-800 text-white" : "text-zinc-400 hover:bg-zinc-900"
+                        item.id === activeSession?.id ? "bg-sunk text-ink" : "text-ink-faint hover:bg-surface"
                       }`}
                     >
                       {item.title}
@@ -238,25 +238,25 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                       <li
                         key={message.id}
                         className={`rounded border p-3 ${
-                          message.role === "user" ? "border-zinc-800 bg-zinc-900/60" : "border-zinc-800 bg-zinc-900"
+                          message.role === "user" ? "border-rule bg-surface/60" : "border-rule bg-surface"
                         }`}
                       >
                         <div className="mb-2 flex items-center gap-2">
-                          <span className={`${chip} ${message.role === "user" ? "border-zinc-700 bg-zinc-800 text-zinc-300" : "border-emerald-800 bg-emerald-950/50 text-emerald-300"}`}>
+                          <span className={`${chip} ${message.role === "user" ? "border-rule-strong bg-sunk text-ink-soft" : "border-good-rule bg-good-soft text-good"}`}>
                             {message.role === "user" ? "You" : "Agent"}
                           </span>
-                          {message.skill_key && <span className={`${chip} border-zinc-700 bg-zinc-950 text-zinc-400`}>{message.skill_key}</span>}
+                          {message.skill_key && <span className={`${chip} border-rule-strong bg-paper text-ink-faint`}>{message.skill_key}</span>}
                           {message.evidence_json.length > 0 && (
                             <span className={muted}>{message.evidence_json.length} evidence references</span>
                           )}
                         </div>
-                        {message.role === "agent" ? <AgentBody body={message.body} /> : <p className="text-sm text-zinc-300">{message.body}</p>}
+                        {message.role === "agent" ? <AgentBody body={message.body} /> : <p className="text-sm text-ink-soft">{message.body}</p>}
                       </li>
                     ))}
                     {messages.length === 0 && <li className={muted}>No messages yet. Try one of the examples on the Skills tab.</li>}
                   </ol>
 
-                  <form action={sendMessage} className="mt-5 flex flex-col gap-2 border-t border-zinc-800 pt-4">
+                  <form action={sendMessage} className="mt-5 flex flex-col gap-2 border-t border-rule pt-4">
                     <input type="hidden" name="site_host" value={target.host} />
                     <input type="hidden" name="session_id" value={activeSession.id} />
                     <label className="sr-only" htmlFor="message-body">Message</label>
@@ -267,11 +267,11 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                       required
                       maxLength={8000}
                       placeholder="Ask for an audit, keyword clusters, sitemap coverage, competitors, or the weekly report…"
-                      className="rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600"
+                      className="rounded border border-rule-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-soft"
                     />
                     <div className="flex items-center justify-between gap-3">
                       <p className={muted}>The agent reads stored evidence and can queue analysis. It never publishes a change.</p>
-                      <button type="submit" className="rounded border border-emerald-700 bg-emerald-950/60 px-4 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-900/60">
+                      <button type="submit" className="rounded border border-good-rule bg-good-soft px-4 py-1.5 text-xs font-medium text-good hover:bg-good-soft">
                         Send
                       </button>
                     </div>
@@ -292,8 +292,8 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               ) : (
                 <ul className="mt-3 flex flex-col gap-2">
                   {tasks.map((task) => (
-                    <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
-                      <span className="text-sm text-zinc-200">{task.skill_key}</span>
+                    <li key={task.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-rule bg-surface px-3 py-2">
+                      <span className="text-sm text-ink">{task.skill_key}</span>
                       <span className="flex items-center gap-2">
                         {task.error_code && <span className={muted}>{task.error_code}</span>}
                         <span className={statusChip(task.status)}>{task.status}</span>
@@ -313,8 +313,8 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               ) : (
                 <ul className="mt-3 flex flex-col gap-2">
                   {runs.map((run) => (
-                    <li key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
-                      <span className="text-sm text-zinc-200">
+                    <li key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-rule bg-surface px-3 py-2">
+                      <span className="text-sm text-ink">
                         {run.kind} <span className={muted}>({run.trigger})</span>
                       </span>
                       <span className="flex items-center gap-2">
@@ -340,21 +340,21 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               </p>
               <ul className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 {skills.map((skill) => (
-                  <li key={skill.key} className="rounded border border-zinc-800 bg-zinc-900 p-3">
+                  <li key={skill.key} className="rounded border border-rule bg-surface p-3">
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-white">{skill.name}</h3>
-                      <span className={`${chip} ${skill.schedules_work ? "border-amber-800 bg-amber-950/50 text-amber-300" : "border-zinc-700 bg-zinc-950 text-zinc-400"}`}>
+                      <h3 className="text-sm font-semibold text-ink">{skill.name}</h3>
+                      <span className={`${chip} ${skill.schedules_work ? "border-warn-rule bg-warn-soft text-warn" : "border-rule-strong bg-paper text-ink-faint"}`}>
                         {skill.schedules_work ? "queues work" : "reads evidence"}
                       </span>
                     </div>
-                    <p className="mt-1 text-xs text-zinc-400">{skill.description}</p>
+                    <p className="mt-1 text-xs text-ink-faint">{skill.description}</p>
                     {activeSession && (
                       <form action={sendMessage} className="mt-3">
                         <input type="hidden" name="site_host" value={target.host} />
                         <input type="hidden" name="session_id" value={activeSession.id} />
                         <input type="hidden" name="body" value={skill.example} />
                         <input type="hidden" name="skill_key" value={skill.key} />
-                        <button type="submit" className="rounded border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800">
+                        <button type="submit" className="rounded border border-rule-strong bg-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft hover:bg-sunk">
                           Run: {skill.example}
                         </button>
                       </form>
@@ -373,9 +373,9 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 {["search_console_sync", "analytics_sync", "site_audit", "keyword_refresh", "sitemap_coverage", "content_briefs", "competitor_scan", "ai_visibility_scan", "weekly_report"].map((kind) => {
                   const routine = routineByKind.get(kind);
                   return (
-                    <li key={kind} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
+                    <li key={kind} className="flex flex-wrap items-center justify-between gap-2 rounded border border-rule bg-surface px-3 py-2">
                       <span className="flex items-center gap-2">
-                        <span className="text-sm text-zinc-200">{kind}</span>
+                        <span className="text-sm text-ink">{kind}</span>
                         {routine ? (
                           <span className={statusChip(routine.enabled ? "completed" : "queued")}>
                             {routine.enabled ? `${routine.cadence}, next ${new Date(routine.next_run_at).toISOString().slice(0, 16).replace("T", " ")} UTC` : "not scheduled"}
@@ -391,7 +391,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                           <input type="hidden" name="kind" value={kind} />
                           <input type="hidden" name="cadence" value={kind === "weekly_report" ? "weekly" : "daily"} />
                           <input type="hidden" name="enabled" value={routine?.enabled ? "false" : "true"} />
-                          <button type="submit" disabled={!site} className="rounded border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800 disabled:opacity-40">
+                          <button type="submit" disabled={!site} className="rounded border border-rule-strong bg-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft hover:bg-sunk disabled:opacity-40">
                             {routine?.enabled ? "Disable" : "Enable"}
                           </button>
                         </form>
@@ -400,7 +400,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                             <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="tab" value="skills" />
                             <input type="hidden" name="routine_id" value={routine.id} />
-                            <button type="submit" className="rounded border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800">
+                            <button type="submit" className="rounded border border-rule-strong bg-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft hover:bg-sunk">
                               Run once
                             </button>
                           </form>
@@ -423,11 +423,11 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               ) : (
                 <ul className="mt-3 flex flex-col gap-2">
                   {reports.map((report) => (
-                    <li key={report.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
-                      <span className="text-sm text-zinc-200">{report.kind.replace(/_/g, " ")}</span>
+                    <li key={report.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-rule bg-surface px-3 py-2">
+                      <span className="text-sm text-ink">{report.kind.replace(/_/g, " ")}</span>
                       <span className="flex items-center gap-3">
                         <span className={muted}>{report.period_start} → {report.period_end}</span>
-                        <code className="text-[11px] text-zinc-600">{report.content_hash.slice(0, 12)}</code>
+                        <code className="text-[11px] text-ink-soft">{report.content_hash.slice(0, 12)}</code>
                       </span>
                     </li>
                   ))}
@@ -442,7 +442,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               ) : (
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[640px] text-left text-sm">
-                    <thead className="text-xs uppercase tracking-wide text-zinc-500">
+                    <thead className="text-xs uppercase tracking-wide text-ink-faint">
                       <tr>
                         <th scope="col" className="py-2 pr-3">Cluster</th>
                         <th scope="col" className="py-2 pr-3">Intent</th>
@@ -452,20 +452,20 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                         <th scope="col" className="py-2 pr-3">Score</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-900">
+                    <tbody className="divide-y divide-rule">
                       {clusters.map((cluster) => (
                         <tr key={cluster.id}>
-                          <td className="py-2 pr-3 text-zinc-200">
+                          <td className="py-2 pr-3 text-ink">
                             {cluster.label}
                             {cluster.answer_engine_candidate && (
                               <span className={`${chip} ml-2 border-sky-800 bg-sky-950/50 text-sky-300`}>AEO</span>
                             )}
                           </td>
-                          <td className="py-2 pr-3 text-zinc-400">{cluster.intent}</td>
-                          <td className="py-2 pr-3 text-zinc-400">{cluster.member_count}</td>
-                          <td className="py-2 pr-3 text-zinc-400">{Math.round(cluster.impressions)}</td>
-                          <td className="py-2 pr-3 text-zinc-400">{cluster.average_position?.toFixed(1) ?? "—"}</td>
-                          <td className="py-2 pr-3 text-zinc-200">{cluster.opportunity_score.toFixed(0)}</td>
+                          <td className="py-2 pr-3 text-ink-faint">{cluster.intent}</td>
+                          <td className="py-2 pr-3 text-ink-faint">{cluster.member_count}</td>
+                          <td className="py-2 pr-3 text-ink-faint">{Math.round(cluster.impressions)}</td>
+                          <td className="py-2 pr-3 text-ink-faint">{cluster.average_position?.toFixed(1) ?? "—"}</td>
+                          <td className="py-2 pr-3 text-ink">{cluster.opportunity_score.toFixed(0)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -481,10 +481,10 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               ) : (
                 <ul className="mt-3 flex flex-col gap-2">
                   {briefs.map((brief) => (
-                    <li key={brief.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
-                      <span className="text-sm text-zinc-200">
+                    <li key={brief.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-rule bg-surface px-3 py-2">
+                      <span className="text-sm text-ink">
                         {brief.cluster_label}
-                        <span className={`${chip} ml-2 border-zinc-700 bg-zinc-950 text-zinc-400`}>{brief.kind.replace("_", " ")}</span>
+                        <span className={`${chip} ml-2 border-rule-strong bg-paper text-ink-faint`}>{brief.kind.replace("_", " ")}</span>
                       </span>
                       <span className="flex items-center gap-2">
                         <span className={muted}>priority {brief.priority_score.toFixed(0)}</span>
@@ -505,10 +505,10 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               {visibility.length === 0 ? (
                 <div className="mt-3"><Empty>No readiness snapshot yet. Run the AI visibility routine after a crawl.</Empty></div>
               ) : (
-                <p className="mt-3 text-3xl font-semibold text-white">
+                <p className="mt-3 text-3xl font-semibold text-ink">
                   {visibility[0]?.readiness_score.toFixed(0)}
-                  <span className="ml-1 text-base font-normal text-zinc-500">/ 100</span>
-                  <span className="ml-3 text-xs font-normal text-zinc-500">as of {visibility[0]?.captured_on}</span>
+                  <span className="ml-1 text-base font-normal text-ink-faint">/ 100</span>
+                  <span className="ml-3 text-xs font-normal text-ink-faint">as of {visibility[0]?.captured_on}</span>
                 </p>
               )}
             </div>

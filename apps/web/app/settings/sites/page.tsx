@@ -45,9 +45,9 @@ const REASONS: Record<string, string> = {
 };
 
 const field =
-  "rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900";
+  "rounded-[4px] border border-rule-strong px-3 py-2 text-sm font-normal text-ink";
 const submit =
-  "self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900";
+  "self-start rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk";
 
 export default async function SitesPage({searchParams}: PageProps) {
   const query = await searchParams;
@@ -67,8 +67,8 @@ export default async function SitesPage({searchParams}: PageProps) {
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-10">
       <header className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">Your sites</h1>
-        <p className="text-pretty text-sm text-slate-600">
+        <h1 className="text-xl font-semibold tracking-tight text-ink">Your sites</h1>
+        <p className="text-pretty text-sm text-ink-soft">
           Add a site you control, then prove it with a DNS record. Nothing is crawled and no
           connector will bind until that proof exists — which is what stops anybody pointing
           this at a domain that is not theirs.
@@ -76,19 +76,19 @@ export default async function SitesPage({searchParams}: PageProps) {
       </header>
 
       {query.verified ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+        <p className="rounded-[4px] border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
           Verified. You can connect Search Console and a repository to it now.
         </p>
       ) : null}
       {query.published ? (
-        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+        <p className="rounded-[4px] border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
           Cloudflare published the record. Give it a moment, then check the record below.
         </p>
       ) : null}
       {query.error ? (
         <p
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          className="rounded-[4px] border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
         >
           {REASONS[query.error] ?? "That did not work. Try again."}
         </p>
@@ -96,7 +96,7 @@ export default async function SitesPage({searchParams}: PageProps) {
       {loadError ? (
         <p
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          className="rounded-[4px] border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
         >
           {loadError}
         </p>
@@ -104,23 +104,23 @@ export default async function SitesPage({searchParams}: PageProps) {
 
       <section
         aria-labelledby="add-heading"
-        className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-5"
+        className="flex flex-col gap-4 rounded-[4px] border border-rule bg-surface p-5"
       >
         <div>
-          <h2 id="add-heading" className="text-base font-semibold text-slate-900">
+          <h2 id="add-heading" className="text-base font-semibold text-ink">
             Add a site
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-ink-soft">
             The address is the origin you want indexed — scheme and host, no path.
           </p>
         </div>
         <form action={addSiteAction} className="flex flex-col gap-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink">
               Name
               <input name="name" required maxLength={200} placeholder="Acme" className={field} />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink">
               Address
               <input
                 name="canonical_origin"
@@ -140,29 +140,29 @@ export default async function SitesPage({searchParams}: PageProps) {
       {challenge ? (
         <section
           aria-labelledby="verify-heading"
-          className="flex flex-col gap-4 rounded-lg border border-amber-200 bg-amber-50 p-5"
+          className="flex flex-col gap-4 rounded-[4px] border border-warn-rule bg-warn-soft p-5"
         >
           <div>
-            <h2 id="verify-heading" className="text-base font-semibold text-slate-900">
+            <h2 id="verify-heading" className="text-base font-semibold text-ink">
               Publish this DNS record
             </h2>
-            <p className="mt-1 text-pretty text-sm text-slate-700">
+            <p className="mt-1 text-pretty text-sm text-ink-soft">
               Add the TXT record below at whoever hosts your DNS — Cloudflare, Route&nbsp;53,
               GoDaddy, Namecheap, your own BIND zone, it makes no difference. Then come back and
               check it.
             </p>
           </div>
 
-          <dl className="grid gap-3 rounded-md border border-amber-300 bg-white p-4 text-sm sm:grid-cols-[7rem_1fr]">
-            <dt className="font-medium text-slate-700">Type</dt>
-            <dd className="font-mono text-slate-900">TXT</dd>
-            <dt className="font-medium text-slate-700">Name</dt>
-            <dd className="font-mono break-all text-slate-900">{challenge.recordName}</dd>
-            <dt className="font-medium text-slate-700">Value</dt>
-            <dd className="font-mono break-all text-slate-900">{challenge.recordValue}</dd>
+          <dl className="grid gap-3 rounded-[4px] border border-warn-rule bg-surface p-4 text-sm sm:grid-cols-[7rem_1fr]">
+            <dt className="font-medium text-ink-soft">Type</dt>
+            <dd className="font-mono text-ink">TXT</dd>
+            <dt className="font-medium text-ink-soft">Name</dt>
+            <dd className="font-mono break-all text-ink">{challenge.recordName}</dd>
+            <dt className="font-medium text-ink-soft">Value</dt>
+            <dd className="font-mono break-all text-ink">{challenge.recordValue}</dd>
           </dl>
 
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-ink-soft">
             Some registrars append the domain to the name for you. If yours does, enter just{" "}
             <span className="font-mono">_seo-autopilot</span> as the name. This record stays
             claimable until {new Date(challenge.expiresAt).toLocaleString()}.
@@ -179,18 +179,18 @@ export default async function SitesPage({searchParams}: PageProps) {
               <input type="hidden" name="site_id" value={challenge.siteId} />
               <button
                 type="submit"
-                className="text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
               >
                 Issue a new record
               </button>
             </form>
           </div>
 
-          <details className="rounded-md border border-amber-300 bg-white p-4">
-            <summary className="cursor-pointer text-sm font-medium text-slate-800">
+          <details className="rounded-[4px] border border-warn-rule bg-surface p-4">
+            <summary className="cursor-pointer text-sm font-medium text-ink">
               Optional: let Cloudflare add it for you
             </summary>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-ink-soft">
               Only if this domain&rsquo;s DNS is on Cloudflare. Everyone else adds the record
               above by hand — it is the same record either way. The token needs{" "}
               <span className="font-mono text-xs">Zone / DNS / Edit</span> on this zone only.
@@ -198,11 +198,11 @@ export default async function SitesPage({searchParams}: PageProps) {
             <form action={publishViaCloudflareAction} className="mt-3 flex flex-col gap-3">
               <input type="hidden" name="site_id" value={challenge.siteId} />
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
+                <label className="flex flex-col gap-1 text-sm font-medium text-ink">
                   Zone ID
                   <input name="zone_id" required autoComplete="off" className={field} />
                 </label>
-                <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
+                <label className="flex flex-col gap-1 text-sm font-medium text-ink">
                   API token
                   <input
                     name="api_token"
@@ -222,11 +222,11 @@ export default async function SitesPage({searchParams}: PageProps) {
       ) : null}
 
       <section aria-labelledby="list-heading" className="flex flex-col gap-3">
-        <h2 id="list-heading" className="text-base font-semibold text-slate-900">
+        <h2 id="list-heading" className="text-base font-semibold text-ink">
           Sites in this workspace
         </h2>
         {sites.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-600">
+          <p className="rounded-[4px] border border-dashed border-rule-strong bg-surface px-4 py-6 text-center text-sm text-ink-soft">
             No sites yet. Add the first one above.
           </p>
         ) : (
@@ -234,11 +234,11 @@ export default async function SitesPage({searchParams}: PageProps) {
             {sites.map((site) => (
               <li
                 key={site.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-[4px] border border-rule bg-surface px-4 py-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-slate-900">{site.name}</p>
-                  <p className="truncate font-mono text-xs text-slate-500">
+                  <p className="truncate font-medium text-ink">{site.name}</p>
+                  <p className="truncate font-mono text-xs text-ink-faint">
                     {site.canonical_origin}
                   </p>
                 </div>
@@ -246,8 +246,8 @@ export default async function SitesPage({searchParams}: PageProps) {
                   <span
                     className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
                       site.status === "active"
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                        : "border-amber-200 bg-amber-50 text-amber-900"
+                        ? "border-good-rule bg-good-soft text-good"
+                        : "border-warn-rule bg-warn-soft text-warn"
                     }`}
                   >
                     {site.status === "active" ? "Verified" : "Awaiting DNS"}
@@ -255,7 +255,7 @@ export default async function SitesPage({searchParams}: PageProps) {
                   {site.status === "active" ? (
                     <Link
                       href={`/pilot?site=${encodeURIComponent(site.normalized_host)}`}
-                      className="text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                      className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
                     >
                       Open
                     </Link>
@@ -264,7 +264,7 @@ export default async function SitesPage({searchParams}: PageProps) {
                       <input type="hidden" name="site_id" value={site.id} />
                       <button
                         type="submit"
-                        className="text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+                        className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
                       >
                         Get DNS record
                       </button>
@@ -276,7 +276,7 @@ export default async function SitesPage({searchParams}: PageProps) {
           </ul>
         )}
         {pending.length > 0 && !challenge ? (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-soft">
             {pending.length === 1 ? "One site is" : `${pending.length} sites are`} still waiting
             on DNS. Use &ldquo;Get DNS record&rdquo; to see what to publish.
           </p>

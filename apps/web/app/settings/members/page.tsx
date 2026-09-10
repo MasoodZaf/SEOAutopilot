@@ -117,9 +117,9 @@ export default async function MembersPage({
   return (
     <main>
       <div className="mx-auto max-w-3xl px-6 py-12">
-        <p className="text-sm font-semibold text-emerald-700">SEO Autopilot</p>
-        <h1 className="mt-2 text-balance text-3xl font-semibold text-slate-900">Members</h1>
-        <p className="mt-2 max-w-prose text-pretty text-sm text-slate-600">
+        <p className="text-sm font-semibold text-good">SEO Autopilot</p>
+        <h1 className="mt-2 text-balance text-3xl font-semibold text-ink">Members</h1>
+        <p className="mt-2 max-w-prose text-pretty text-sm text-ink-soft">
           A verified sign-in proves who somebody is. Membership is what decides whose data they
           may act on, and it only ever comes from an invitation.
         </p>
@@ -127,7 +127,7 @@ export default async function MembersPage({
         {notice ? (
           <p
             role="status"
-            className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"
+            className="mt-6 rounded-[4px] border border-good-rule bg-good-soft px-4 py-3 text-sm text-good"
           >
             {notice}
           </p>
@@ -135,18 +135,18 @@ export default async function MembersPage({
         {problem ? (
           <p
             role="alert"
-            className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+            className="mt-6 rounded-[4px] border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop"
           >
             {problem}
           </p>
         ) : null}
 
         {loadError ? (
-          <section className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-balance text-xl font-semibold text-slate-900">
+          <section className="mt-8 rounded-xl border border-rule bg-surface p-6 shadow-sm">
+            <h2 className="text-balance text-xl font-semibold text-ink">
               Members are not available
             </h2>
-            <p className="mt-2 text-pretty text-sm text-slate-600">
+            <p className="mt-2 text-pretty text-sm text-ink-soft">
               {loadError === "authentication_not_configured"
                 ? "This deployment has no identity provider configured, so there are no members to manage yet. An operator sets OIDC_ISSUER_URL and the first owner is invited from the host."
                 : `The API refused the request: ${loadError}.`}
@@ -156,17 +156,17 @@ export default async function MembersPage({
           <>
             <section
               aria-labelledby="members-heading"
-              className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+              className="mt-8 rounded-xl border border-rule bg-surface p-6 shadow-sm"
             >
-              <h2 id="members-heading" className="text-balance text-xl font-semibold text-slate-900">
+              <h2 id="members-heading" className="text-balance text-xl font-semibold text-ink">
                 In this tenant
               </h2>
               {members.length === 0 ? (
-                <p className="mt-2 text-pretty text-sm text-slate-600">
+                <p className="mt-2 text-pretty text-sm text-ink-soft">
                   Nobody yet. Invite the first person below.
                 </p>
               ) : (
-                <ul className="mt-4 divide-y divide-slate-200">
+                <ul className="mt-4 divide-y divide-rule">
                   {members.map((member) => {
                     const isSelf = session?.email
                       ? session.email.toLowerCase() === member.email.toLowerCase()
@@ -174,13 +174,13 @@ export default async function MembersPage({
                     return (
                       <li key={member.id} className="flex flex-wrap items-center gap-3 py-3">
                         <div className="min-w-0 grow">
-                          <p className="truncate text-sm font-medium text-slate-900">
+                          <p className="truncate text-sm font-medium text-ink">
                             {member.email}
                             {isSelf ? (
-                              <span className="ml-2 text-xs font-normal text-slate-500">(you)</span>
+                              <span className="ml-2 text-xs font-normal text-ink-faint">(you)</span>
                             ) : null}
                           </p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-ink-faint">
                             {member.display_name || "—"} · joined {formatDate(member.created_at)}
                             {member.status !== "active" ? ` · ${member.status}` : ""}
                           </p>
@@ -196,7 +196,7 @@ export default async function MembersPage({
                             name="role"
                             defaultValue={member.role}
                             disabled={isSelf}
-                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
+                            className="rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-sm text-ink disabled:bg-sunk disabled:text-ink-faint"
                           >
                             {ROLES.map((role) => (
                               <option key={role} value={role}>
@@ -207,7 +207,7 @@ export default async function MembersPage({
                           <button
                             type="submit"
                             disabled={isSelf}
-                            className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm font-medium text-slate-800 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
+                            className="rounded-[4px] border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk disabled:cursor-not-allowed disabled:text-ink-faint"
                           >
                             Save
                           </button>
@@ -219,14 +219,14 @@ export default async function MembersPage({
                               <input type="hidden" name="membership_id" value={member.id} />
                               <button
                                 type="submit"
-                                className="rounded-md border border-red-300 bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-700"
+                                className="rounded-[4px] border border-stop-rule bg-stop px-2.5 py-1 text-sm font-medium text-stop-ink hover:bg-stop"
                               >
                                 Confirm removal
                               </button>
                             </form>
                             <a
                               href="/settings/members"
-                              className="text-sm font-medium text-slate-600 underline underline-offset-2"
+                              className="text-sm font-medium text-ink-soft underline underline-offset-2"
                             >
                               Cancel
                             </a>
@@ -235,10 +235,10 @@ export default async function MembersPage({
                           <a
                             href={`/settings/members?confirm_remove=${member.id}`}
                             className={cn(
-                              "rounded-md border px-2.5 py-1 text-sm font-medium",
+                              "rounded-[4px] border px-2.5 py-1 text-sm font-medium",
                               isSelf
-                                ? "pointer-events-none border-slate-200 text-slate-400"
-                                : "border-red-300 bg-white text-red-700 hover:bg-red-50",
+                                ? "pointer-events-none border-rule text-ink-faint"
+                                : "border-stop-rule bg-surface text-stop hover:bg-stop-soft",
                             )}
                             aria-disabled={isSelf}
                           >
@@ -254,21 +254,21 @@ export default async function MembersPage({
 
             <section
               aria-labelledby="invitations-heading"
-              className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+              className="mt-6 rounded-xl border border-rule bg-surface p-6 shadow-sm"
             >
               <h2
                 id="invitations-heading"
-                className="text-balance text-xl font-semibold text-slate-900"
+                className="text-balance text-xl font-semibold text-ink"
               >
                 Invite somebody
               </h2>
-              <p className="mt-2 text-pretty text-sm text-slate-600">
+              <p className="mt-2 text-pretty text-sm text-ink-soft">
                 The invitation is claimed the first time that address signs in, and only if the
                 identity provider says the address is verified.
               </p>
               <form action={inviteMemberAction} className="mt-4 flex flex-wrap items-end gap-3">
                 <div className="grow">
-                  <label htmlFor="invite-email" className="block text-sm font-medium text-slate-800">
+                  <label htmlFor="invite-email" className="block text-sm font-medium text-ink">
                     Email address
                   </label>
                   <input
@@ -278,18 +278,18 @@ export default async function MembersPage({
                     required
                     autoComplete="off"
                     placeholder="colleague@example.com"
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+                    className="mt-1 w-full rounded-[4px] border border-rule-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint"
                   />
                 </div>
                 <div>
-                  <label htmlFor="invite-role" className="block text-sm font-medium text-slate-800">
+                  <label htmlFor="invite-role" className="block text-sm font-medium text-ink">
                     Role
                   </label>
                   <select
                     id="invite-role"
                     name="role"
                     defaultValue="viewer"
-                    className="mt-1 rounded-md border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
+                    className="mt-1 rounded-[4px] border border-rule-strong bg-surface px-2 py-2 text-sm text-ink"
                   >
                     {ROLES.map((role) => (
                       <option key={role} value={role}>
@@ -300,24 +300,24 @@ export default async function MembersPage({
                 </div>
                 <button
                   type="submit"
-                  className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                  className="rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk"
                 >
                   Send invitation
                 </button>
               </form>
 
               {invitations.length > 0 ? (
-                <ul className="mt-6 divide-y divide-slate-200 border-t border-slate-200">
+                <ul className="mt-6 divide-y divide-rule border-t border-rule">
                   {invitations.map((invitation) => (
                     <li
                       key={invitation.id}
                       className="flex flex-wrap items-center gap-3 py-3"
                     >
                       <div className="min-w-0 grow">
-                        <p className="truncate text-sm font-medium text-slate-900">
+                        <p className="truncate text-sm font-medium text-ink">
                           {invitation.email_normalized}
                         </p>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-ink-faint">
                           {ROLE_LABEL[invitation.role] ?? invitation.role} · expires{" "}
                           {formatDate(invitation.expires_at)}
                         </p>
@@ -326,7 +326,7 @@ export default async function MembersPage({
                         <input type="hidden" name="invitation_id" value={invitation.id} />
                         <button
                           type="submit"
-                          className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm font-medium text-slate-800 hover:bg-slate-100"
+                          className="rounded-[4px] border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk"
                         >
                           Revoke
                         </button>
