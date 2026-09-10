@@ -131,7 +131,7 @@ export default async function SitesPage({searchParams}: PageProps) {
               />
             </label>
           </div>
-          <button type="submit" className={submit}>
+          <button type="submit" className={submit} data-tip="Register the domain and issue a one-time TXT record proving you control it.">
             Add site and issue DNS record
           </button>
         </form>
@@ -171,7 +171,7 @@ export default async function SitesPage({searchParams}: PageProps) {
           <div className="flex flex-wrap items-center gap-3">
             <form action={verifySiteAction}>
               <input type="hidden" name="site_id" value={challenge.siteId} />
-              <button type="submit" className={submit}>
+              <button type="submit" className={submit} data-tip="Look up DNS now. Safe to retry — records can take minutes to hours to appear.">
                 Check the record
               </button>
             </form>
@@ -180,7 +180,7 @@ export default async function SitesPage({searchParams}: PageProps) {
               <button
                 type="submit"
                 className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
-              >
+               data-tip="Replace the token with a fresh one. The old record stops working immediately.">
                 Issue a new record
               </button>
             </form>
@@ -265,7 +265,7 @@ export default async function SitesPage({searchParams}: PageProps) {
                       <button
                         type="submit"
                         className="text-sm font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
-                      >
+                       data-tip="Issue a verification token for this domain and show the TXT record to publish.">
                         Get DNS record
                       </button>
                     </form>

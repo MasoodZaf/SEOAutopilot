@@ -220,7 +220,7 @@ export default async function MembersPage({
                               <button
                                 type="submit"
                                 className="rounded-[4px] border border-stop-rule bg-stop px-2.5 py-1 text-sm font-medium text-stop-ink hover:bg-stop"
-                              >
+                               data-tip="Remove this person from the workspace. Their account survives; their access here does not.">
                                 Confirm removal
                               </button>
                             </form>
@@ -301,7 +301,7 @@ export default async function MembersPage({
                 <button
                   type="submit"
                   className="rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk"
-                >
+                 data-tip="Invite this address into this workspace. They join on their next sign-in and can see everything in it.">
                   Send invitation
                 </button>
               </form>
@@ -327,7 +327,7 @@ export default async function MembersPage({
                         <button
                           type="submit"
                           className="rounded-[4px] border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk"
-                        >
+                         data-tip="Cancel this invitation. The address can no longer join with it.">
                           Revoke
                         </button>
                       </form>

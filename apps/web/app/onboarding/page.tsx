@@ -62,7 +62,7 @@ export default async function OnboardingPage({searchParams}: PageProps) {
             Usually your company or your project. You can invite colleagues once it exists.
           </span>
         </label>
-        <button type="submit" className={`${button.primary} self-start`}>
+        <button type="submit" className={`${button.primary} self-start`} data-tip="Create the workspace and make you its owner. You can rename or invite people afterwards.">
           Create workspace
         </button>
       </form>

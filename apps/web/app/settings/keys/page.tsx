@@ -188,7 +188,7 @@ export default async function KeysPage({searchParams}: PageProps) {
         />
 
         <form action={saveGoogleClientAction} className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+          <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="From your own Google Cloud OAuth client. Ends in .apps.googleusercontent.com — not the project number and not an API key.">
             Client ID
             <input
               name="client_id"
@@ -196,9 +196,9 @@ export default async function KeysPage({searchParams}: PageProps) {
               autoComplete="off"
               placeholder="123456789012-abc.apps.googleusercontent.com"
               className={field}
-            />
+           />
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+          <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="The secret beside that client ID in Google Cloud. Stored encrypted; no page ever reads it back to you.">
             Client secret
             <input
               name="client_secret"
@@ -206,7 +206,7 @@ export default async function KeysPage({searchParams}: PageProps) {
               required
               autoComplete="new-password"
               className={field}
-            />
+           />
           </label>
           <button type="submit" className={submit}>
             {google?.source === "tenant" ? "Replace Google client" : "Save Google client"}
@@ -219,7 +219,7 @@ export default async function KeysPage({searchParams}: PageProps) {
             <button
               type="submit"
               className="text-sm font-medium text-stop underline underline-offset-2 hover:text-stop"
-            >
+             data-tip="Revoke your stored credential. Existing connectors keep working until they next renew a token, then fall back to this deployment's shared client.">
               Remove this credential
             </button>
           </form>
@@ -265,7 +265,7 @@ export default async function KeysPage({searchParams}: PageProps) {
 
         <form action={saveGithubAppAction} className="flex flex-col gap-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="The numeric ID on your GitHub App's settings page.">
               App ID
               <input
                 name="app_id"
@@ -274,9 +274,9 @@ export default async function KeysPage({searchParams}: PageProps) {
                 autoComplete="off"
                 placeholder="1234567"
                 className={field}
-              />
+             />
             </label>
-            <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="The last part of your GitHub App's public URL.">
               App slug
               <input
                 name="app_slug"
@@ -284,10 +284,10 @@ export default async function KeysPage({searchParams}: PageProps) {
                 autoComplete="off"
                 placeholder="my-seo-autopilot"
                 className={field}
-              />
+             />
             </label>
           </div>
-          <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+          <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="The whole .pem file your GitHub App issued, including the BEGIN and END lines.">
             Private key (.pem)
             <textarea
               name="private_key"
@@ -296,7 +296,7 @@ export default async function KeysPage({searchParams}: PageProps) {
               autoComplete="off"
               placeholder="-----BEGIN RSA PRIVATE KEY-----"
               className={`${field} font-mono text-xs`}
-            />
+           />
           </label>
           <button type="submit" className={submit}>
             {github?.source === "tenant" ? "Replace GitHub App" : "Save GitHub App"}

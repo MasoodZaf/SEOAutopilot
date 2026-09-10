@@ -23,7 +23,7 @@ export async function SessionBar() {
         {session.email || session.name}
       </span>
       <form action="/auth/logout" method="post">
-        <button type="submit" className={button.secondary}>
+        <button type="submit" className={button.secondary}data-tip="End this session on this browser. Your workspace, keys and sites are untouched." data-tip-side="bottom">
           Sign out
         </button>
       </form>

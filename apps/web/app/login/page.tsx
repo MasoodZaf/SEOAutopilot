@@ -52,7 +52,7 @@ export default async function LoginPage({
             href={`/auth/login?next=${encodeURIComponent(target)}`}
             className={button.primary}
             prefetch={false}
-          >
+           data-tip="Sign in with your Google account. We ask only for your name and email address.">
             Continue with Google
           </Link>
           <p className="text-[12px] leading-5 text-ink-faint">

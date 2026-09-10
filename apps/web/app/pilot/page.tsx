@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import {redirect} from "next/navigation";
 
+import {button} from "@/app/components/ui";
 import {apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {
@@ -330,25 +331,40 @@ export default async function PilotPage({searchParams}: PageProps) {
             </h1>
           </div>
           {data.site && data.governance && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Navigation, not a status: this was drawn in the semantic green
+                  reserved for "this succeeded", and its hover state repainted
+                  the colour it already had. */}
               <Link
                 href={`/pilot/workspace?site=${target.host}`}
-                className="rounded border border-good-rule bg-good-soft px-3 py-1.5 text-xs font-medium text-good hover:bg-good-soft"
+                className={button.secondary}
+                data-tip="Conversations, scheduled routines, keyword clusters and content briefs for this site."
+                data-tip-side="bottom"
               >
                 Agent workspace
               </Link>
               <form action={runPolicySimulationAction}>
                 <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="rounded border border-rule-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink-soft hover:bg-sunk">
-                  Run Policy Simulation
+                <button
+                  type="submit"
+                  className={button.secondary}
+                  data-tip="Dry run: reports what the current policy would allow or block on open proposals. Changes nothing."
+                  data-tip-side="bottom"
+                >
+                  Run policy simulation
                 </button>
               </form>
               {!data.governance.emergency_freeze && (
                 <form action={toggleEmergencyFreezeAction}>
                   <input type="hidden" name="site_host" value={target.host} />
                   <input type="hidden" name="current_freeze" value="false" />
-                  <button type="submit" className="rounded border border-stop-rule bg-stop-soft px-3 py-1.5 text-xs font-medium text-stop hover:bg-stop-soft">
-                    Emergency Freeze
+                  <button
+                    type="submit"
+                    className={`${button.secondary} border-stop-rule bg-stop-soft text-stop`}
+                    data-tip="Kill switch. Blocks every automated deployment for this site until an owner lifts it after an incident review."
+                    data-tip-side="bottom"
+                  >
+                    Emergency freeze
                   </button>
                 </form>
               )}
@@ -424,26 +440,41 @@ export default async function PilotPage({searchParams}: PageProps) {
               <form action={setSiteModeAction} className="mt-3 space-y-2">
                 <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="site_id" value={data.site.id} />
-                <select
-                  name="mode"
-                  defaultValue={data.governance.mode}
-                  aria-label="Operation mode"
-                  className="w-full rounded border border-rule-strong bg-surface px-2 py-1 text-xs text-ink"
+                {/* The balloon lives on a wrapper: ::before and ::after do not
+                    apply to replaced elements, so a tooltip set directly on a
+                    <select> or <input> silently draws nothing. */}
+                <span
+                  className="block"
+                  data-tip="How far this site may go on its own. Observe measures only; recommend drafts proposals for approval; autopilot deploys unattended."
                 >
-                  <option value="observe">observe — measure only</option>
-                  <option value="recommend">recommend — deploy with approval</option>
-                  <option value="autopilot">autopilot — deploy unattended</option>
-                </select>
-                <input
-                  name="reason"
-                  required
-                  minLength={3}
-                  placeholder="Why this change"
-                  className="w-full rounded border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-soft"
-                />
+                  <select
+                    name="mode"
+                    defaultValue={data.governance.mode}
+                    aria-label="Operation mode"
+                    className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink"
+                  >
+                    <option value="observe">observe — measure only</option>
+                    <option value="recommend">recommend — deploy with approval</option>
+                    <option value="autopilot">autopilot — deploy unattended</option>
+                  </select>
+                </span>
+                <span
+                  className="block"
+                  data-tip="Why you are changing the mode. Required by the API and recorded in the audit trail against your name."
+                >
+                  <input
+                    name="reason"
+                    required
+                    minLength={3}
+                    placeholder="Why this change"
+                    aria-label="Reason for the mode change"
+                    className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
+                  />
+                </span>
                 <button
                   type="submit"
-                  className="w-full rounded border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
+                  className="w-full rounded-[4px] border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:bg-sunk"
+                  data-tip="Apply the selected mode. Recorded with your reason; nothing publishes without approval unless you chose autopilot."
                 >
                   Set mode
                 </button>
@@ -478,20 +509,25 @@ export default async function PilotPage({searchParams}: PageProps) {
               <form action={setApproverCountAction} className="mt-3 flex gap-2">
                 <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="site_id" value={data.site.id} />
-                <input
-                  name="required_approver_count"
-                  type="number"
-                  min={1}
-                  max={5}
-                  defaultValue={data.governance.required_approver_count ?? ""}
-                  placeholder="default"
-                  aria-label="Approvers required"
-                  className="w-full rounded border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-soft"
-                />
+                <span
+                  className="block w-full"
+                  data-tip="How many different people must approve a change before it can deploy. An author can never approve their own."
+                >
+                  <input
+                    name="required_approver_count"
+                    type="number"
+                    min={1}
+                    max={5}
+                    defaultValue={data.governance.required_approver_count ?? ""}
+                    placeholder="default"
+                    aria-label="Approvers required"
+                    className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
+                  />
+                </span>
                 <button
                   type="submit"
                   className="rounded border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
-                >
+                 data-tip="Save this approver count. It applies to proposals drafted from now on, not to ones already waiting.">
                   Set
                 </button>
               </form>
@@ -518,7 +554,7 @@ export default async function PilotPage({searchParams}: PageProps) {
           <Link
             href="/settings/sites"
             className="mt-4 inline-block rounded bg-surface px-4 py-2 text-xs font-semibold text-black hover:bg-sunk"
-          >
+          data-tip="Add a domain you control and prove it with a DNS record.">
             Add a site
           </Link>
         </section>
@@ -536,13 +572,13 @@ export default async function PilotPage({searchParams}: PageProps) {
           <div className="mt-4 flex gap-3">
             <form action={verifyPortfolioDns}>
               <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded bg-good px-3 py-1.5 text-xs font-semibold text-good-ink hover:bg-good">
+              <button type="submit" className="rounded bg-good px-3 py-1.5 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Check DNS now for the TXT record shown above. Safe to retry while it propagates.">
                 Verify DNS Record
               </button>
             </form>
             <form action={refreshDnsChallenge}>
               <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded border border-rule-strong px-3 py-1.5 text-xs text-ink-soft hover:bg-sunk">
+              <button type="submit" className="rounded border border-rule-strong px-3 py-1.5 text-xs text-ink-soft hover:bg-sunk" data-tip="Issue a fresh verification token. The previous record stops working immediately.">
                 Regenerate Token
               </button>
             </form>
@@ -591,7 +627,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               </div>
               <form action={startFirstCrawl} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Start a bounded crawl of this site now. Read-only: it gathers evidence and changes nothing on the site.">
                   Trigger New Crawl
                 </button>
               </form>
@@ -626,7 +662,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               <form action={startPerformanceRun} className="mt-3">
                 <input type="hidden" name="site_host" value={target.host} />
                 <input type="hidden" name="idempotency_key" value={performanceIdempotencyKey} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
+                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals.">
                   Run Mobile Lab Sample
                 </button>
               </form>
@@ -686,7 +722,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         <button
                           type="submit"
                           className="rounded border border-rule-strong px-3 py-1.5 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
-                        >
+                         data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing.">
                           Draft proposal
                         </button>
                       </form>
@@ -786,7 +822,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                             <form action={approveProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded bg-good px-2.5 py-1 text-xs font-semibold text-good-ink hover:bg-good">
+                              <button type="submit" className="rounded bg-good px-2.5 py-1 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Record your approval. You cannot approve a change you authored yourself.">
                                 Approve
                               </button>
                             </form>
@@ -799,7 +835,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                             <form action={withdrawProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />
                               <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded border border-rule-strong px-2.5 py-1 text-xs font-medium text-ink-soft hover:border-rule-strong hover:text-ink">
+                              <button type="submit" className="rounded border border-rule-strong px-2.5 py-1 text-xs font-medium text-ink-soft hover:border-rule-strong hover:text-ink" data-tip="Take this proposal off the table. It stops counting toward approvals and cannot deploy.">
                                 Withdraw
                               </button>
                             </form>
@@ -830,7 +866,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                               than a second pull request.
                             */}
                             <input type="hidden" name="idempotency_key" value={`deploy-${prop.id}`} />
-                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sky-500">
+                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sky-500" data-tip="Open the pull request that carries this change on your repository. A human still merges it.">
                               Deploy
                             </button>
                           </form>
@@ -847,7 +883,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                           <form action={rollbackProposalAction}>
                             <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="proposal_id" value={prop.id} />
-                            <button type="submit" className="rounded border border-stop-rule px-2.5 py-1 text-xs font-medium text-stop hover:border-stop-rule hover:text-stop">
+                            <button type="submit" className="rounded border border-stop-rule px-2.5 py-1 text-xs font-medium text-stop hover:border-stop-rule hover:text-stop" data-tip="Open a revert pull request. The change is only undone once someone merges it.">
                               Request revert
                             </button>
                           </form>
