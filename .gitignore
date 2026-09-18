@@ -24,9 +24,9 @@ artifacts/
 data/
 !.gitkeep
 
-# Built documentation. `docs/tester-onboarding-runbook.pdf` is rendered from
-# the published runbook artifact and is ~1MB of embedded screenshots -- a
-# binary that changes wholesale every time a sentence changes, which is the
-# worst possible thing to keep in git history. Regenerate it from the artifact
-# rather than committing it; DEPLOYMENT.md §6g names the source.
+# Built documentation. `docs/tester-onboarding-runbook.pdf` is printed from
+# `docs/runbook/tester-onboarding-runbook.html` and changes wholesale every time
+# a sentence does, so the PDF stays out of git and the source goes in. The
+# source used to live only in a published artifact; it was lost, and the
+# 2026-09-18 edition had to be rebuilt from the PDF. Rebuild command: §6i.
 docs/*.pdf

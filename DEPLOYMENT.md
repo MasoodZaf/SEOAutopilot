@@ -1023,7 +1023,7 @@ sign-in project — that is what undoes all of this.
 has the address can create a workspace; the only limit is
 `MAX_OWNED_TENANTS = 5` per person.
 
-## 6i. Connections a tester can manage without us (built 2026-09-18, not yet deployed)
+## 6i. Connections a tester can manage without us (live 2026-09-18)
 
 A working SEO tester asked for four things: one Google sign-in for Search
 Console and GA4, one step to connect a repository, a page that says which
@@ -1084,3 +1084,42 @@ Then `$DC build api worker web && $DC up -d --force-recreate api worker web`.
   under Settings → Keys. Until then the page offers the token form.
 - **Reconnect Google once** after deploying: one click on Connect Google repairs
   all four dead connections.
+
+### Deployed and proven, 2026-09-18
+
+Deployed by the operator from `deploy-connections.sh`; `16d2379` (a `/settings`
+index that redirects to Connections) followed. Checked afterwards: migrations
+0040 and 0041 in the ledger, perimeter 11/11, the new routes answering 401
+unauthenticated, no errors in any log.
+
+- **Google connector project published** (In production, unverified). Users see
+  Google's "unverified app" screen and click Advanced → Go to SEO Autopilot;
+  the 100-user cap applies until Google reviews the sensitive scopes.
+  `GOOGLE_GRANT_LIFETIME_DAYS` was removed from `.env.local` once published.
+- **One Connect Google click** linked all four dead connectors back to the
+  properties they read before (`linked=4&unmatched=2`; the two unmatched are GA4
+  for TheCalcHive and WordKit, which have no property). Each was then renewed
+  against Google on purpose and came back `ok`.
+- **GitHub App `seo-autopilot-oryxen`** (ID 4992375, public, Contents and Pull
+  requests read/write, setup URL = the callback, redirect on update) is saved
+  under Keys in `codearc-pilot` only. TheCalcHive moved from its PAT to the App
+  (installation 162808289); the PAT was destroyed. WordKit still uses a PAT.
+- **Not shared with other workspaces yet.** There are no `GITHUB_APP_*` env vars
+  on the host, so a tester's workspace falls back to nothing and is offered the
+  token form. Setting `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
+  `GITHUB_APP_PRIVATE_KEY` makes the App everyone's fallback.
+
+### The tester runbook
+
+Source: `docs/runbook/tester-onboarding-runbook.html` with its screenshots
+beside it. The PDF is gitignored and printed from it:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless --disable-gpu --no-pdf-header-footer \
+  --virtual-time-budget=30000 \
+  --print-to-pdf=docs/tester-onboarding-runbook.pdf \
+  "file://$PWD/docs/runbook/tester-onboarding-runbook.html"
+```
+
+This replaces the §6g recipe, whose source artifact no longer exists.

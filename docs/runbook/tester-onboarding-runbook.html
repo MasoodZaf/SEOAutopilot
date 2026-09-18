@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>Tester Onboarding Runbook</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<!--
+  Source of docs/tester-onboarding-runbook.pdf. The previous edition existed
+  only as a published artifact whose HTML was lost, and had to be rebuilt from
+  its PDF on 2026-09-18; this file is kept in git so that never happens again.
+
+  Rebuild the PDF (from the repository root):
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --no-pdf-header-footer \
+      --virtual-time-budget=30000 \
+      --print-to-pdf=docs/tester-onboarding-runbook.pdf \
+      "file://$PWD/docs/runbook/tester-onboarding-runbook.html"
+
+  --virtual-time-budget is required, or Chrome prints before the fonts land.
+-->
+<style>
+:root {
+  --paper: #ffffff;
+  --ink: #16191d;
+  --ink-soft: #3d434b;
+  --ink-faint: #6b727b;
+  --rule: #e3e6ea;
+  --sunk: #eef1f3;
+  --accent: #0f6b74;
+  --good: #1f6b43;   --good-soft: #e8f3ec; --good-rule: #bfdcc9;
+  --warn: #8a5a00;   --warn-soft: #fbf3e2; --warn-rule: #ecd6a6;
+  --stop: #9b2c2c;   --stop-soft: #fbe9e9; --stop-rule: #efc4c4;
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 400 14px/1.65 "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+main { max-width: 760px; margin: 0 auto; padding: 56px 16px 72px; }
+h1 { font-size: 30px; line-height: 1.15; letter-spacing: -0.02em; margin: 12px 0 16px; font-weight: 700; }
+h2 { font-size: 20px; letter-spacing: -0.01em; margin: 0; font-weight: 700; }
+h3 { font-size: 15px; margin: 20px 0 6px; font-weight: 600; }
+p, li { color: var(--ink-soft); }
+p { margin: 0 0 12px; }
+ol, ul { margin: 0 0 12px; padding-left: 22px; }
+li { margin: 3px 0; }
+strong { color: var(--ink); font-weight: 600; }
+code { font: 500 12.5px "IBM Plex Mono", monospace; background: var(--sunk); padding: 1px 5px; border-radius: 3px; color: var(--ink); word-break: break-word; }
+a { color: var(--accent); }
+.kicker { font: 600 11px/1 "IBM Plex Sans"; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.lede { font-size: 15.5px; max-width: 34em; }
+.meta { font-size: 12.5px; color: var(--ink-faint); margin-top: 18px; }
+.meta b { color: var(--ink-soft); font-weight: 600; margin-right: 4px; }
+.meta span { margin-right: 22px; display: inline-block; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 28px 0; }
+
+.headline {
+  border: 2px solid var(--stop); background: var(--stop-soft); border-radius: 6px;
+  padding: 16px 18px; margin: 0 0 32px; color: var(--ink); font-size: 15.5px; line-height: 1.55;
+}
+.headline strong { font-weight: 700; }
+
+.step { margin-top: 40px; }
+.step-head, h3, .step > h2, .step > h2 + p { break-after: avoid; }
+.step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.num { font: 500 12px "IBM Plex Mono"; color: var(--accent); }
+.who { font: 600 10px/1 "IBM Plex Sans"; letter-spacing: 0.1em; text-transform: uppercase; padding: 5px 8px; border-radius: 999px; border: 1px solid; }
+.who.tester { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-rule); }
+.who.operator { color: var(--accent); background: #e6f2f3; border-color: #b9dadd; }
+.who.new { color: var(--good); background: var(--good-soft); border-color: var(--good-rule); }
+
+.box { border: 1px solid var(--rule); background: #f6f7f8; border-radius: 6px; padding: 14px 16px; margin: 14px 0; break-inside: avoid; }
+.box p:last-child, .box ul:last-child, .box ol:last-child { margin-bottom: 0; }
+.box .label { font: 600 10.5px/1 "IBM Plex Sans"; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+.box.stop { background: var(--stop-soft); border-color: var(--stop-rule); } .box.stop .label { color: var(--stop); }
+.box.warn { background: var(--warn-soft); border-color: var(--warn-rule); } .box.warn .label { color: var(--warn); }
+.box.good { background: var(--good-soft); border-color: var(--good-rule); } .box.good .label { color: var(--good); }
+
+figure { margin: 16px 0 20px; break-inside: avoid; }
+figure img { width: 100%; height: auto; display: block; border: 1px solid var(--rule); border-radius: 6px; }
+figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 8px; line-height: 1.5; }
+
+.record { display: grid; grid-template-columns: 5.5em 1fr; gap: 6px 14px; font-size: 13px; }
+.record dt { color: var(--ink-faint); }
+.record dd { margin: 0; }
+
+.split { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--rule); border-radius: 6px; margin: 16px 0; break-inside: avoid; }
+.split > div { padding: 14px 16px; }
+.split > div + div { border-left: 1px solid var(--rule); }
+.split .label { font: 600 10.5px/1 "IBM Plex Sans"; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 10px; }
+.split ul { font-size: 13px; margin: 0; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 14px 0; break-inside: avoid; }
+th { text-align: left; font: 600 10.5px/1 "IBM Plex Sans"; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+td { padding: 10px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--ink-soft); }
+td:first-child { color: var(--ink); font-weight: 500; width: 42%; }
+
+.footnote { font-size: 12.5px; color: var(--ink-faint); margin-top: 32px; }
+
+@media (max-width: 560px) {
+  h1 { font-size: 24px; }
+  .split { grid-template-columns: 1fr; }
+  .split > div + div { border-left: 0; border-top: 1px solid var(--rule); }
+}
+@media print {
+  @page { size: A4; margin: 16mm 16mm 18mm; }
+  main { padding: 0; max-width: none; }
+  .step { break-before: auto; }
+}
+</style>
+</head>
+<body>
+<main>
+
+<p class="headline"><strong>Google shows an "unverified app" warning when he connects. He clicks Advanced → Go to SEO Autopilot. The warning stays until Google reviews the app, which also caps the app at 100 users.</strong></p>
+
+<p class="kicker">SEO Autopilot · seo.oryxenlabs.com</p>
+<h1>Giving an external tester<br>their own workspace</h1>
+<p class="lede">Everything needed to take somebody from a Google account they already have to a first reviewed proposal on a domain they own, in a workspace that can see nothing of yours. Steps are marked for whoever performs them.</p>
+<p class="meta">
+  <span><b>Updated</b>18 September 2026 (first written 9 September)</span>
+  <span><b>Audience</b>one operator, one external tester</span>
+  <span><b>Time</b>about 30 minutes, plus DNS propagation</span>
+</p>
+
+<div class="box good">
+  <div class="label">What changed on 18 September</div>
+  <ul>
+    <li><strong>One Google sign-in connects Search Console and Analytics for every site</strong>, and finds each site's property itself. There is nothing to type.</li>
+    <li><strong>A repository connects in one step</strong> through a GitHub App, with no token to copy.</li>
+    <li><strong>Settings → Connectors is now a connection manager.</strong> It shows what is connected, when data last arrived and when it was last confirmed working, with Reconnect and Disconnect on each. A red banner appears on every page while anything is broken.</li>
+    <li><strong>Connections renew themselves daily.</strong> The Google project is published, so they no longer expire after 7 days.</li>
+    <li><strong>Steps 03 and 04 are now optional.</strong> A tester can use the shared SEO Autopilot Google app instead of registering their own.</li>
+  </ul>
+</div>
+
+<hr>
+
+<section class="step">
+  <div class="step-head"><span class="num">ONCE</span><h2>Operator setup</h2><span class="who operator">Operator</span></div>
+  <p>This is not the first step of the walkthrough; the tester's sequence starts at 01. It is setup that happens once, ever, and nearly all of it is done.</p>
+
+  <div class="box">
+    <div class="label">Already done, nothing here needs repeating</div>
+    <p><strong>On the host:</strong> production mode (<code>APP_ENV=production</code>, the old shared pilot token disabled), the HTTP password gate is off, and <code>/privacy</code> and <code>/terms</code> are live.</p>
+    <p><strong>Sign-in</strong> (Google project "SEO Autopilot Sign-in"): published on 10 September and <em>In production</em>. Any Google account can sign in, with no warning screen.</p>
+    <p><strong>Search Console and Analytics</strong> (Google project <code>417045140496</code>, "SEO Autopilot"): published on 18 September and <em>In production</em>, but <strong>not verified</strong> by Google. That is the source of the warning at the top of this document. A tester who does not store their own Google client (step 03) connects through this one.</p>
+    <p><strong>GitHub App</strong> <code>seo-autopilot-oryxen</code> (ID 4992375): registered on 18 September, public, with Contents and Pull requests read and write, and its setup URL pointing at this deployment.</p>
+  </div>
+
+  <p>So for each new tester there is exactly one action:</p>
+  <ol><li>Send them this document and the address <code>https://seo.oryxenlabs.com</code>. There is nothing to install and no invitation to accept; they create their own workspace on first sign-in.</li></ol>
+
+  <div class="box warn">
+    <div class="label">Still open: sharing the GitHub App with testers</div>
+    <p>The App's key is stored under Keys in the <em>operator's</em> workspace only. The server has no shared GitHub App, so today a tester's workspace offers <strong>Connect GitHub</strong> only if they register their own App (step 04). Otherwise they connect with an access token.</p>
+    <p>To let every tester use <code>seo-autopilot-oryxen</code> without registering anything, set <code>GITHUB_APP_ID=4992375</code>, <code>GITHUB_APP_SLUG=seo-autopilot-oryxen</code> and <code>GITHUB_APP_PRIVATE_KEY</code> (the <code>.pem</code>) in <code>/opt/seo-autopilot/.env.local</code>, then recreate the api container. The operator has to do this, because it means handling the private key.</p>
+  </div>
+
+  <div class="box">
+    <div class="label">Why there are two Google projects</div>
+    <p>Google decides whether an app needs a verification review from the scopes on the <em>project's</em> consent screen, not from what an individual client asks for. Sign-in asks only for <code>openid email profile</code>, so it publishes with no review and no warning. The data scopes (<code>webmasters.readonly</code>, <code>analytics.readonly</code>) are sensitive and live in the second project. That project is the one showing the unverified-app warning until Google reviews it.</p>
+    <p>Never add a sensitive scope to the sign-in project. Never strip the data scopes from the connector project either: every existing connection's refresh token belongs to its client.</p>
+  </div>
+
+  <div class="box stop">
+    <div class="label">Do not do this</div>
+    <p>Do not invite a tester into your workspace from <strong>Settings → Members</strong>. An invitation puts somebody <em>inside</em> an existing workspace, where they would see codearc.net, thecalchive.com and wordkitapp.com, every connector attached to them, and every open proposal, and could act on all of it. Members is for colleagues who should share your data. A tester should not.</p>
+  </div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">01</span><h2>Sign in</h2><span class="who tester">Tester</span></div>
+  <div class="box">
+    <div class="label">You will need</div>
+    <p>A Google account. A domain you control, with access to edit its DNS. Optionally a GitHub repository holding that site's pages, if you want to test the part that opens pull requests.</p>
+  </div>
+  <ol>
+    <li>Open <code>https://seo.oryxenlabs.com</code>.</li>
+    <li>Choose <strong>Continue with Google</strong> and complete the sign-in.</li>
+  </ol>
+  <p>Your account is created on that first sign-in. It gives you an identity and, deliberately, access to nothing: there is no data anywhere yet that is yours.</p>
+  <div class="box warn">
+    <div class="label">If sign-in is refused</div>
+    <p>Signing in never shows an "unverified app" warning; that appears only later, in step 07. If Google refuses the sign-in itself, tell the operator. Nothing is wrong with your account.</p>
+  </div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">02</span><h2>Create a workspace</h2><span class="who tester">Tester</span></div>
+  <p>Signed in with no workspace, you land here. Name it after your company or the project you are testing with. The name is only a label, and the address it derives is generated for you.</p>
+  <figure>
+    <img src="02-workspace.jpg" alt="The first screen of a new account, asking for a workspace name.">
+    <figcaption>The first screen of a new account. You become the workspace's owner; nobody else can see inside it until you invite them.</figcaption>
+  </figure>
+  <p>You are taken to Settings → Keys afterwards. Since 18 September, steps 03 and 04 there are optional: <strong>you can go straight to step 05</strong>.</p>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">03</span><h2>Your own Google OAuth client</h2><span class="who tester">Tester · optional</span></div>
+  <p><strong>Skip this unless you specifically want Search Console and Analytics to run through your own Google Cloud project.</strong> Without it, step 07 connects through the shared SEO Autopilot app. That works for everyone and only costs the warning screen described at the top.</p>
+  <p>Reasons to use your own anyway: the consent screen then names <em>your</em> application, the API quota is yours, and revoking it affects nobody else.</p>
+  <h3>In the Google Cloud console</h3>
+  <ol>
+    <li>Create a project, or pick one you already have.</li>
+    <li>Under <strong>APIs &amp; Services → Library</strong>, enable the <strong>Google Search Console API</strong>, the <strong>Google Analytics Admin API</strong> and the <strong>Google Analytics Data API</strong>. A missing one is not reported until the connection fails much later.</li>
+    <li>Under <strong>Google Auth Platform → Audience</strong>, choose External and fill in the required fields. Then <strong>publish the app (In production)</strong>. An app left in Testing has its connections expire every 7 days, so step 07 would need repeating weekly.</li>
+    <li>Under <strong>Clients</strong>, create an OAuth client ID of type <strong>Web application</strong>.</li>
+    <li>Add one <strong>Authorised redirect URI</strong>. Copy it from the Keys page, which prints it from the deployment's own configuration so it cannot be mistyped or go stale.</li>
+  </ol>
+  <h3>Back in SEO Autopilot</h3>
+  <p>Paste the client ID and client secret into <strong>Settings → Keys</strong> and save.</p>
+  <figure>
+    <img src="03-keys-google.jpg" alt="The Keys page, showing the Google OAuth client fields and the redirect URI to register.">
+    <figcaption>Before you save anything the badge reads <strong>Shared</strong>, meaning the shared SEO Autopilot client will be used. The redirect URI to register with Google is printed above the fields; copy it exactly.</figcaption>
+  </figure>
+  <div class="box warn">
+    <div class="label">The most common failure</div>
+    <p><code>redirect_uri_mismatch</code> at Google means the URI registered on the client is not character-for-character the one on the Keys page. A trailing slash counts. <code>invalid_client</code> means the ID and secret are not a pair; usually one was copied from a different client in the same project.</p>
+  </div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">04</span><h2>Your own GitHub App</h2><span class="who tester">Tester · optional</span></div>
+  <p>Only needed to test deployment, the step where an approved change becomes a pull request. Everything up to approval works without it. You have three options:</p>
+  <ul>
+    <li><strong>If the operator has shared their App</strong> (see Operator setup): skip this step. <strong>Connect GitHub</strong> will appear in step 07 on its own.</li>
+    <li><strong>Register your own App</strong>, as below, for a one-step connection with no token stored.</li>
+    <li><strong>Use an access token</strong> in step 07 instead. It needs contents and pull-request access to the repository.</li>
+  </ul>
+  <h3>Registering your own</h3>
+  <ol>
+    <li>On GitHub: <strong>Settings → Developer settings → GitHub Apps → New GitHub App</strong>.</li>
+    <li>Repository permissions: <strong>Contents: Read and write</strong> and <strong>Pull requests: Read and write</strong>. Nothing else is used. Untick <strong>Webhook → Active</strong>.</li>
+    <li>Under <strong>Post installation</strong>, set the <strong>Setup URL</strong> to the GitHub callback printed on the Keys page, and tick <strong>Redirect on update</strong>.</li>
+    <li>Create it, then <strong>Generate a private key</strong>. GitHub downloads a <code>.pem</code> file once; keep it.</li>
+    <li>On the Keys page, paste the App ID, the slug (the last part of the App's public URL) and the whole <code>.pem</code>, BEGIN and END lines included.</li>
+  </ol>
+  <figure>
+    <img src="04-keys-github.jpg" alt="The Keys page, showing the GitHub App fields.">
+    <figcaption>The private key is checked as you save it, so a truncated or wrong-format paste is refused here, before you have granted any repository access.</figcaption>
+  </figure>
+  <p>No repository token is ever stored. When a deployment runs, a short-lived installation token is minted from the App and discarded. Uninstalling the App from your repository revokes everything, immediately, from your side.</p>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">05</span><h2>Add a site</h2><span class="who tester">Tester</span></div>
+  <p>Go to <strong>Settings → Sites</strong>. Give the site a name and its address: scheme and host only, no path. Adding it also issues the DNS challenge in the same action, because a site nobody has verified cannot be crawled or connected to anything.</p>
+  <figure>
+    <img src="05-sites.jpg" alt="The Sites page listing sites with their verification state.">
+    <figcaption>Every site in a workspace is listed with its verification state. This one is the operator's workspace; yours starts empty.</figcaption>
+  </figure>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">06</span><h2>Prove you control the domain</h2><span class="who tester">Tester</span></div>
+  <p>A single TXT record. This works identically at every registrar: Cloudflare, Route 53, GoDaddy, Namecheap, or a zone file you edit by hand.</p>
+  <figure>
+    <img src="06-dns-record.jpg" alt="The verification panel showing the TXT record to publish.">
+    <figcaption>The record to publish. The value is single-use and stays claimable for 24 hours, which is enough for registrars that take hours to serve a change.</figcaption>
+  </figure>
+  <dl class="record">
+    <dt>Type</dt><dd><code>TXT</code></dd>
+    <dt>Name</dt><dd><code>_seo-autopilot.your-domain</code></dd>
+    <dt>Value</dt><dd><code>seo-autopilot-verification=</code>the token shown on the page</dd>
+  </dl>
+  <p style="margin-top:12px">Some registrars append your domain to whatever you type in the name field. If yours does, enter just <code>_seo-autopilot</code>. Then choose <strong>Check the record</strong>.</p>
+  <figure>
+    <img src="06-dns-pending.jpg" alt="The verification panel reporting that the record is not visible yet.">
+    <figcaption>Checking too early is expected, not a failure. The challenge is kept, so leave the record in place and press the button again later.</figcaption>
+  </figure>
+  <div class="box">
+    <div class="label">Optional shortcut</div>
+    <p>If, and only if, this domain's DNS is on Cloudflare, the panel has a collapsed section that publishes the record for you from a zone ID and a scoped API token (Zone / DNS / Edit on that one zone). The manual record above is the supported path and does exactly the same thing.</p>
+  </div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">07</span><h2>Connect your data sources</h2><span class="who tester">Tester</span><span class="who new">Changed 18 Sept</span></div>
+  <p>With the site verified, go to <strong>Settings → Connectors</strong> (plain <code>/settings</code> takes you there too).</p>
+
+  <h3>Search Console and Analytics: one click</h3>
+  <ol>
+    <li>Press <strong>Connect Google</strong> at the top of the page.</li>
+    <li>Choose the Google account that owns your Search Console and Analytics properties.</li>
+    <li><strong>Google shows "Google hasn't verified this app".</strong> Click <strong>Advanced</strong>, then <strong>Go to SEO Autopilot (unsafe)</strong>. It is the operator's own app, and the warning stays until Google reviews it. If you stored your own client in step 03, you see your own app's name instead.</li>
+    <li>Leave <strong>both</strong> permissions ticked (Search Console and Analytics) and continue.</li>
+  </ol>
+  <p>You come back to the page with a line such as <em>"Google connected: 2 connections linked."</em> Every verified site in your workspace is matched to the property that covers its address. A domain property (<code>sc-domain:example.com</code>) is preferred over a URL-prefix one, and for Analytics the property must have a data stream on that host. A property that measures a different site is never attached.</p>
+  <ul>
+    <li><strong>"… have no property this Google account can see"</strong> means that service shows <em>Not connected</em> for that site. Usually the property lives under another Google account; run Connect Google again with that account. Sites already connected are left exactly as they are.</li>
+    <li><strong>"Only one of the two permissions was granted"</strong> means a box was unticked. Run it again with both ticked.</li>
+    <li>To bind a specific property instead of the automatic match, use <strong>Choose a property yourself</strong> under that service.</li>
+  </ul>
+  <figure>
+    <img src="07-connections.jpg" alt="The connections page, with Connect Google at the top and a site's Search Console, Analytics and Repository rows below.">
+    <figcaption>The connection manager. Each service shows its status, the property or repository, when it was connected, when data last arrived and when it was last confirmed working, with Disconnect beneath. Sites without a matching property say so and point back to Connect Google.</figcaption>
+  </figure>
+
+  <h3>Repository</h3>
+  <ul>
+    <li><strong>With a GitHub App available</strong> (yours from step 04, or the operator's if shared): enter the repository as <code>owner/name</code>, the base branch and the path template, then press <strong>Connect GitHub</strong>. On GitHub's page choose <strong>Only select repositories</strong>, pick that repository and press <strong>Install</strong>. You come straight back, connected.</li>
+    <li><strong>Without one:</strong> the same fields plus an access token, then <strong>Connect with a token</strong>. You can switch to an App later with <strong>Switch to the GitHub App</strong>. Deploys keep using the token until the install finishes, then the token is destroyed.</li>
+  </ul>
+  <p>The <strong>path template</strong> maps a URL path to a file and cannot be guessed: if the page at <code>/pricing</code> lives at <code>site/pricing.html</code>, the template is <code>site/{path}.html</code>. Getting it wrong produces a connection that passes its check and then finds no page.</p>
+
+  <h3>Keeping connections alive</h3>
+  <ul>
+    <li>Google connections are renewed <strong>automatically once a day</strong>; there is nothing to do.</li>
+    <li>If one stops working (you revoked access at Google, or changed your password), it turns <strong>Needs reconnecting</strong> the same day and a <strong>red banner appears on every page</strong>. Press <strong>Reconnect</strong>: one Google sign-in repairs every site at once, each to the property it read before.</li>
+    <li><strong>Disconnect</strong> destroys the stored credential for that one site and service only. It does not touch Google, because revoking there would disconnect every other site connected through that Google account. To remove access at Google too, use <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+  </ul>
+
+  <div class="box warn">
+    <div class="label">Set expectations about measurement</div>
+    <p>Search Console suppresses rows below an anonymisation threshold, and a low-traffic site sits below it most days. Analytics collects nothing retroactively; its clock starts the day the tag goes live. Neither is a fault in the tool, and on a small site neither will show whether a change worked within a test window.</p>
+  </div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">08</span><h2>Crawl, and read the findings</h2><span class="who tester">Tester</span></div>
+  <p>Open the site from <strong>Sites → Open</strong>, or from the site cards at the top of the dashboard. Start a bounded crawl. When it finishes, the analysis turns page observations into findings, and findings into scored opportunities.</p>
+  <p>Read a few opportunities against the actual page before doing anything with them. The most useful thing a tester can report is an opportunity that is confidently wrong: a finding that does not match what the page really says.</p>
+  <p>A new site starts in <strong>Observe</strong> mode. Nothing is proposed or changed in Observe; raise it to <strong>Recommend</strong> from the dashboard when you want drafts.</p>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="num">09</span><h2>Approve a change, and undo it</h2><span class="who tester">Tester</span></div>
+  <ol>
+    <li>Turn an opportunity into a proposal from the workspace.</li>
+    <li>Review the before and after. The proposal names the exact file and the exact edit.</li>
+    <li>Approve it. Higher-risk changes need more than one approver, and the author of a proposal cannot approve it.</li>
+    <li>Deploy it. This opens a pull request on your repository. It does not merge it.</li>
+    <li>A human merges the pull request. Only then is the change live.</li>
+  </ol>
+  <p>Rolling back opens a revert pull request, again for a person to merge. A change is undone when somebody merges the revert, not when the button is pressed, and the receipt reflects that honestly.</p>
+  <div class="box">
+    <div class="label">Worth trying deliberately</div>
+    <p>Close a revert pull request without merging it and watch what the receipt says. It should end up recording that the change is still live, because it is.</p>
+  </div>
+</section>
+
+<section class="step">
+  <h2>What is isolated, and what is not</h2>
+  <p style="margin-top:8px">Stated plainly, because a tester deciding which Google account to connect deserves an accurate answer rather than a reassuring one.</p>
+  <div class="split">
+    <div>
+      <div class="label" style="color:var(--good)">Separate</div>
+      <ul>
+        <li>Sites, crawls, findings, proposals, deployments and audit trail</li>
+        <li>Your Search Console and Analytics grants, even when made through the shared SEO Autopilot app</li>
+        <li>Your own Google OAuth client and GitHub App, if you stored them</li>
+        <li>Members, and who can see the workspace</li>
+        <li>Database rows: enforced by row-level security, not by application filtering, and tested against two live workspaces</li>
+      </ul>
+    </div>
+    <div>
+      <div class="label" style="color:var(--warn)">Shared</div>
+      <ul>
+        <li>The server, its database and its logs</li>
+        <li>The encryption key that seals stored credentials</li>
+        <li>The Google client used for signing in</li>
+        <li>The SEO Autopilot Google app, if you did not store your own client: its quota and its standing with Google</li>
+        <li>Whoever operates the deployment</li>
+      </ul>
+    </div>
+  </div>
+  <p>Your credentials are encrypted before they are written down, which protects them from anyone reading the database: a dump, a backup, a replica. It does not protect them from the operator, because the server has to be able to use them. If that matters for the account you are connecting, use one scoped to only the sites and repositories you are testing with, and remove it afterwards.</p>
+</section>
+
+<section class="step">
+  <h2>What is worth reporting</h2>
+  <p style="margin-top:8px">Anything at all is welcome, but these are the things nobody else can find.</p>
+  <table>
+    <thead><tr><th>Report</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td>A finding that is confidently wrong about your page</td><td>Precision has only ever been measured against three sites the operator owns.</td></tr>
+      <tr><td>Connect Google linking the wrong property, or none, for a site you own</td><td>The automatic match has only been run against the operator's three sites.</td></tr>
+      <tr><td>A connection turning <em>Needs reconnecting</em> when you changed nothing</td><td>It should only happen when access is revoked. Say which service, and when.</td></tr>
+      <tr><td>A step where you had to ask what to do next</td><td>This path has been walked by people who already knew the answers.</td></tr>
+      <tr><td>A button that appears to do nothing</td><td>This has been a real defect twice. Say what you clicked and what you expected.</td></tr>
+      <tr><td>An error message you could not act on</td><td>Quote it exactly, including any code, and say what you were doing.</td></tr>
+      <tr><td>Anything you saw that was not yours</td><td>Report immediately. Nothing from another workspace should ever be visible.</td></tr>
+    </tbody>
+  </table>
+  <p>To stop, <strong>Disconnect</strong> each connection under Settings → Connectors, remove any credentials from the Keys page, remove SEO Autopilot at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>, and uninstall the GitHub App from your repository. That revokes everything from your side without anyone else acting.</p>
+</section>
+
+<p class="footnote">Updated against the build of 18 September 2026. Step 07's one-click Google connection and GitHub App install were run against production that day: four Search Console and Analytics connections were linked in one sign-in, and a repository was moved from a token to the App. Steps 01–06 and 08–09 are unchanged from the end-to-end walk of 9 September, and their screenshots come from that stack. If a screen differs from a picture here, trust the screen and say so. The redirect URIs in particular are printed by the application itself rather than copied into this document.</p>
+
+</main>
+</body>
+</html>
