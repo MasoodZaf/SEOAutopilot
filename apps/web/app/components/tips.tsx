@@ -51,8 +51,10 @@ export function TipDescriptions() {
       <span id="tip-bf1ec7e05e">{"Revoke your stored credential. Existing connectors keep working until they next renew a token, then fall back to this deployment's shared client."}</span>
       <span id="tip-728aeb6e5d">{"Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals."}</span>
       <span id="tip-c08dbcd0f5">{"Save this approver count. It applies to proposals drafted from now on, not to ones already waiting."}</span>
+      <span id="tip-dd1bb7f2b5">{"Sign in with Google once. Search Console and Analytics are connected for every verified site whose property that account can see."}</span>
       <span id="tip-da1dace285">{"Sign in with your Google account. We ask only for your name and email address."}</span>
       <span id="tip-e3ef53a7eb">{"Start a bounded crawl of this site now. Read-only: it gathers evidence and changes nothing on the site."}</span>
+      <span id="tip-3f34c967d8">{"Store an access token for this repository. Prefer the GitHub App when you can install it."}</span>
       <span id="tip-5be8fcba56">{"Take this proposal off the table. It stops counting toward approvals and cannot deploy."}</span>
       <span id="tip-c2cee2d7bc">{"The last part of your GitHub App's public URL."}</span>
       <span id="tip-09c4eb939d">{"The numeric ID on your GitHub App's settings page."}</span>

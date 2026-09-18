@@ -20,6 +20,12 @@ credential is not usable by a sync merely because it belongs to the connector:
 it has to carry the grant that sync needs. Reading GA4 with a Search Console
 token would fail at Google anyway, but it would fail as `authorization_required`
 and send a tenant to a consent screen for a bug on this side.
+
+A grant may carry more than the one scope its sync needs, but only from
+`GOOGLE_CONNECTOR_SCOPES`: one Google consent covers Search Console and GA4
+together, and both connectors hold a sealed copy of that same grant. Anything
+outside that pair is still refused -- a grant that reaches further than this
+product ever asks for is not one it should be holding.
 """
 
 from __future__ import annotations
@@ -236,6 +242,19 @@ async def claim_sync(
     )
 
 
+GOOGLE_CONNECTOR_SCOPES = frozenset(
+    {
+        "https://www.googleapis.com/auth/webmasters.readonly",
+        "https://www.googleapis.com/auth/analytics.readonly",
+    }
+)
+
+
+def grant_covers(granted: set[str] | frozenset[str], required: frozenset[str]) -> bool:
+    """Holds what the sync needs, and nothing this product never asks for."""
+    return required <= granted <= (GOOGLE_CONNECTOR_SCOPES | required)
+
+
 class GrantOwner(Protocol):
     """Whose grant this is: all that reading or renewing a credential needs.
 
@@ -327,7 +346,7 @@ async def load_credential(
         not isinstance(access_token, str)
         or not access_token
         or not isinstance(scopes, list)
-        or {str(scope) for scope in scopes} != set(expected_scopes)
+        or not grant_covers({str(scope) for scope in scopes}, expected_scopes)
         or not isinstance(expires_at, str)
     ):
         raise ValueError("connector_secret_invalid")
@@ -481,7 +500,7 @@ class AccessTokenManager:
             # secret on the server, which cannot possibly work.
             raise ValueError("token_refresh_not_configured")
         refreshed = await refresher.refresh(credential.refresh_token)
-        if refreshed.scopes and set(refreshed.scopes) != set(self._expected_scopes):
+        if refreshed.scopes and not grant_covers(set(refreshed.scopes), self._expected_scopes):
             # The grant is not the one that was consented to. Writing it back
             # would silently widen what this connector can reach.
             raise GoogleAuthorizationRevoked("authorization_required")

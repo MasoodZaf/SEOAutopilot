@@ -151,3 +151,60 @@ export async function disconnectAction(formData: FormData): Promise<never> {
   }
   redirectFresh(`${PAGE}?disconnected=1`);
 }
+
+/**
+ * One Google consent for Search Console and Analytics, on every verified site.
+ *
+ * Nothing is typed: after consent the API asks Google which properties the
+ * account can see and binds each site to the one that covers its host. It is
+ * also how a broken Google connection is reconnected -- one consent repairs
+ * every site at once, and a working connection is never moved to a different
+ * property by it.
+ */
+export async function connectGoogleAction(): Promise<never> {
+  let authorizationUrl: string;
+  try {
+    const result = await apiJson<AuthorizationEnvelope>("/v1/connectors/google/authorize", {
+      method: "POST",
+    });
+    authorizationUrl = result.data.authorization_url;
+  } catch (error) {
+    failure(error);
+  }
+  redirectFresh(authorizationUrl);
+}
+
+/**
+ * Send the tenant to GitHub to install the workspace's GitHub App on one repository.
+ *
+ * The one-step path: no token is copied or stored. Nothing about a working
+ * connection changes until GitHub sends the tenant back with the install
+ * finished, so a site already deploying with a token keeps deploying if the
+ * install is abandoned.
+ */
+export async function connectGitHubAppAction(formData: FormData): Promise<never> {
+  const siteId = String(formData.get("site_id") ?? "").trim();
+  const repository = String(formData.get("repository") ?? "").trim();
+  const baseBranch = String(formData.get("base_branch") ?? "").trim() || "main";
+  const pathTemplate = String(formData.get("path_template") ?? "").trim() || "{path}.html";
+  if (!siteId || !repository) redirectFresh(`${PAGE}?error=github_repository_invalid`);
+
+  let installationUrl: string;
+  try {
+    const result = await apiJson<{data: {installation_url: string}}>(
+      `/v1/sites/${siteId}/connectors/github/installation`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          repository,
+          base_branch: baseBranch,
+          path_template: pathTemplate,
+        }),
+      },
+    );
+    installationUrl = result.data.installation_url;
+  } catch (error) {
+    failure(error);
+  }
+  redirectFresh(installationUrl);
+}

@@ -344,19 +344,12 @@ class GitHubConnectorService:
         slug = f"{parsed[0]}/{parsed[1]}"
 
         connector = await self._upsert(site, PROVIDER_APP)
-        if connector.status == "active":
-            connector.status = "reauthorization_required"
-            connector.version += 1
-        # The provider key is deliberately left alone until GitHub sends the
-        # tenant back. A site moving from a stored token to an installation
-        # keeps deploying with the token it already has, right up to the moment
-        # the installation is real, rather than losing both if the install is
-        # abandoned halfway.
-        connector.config_json = {
-            **(connector.config_json or {}),
-            "base_branch": base_branch or "main",
-            "path_template": path_template,
-        }
+        # Nothing on the connector changes until GitHub sends the tenant back:
+        # not its status, not its provider, not where it writes. A site moving
+        # from a stored token to an installation keeps deploying exactly as it
+        # did right up to the moment the installation is real, so an install
+        # abandoned on GitHub's page costs nothing. What was asked for waits on
+        # the state row and is applied by the callback.
 
         state = secrets.token_urlsafe(32)
         expires_at = datetime.now(UTC) + INSTALLATION_STATE_TTL
@@ -368,6 +361,10 @@ class GitHubConnectorService:
                 state_hash=hashlib.sha256(state.encode()).hexdigest(),
                 requested_scopes=list(GITHUB_SCOPES),
                 requested_property_ref=slug,
+                requested_config={
+                    "base_branch": base_branch or "main",
+                    "path_template": path_template,
+                },
                 expires_at=expires_at,
                 created_by=self.context.actor_id,
             )
@@ -670,6 +667,7 @@ class GitHubInstallationCallbackService:
         account = installation.get("account")
         connector.config_json = {
             **(connector.config_json or {}),
+            **(oauth_state.requested_config or {}),
             "installation_id": installation_id,
             "account": str(account.get("login") or "") if isinstance(account, dict) else "",
         }

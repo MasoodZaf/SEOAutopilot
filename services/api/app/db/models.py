@@ -389,6 +389,7 @@ class ConnectorOauthState(Base):
     pkce_verifier_ref: Mapped[str | None] = mapped_column(Text)
     requested_scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     requested_property_ref: Mapped[str | None] = mapped_column(Text)
+    requested_config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     redirect_path: Mapped[str] = mapped_column(Text, default="/settings/connectors")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

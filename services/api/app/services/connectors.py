@@ -2,6 +2,7 @@ import hashlib
 import re
 import secrets
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
@@ -49,8 +50,41 @@ ANALYTICS_CONNECTOR = "google_analytics"
 # scope that was widened after the state was written, or one this build does
 # not implement -- is not a state this code knows how to bind, so it is refused
 # rather than guessed at.
-_SUPPORTED_SCOPE_SETS = [[GSC_READONLY_SCOPE], [ANALYTICS_READONLY_SCOPE]]
+# One consent for both Google connectors, on every verified site at once.
+WORKSPACE_GOOGLE_SCOPES = sorted([GSC_READONLY_SCOPE, ANALYTICS_READONLY_SCOPE])
+_SUPPORTED_SCOPE_SETS = [
+    [GSC_READONLY_SCOPE],
+    [ANALYTICS_READONLY_SCOPE],
+    WORKSPACE_GOOGLE_SCOPES,
+]
 _ANALYTICS_PROPERTY_PATTERN = re.compile(r"properties/[0-9]{1,20}")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceGrantOutcome:
+    """What one workspace-wide Google consent linked, and what it could not."""
+
+    linked: tuple[tuple[str, str, str], ...]
+    unmatched: tuple[tuple[str, str], ...]
+    granted_scopes: tuple[str, ...]
+
+
+def search_console_preference(property_ref: str, normalized_host: str) -> int:
+    """Lower is better, among properties that already cover the host.
+
+    A domain property on the host itself holds everything the site has --
+    every protocol and subdomain -- so it is the one to read when it exists.
+    A parent domain property comes next, then the HTTPS URL-prefix property
+    that spells the host, then anything else that still matched.
+    """
+    host = normalized_host.rstrip(".").lower()
+    if property_ref == f"sc-domain:{host}":
+        return 0
+    if property_ref.startswith("sc-domain:"):
+        return 1
+    if property_ref.rstrip("/") == f"https://{host}":
+        return 2
+    return 3
 
 
 def property_matches_site(property_ref: str, normalized_host: str) -> bool:
@@ -166,6 +200,83 @@ class ConnectorService:
             },
         )
         return connector
+
+    async def begin_google_authorization(self, settings: Settings) -> tuple[str, datetime]:
+        """One Google consent that connects Search Console and GA4 on every site.
+
+        Nothing is bound here and no connector changes state: which property
+        belongs to which site is only knowable once the grant exists and
+        Google can be asked what the account sees. A consent that is started
+        and abandoned therefore breaks nothing that was working.
+
+        The state row still needs a site and a connector to hang from, so it
+        uses the first verified site's Search Console connector, creating a
+        pending one if the site has none yet.
+        """
+        self.context.require(Role.OWNER, Role.ADMIN)
+        client = await self._google_client(settings)
+        anchor = await self.session.scalar(
+            select(Site)
+            .where(
+                Site.tenant_id == self.context.tenant_id,
+                Site.status == "active",
+                Site.verified_at.is_not(None),
+            )
+            .order_by(Site.created_at, Site.id)
+            .limit(1)
+        )
+        if anchor is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="site_not_verified")
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == self.context.tenant_id,
+                Connector.site_id == anchor.id,
+                Connector.type == GSC_CONNECTOR,
+            )
+        )
+        if connector is None:
+            connector = Connector(
+                tenant_id=self.context.tenant_id,
+                site_id=anchor.id,
+                type=GSC_CONNECTOR,
+                status="pending_authorization",
+            )
+            self.session.add(connector)
+            await self.session.flush()
+
+        state = secrets.token_urlsafe(32)
+        expires_at = datetime.now(UTC) + timedelta(minutes=10)
+        self.session.add(
+            ConnectorOauthState(
+                tenant_id=self.context.tenant_id,
+                site_id=anchor.id,
+                connector_id=connector.id,
+                state_hash=hashlib.sha256(state.encode()).hexdigest(),
+                requested_scopes=WORKSPACE_GOOGLE_SCOPES,
+                requested_property_ref=None,
+                expires_at=expires_at,
+                created_by=self.context.actor_id,
+            )
+        )
+        self.site_service._stage_event(
+            "connector.authorization_started",
+            "connector",
+            connector.id,
+            {"site_id": str(anchor.id), "connector_type": "google_workspace"},
+        )
+        query = urlencode(
+            {
+                "client_id": client.client_id,
+                "redirect_uri": settings.google_oauth_redirect_uri,
+                "response_type": "code",
+                "scope": " ".join(WORKSPACE_GOOGLE_SCOPES),
+                "access_type": "offline",
+                "include_granted_scopes": "false",
+                "prompt": "consent",
+                "state": state,
+            }
+        )
+        return f"https://accounts.google.com/o/oauth2/v2/auth?{query}", expires_at
 
     async def begin_analytics_authorization(
         self, site_id: UUID, property_ref: str, settings: Settings
@@ -557,6 +668,8 @@ class ConnectorOAuthCallbackService:
         # deployments that predate per-tenant credentials still pass a
         # provider directly.
         self.provider_factory = provider_factory
+        # Set by a workspace-wide consent, so the route can say what it linked.
+        self.outcome: WorkspaceGrantOutcome | None = None
 
     @property
     def provider(self) -> GoogleOAuthProvider:
@@ -625,7 +738,211 @@ class ConnectorOAuthCallbackService:
             )
         return matching.property_ref
 
-    async def complete_authorization(self, state: str, code: str, trace_id: str) -> Connector:
+    async def _complete_workspace(
+        self, oauth_state: ConnectorOauthState, code: str, trace_id: str, now: datetime
+    ) -> WorkspaceGrantOutcome:
+        """Bind one grant to every verified site whose properties it can see.
+
+        Google lets a person untick a scope on the consent screen, so the grant
+        may cover only one of the two services; each is bound only if granted.
+        For every site the property is found rather than asked for: Search
+        Console by what the account can read and what covers the host, GA4 by
+        which property has a data stream on the host.
+
+        A connector already working is never moved to a different property. It
+        takes the new grant only if this account can see the property it
+        already reads -- so consenting with a second Google account refreshes
+        what that account can see and leaves every other site as it was.
+        """
+        try:
+            grant = await self.provider.exchange_code(code)
+        except GoogleOAuthError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        granted = set(grant.scopes)
+        if not granted or not granted <= set(WORKSPACE_GOOGLE_SCOPES):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="oauth_scope_mismatch"
+            )
+        try:
+            search_properties = (
+                await self.provider.list_properties(grant.access_token)
+                if GSC_READONLY_SCOPE in granted
+                else []
+            )
+            if ANALYTICS_READONLY_SCOPE in granted:
+                if self.analytics is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="google_analytics_connector_not_configured",
+                    )
+                analytics_properties = await self.analytics.list_properties(grant.access_token)
+            else:
+                analytics_properties = []
+        except (GoogleOAuthError, GoogleAnalyticsError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+
+        sites = list(
+            await self.session.scalars(
+                select(Site)
+                .where(
+                    Site.tenant_id == oauth_state.tenant_id,
+                    Site.status == "active",
+                    Site.verified_at.is_not(None),
+                )
+                .order_by(Site.name, Site.id)
+            )
+        )
+        linked: list[tuple[str, str, str]] = []
+        unmatched: list[tuple[str, str]] = []
+        for site in sites:
+            if GSC_READONLY_SCOPE in granted:
+                candidates = sorted(
+                    (
+                        item.property_ref
+                        for item in search_properties
+                        if item.permission_level in GSC_PERMITTED_LEVELS
+                        and property_matches_site(item.property_ref, site.normalized_host)
+                    ),
+                    key=lambda ref: (search_console_preference(ref, site.normalized_host), ref),
+                )
+                bound = await self._bind_google(
+                    oauth_state, site, GSC_CONNECTOR, candidates, grant, now, trace_id
+                )
+                if bound:
+                    linked.append((site.normalized_host, GSC_CONNECTOR, bound))
+                else:
+                    unmatched.append((site.normalized_host, GSC_CONNECTOR))
+            if ANALYTICS_READONLY_SCOPE in granted:
+                host = site.normalized_host.rstrip(".").lower()
+                candidates = [
+                    item.property_ref
+                    for item in sorted(
+                        (
+                            item
+                            for item in analytics_properties
+                            if analytics_property_matches_site(item, site.normalized_host)
+                        ),
+                        # A stream on the host itself before one on a parent.
+                        key=lambda item: (host not in item.stream_hosts, item.property_ref),
+                    )
+                ]
+                bound = await self._bind_google(
+                    oauth_state, site, ANALYTICS_CONNECTOR, candidates, grant, now, trace_id
+                )
+                if bound:
+                    linked.append((site.normalized_host, ANALYTICS_CONNECTOR, bound))
+                else:
+                    unmatched.append((site.normalized_host, ANALYTICS_CONNECTOR))
+        if not linked:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="google_no_matching_properties"
+            )
+        oauth_state.consumed_at = now
+        return WorkspaceGrantOutcome(
+            linked=tuple(linked),
+            unmatched=tuple(unmatched),
+            granted_scopes=tuple(sorted(granted)),
+        )
+
+    async def _bind_google(
+        self,
+        oauth_state: ConnectorOauthState,
+        site: Site,
+        connector_type: str,
+        candidates: list[str],
+        grant,
+        now: datetime,
+        trace_id: str,
+    ) -> str | None:
+        """Give one site's connector this grant, if a property fits. Returns it."""
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == oauth_state.tenant_id,
+                Connector.site_id == site.id,
+                Connector.type == connector_type,
+            )
+        )
+        current = connector.external_account_ref if connector is not None else None
+        if connector is not None and connector.status == "active":
+            if current not in candidates:
+                return None
+            property_ref = current
+        elif not candidates:
+            return None
+        else:
+            # Reconnecting: keep the property it read before, if still visible.
+            property_ref = current if current in candidates else candidates[0]
+        if connector is None:
+            connector = Connector(
+                tenant_id=oauth_state.tenant_id,
+                site_id=site.id,
+                type=connector_type,
+                status="pending_authorization",
+            )
+            self.session.add(connector)
+            await self.session.flush()
+        assert property_ref is not None
+        secret_ref = await self.secret_store.store(
+            oauth_state.tenant_id,
+            connector.id,
+            connector_type,
+            {
+                "access_token": grant.access_token,
+                "refresh_token": grant.refresh_token,
+                "expires_at": grant.expires_at.isoformat(),
+                "scopes": sorted(grant.scopes),
+            },
+        )
+        connector.status = "active"
+        connector.external_account_ref = property_ref
+        connector.secret_ref = secret_ref
+        connector.granted_scopes = sorted(grant.scopes)
+        connector.consented_by = oauth_state.created_by
+        connector.consented_at = now
+        connector.token_expires_at = grant.expires_at
+        connector.last_checked_at = now
+        connector.last_error_code = None
+        connector.version = (connector.version or 0) + 1
+        payload = {
+            "connector_id": str(connector.id),
+            "site_id": str(site.id),
+            "connector_type": connector_type,
+            "property_ref": property_ref,
+            "scopes": sorted(grant.scopes),
+            "consent": "workspace",
+        }
+        self.session.add_all(
+            [
+                AuditEvent(
+                    tenant_id=oauth_state.tenant_id,
+                    actor_type="user",
+                    actor_id=str(oauth_state.created_by),
+                    action="connector.authorized",
+                    resource_type="connector",
+                    resource_id=str(connector.id),
+                    trace_id=trace_id,
+                    metadata_json=payload,
+                    event_hash=stable_hash(payload),
+                ),
+                OutboxEvent(
+                    tenant_id=oauth_state.tenant_id,
+                    event_type="connector.authorized",
+                    event_version=1,
+                    aggregate_type="connector",
+                    aggregate_id=connector.id,
+                    payload=payload,
+                ),
+            ]
+        )
+        return property_ref
+
+    async def complete_authorization(
+        self, state: str, code: str, trace_id: str
+    ) -> Connector | None:
         """Redeem one Google consent, whichever connector asked for it.
 
         The state row says which: it carries the scopes that were requested, and
@@ -670,8 +987,12 @@ class ConnectorOAuthCallbackService:
             or oauth_state.consumed_at is not None
             or oauth_state.expires_at <= now
             or sorted(oauth_state.requested_scopes) not in _SUPPORTED_SCOPE_SETS
-            or not oauth_state.requested_property_ref
         ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_state_invalid")
+        if sorted(oauth_state.requested_scopes) == WORKSPACE_GOOGLE_SCOPES:
+            self.outcome = await self._complete_workspace(oauth_state, code, trace_id, now)
+            return None
+        if not oauth_state.requested_property_ref:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_state_invalid")
         connector = await self.session.scalar(
             select(Connector).where(

@@ -316,6 +316,7 @@ async def test_a_search_console_state_still_takes_the_search_console_path() -> N
         session, provider, FakeSecretStore(), analytics
     ).complete_authorization("state-value-not-persisted-1234567890", "authorization-code", "trace")
 
+    assert result is not None
     assert result.external_account_ref == "sc-domain:example.com"
     provider.list_properties.assert_awaited_once()
     analytics.list_properties.assert_not_awaited()

@@ -28,6 +28,8 @@ from app.api.schemas import (
     GitHubInstallationEnvelope,
     GitHubInstallationRead,
     GitHubRepositoryTarget,
+    GoogleAuthorizationEnvelope,
+    GoogleAuthorizationRead,
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
@@ -140,6 +142,24 @@ async def list_connections(
             "count": len(data),
             "needs_attention": needs_attention,
         },
+    )
+
+
+@router.post(
+    "/connectors/google/authorize",
+    response_model=GoogleAuthorizationEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def authorize_google(
+    context: TenantContextDependency, session: TenantSession
+) -> GoogleAuthorizationEnvelope:
+    """One consent for Search Console and GA4, bound to every verified site."""
+    authorization_url, expires_at = await ConnectorService(
+        session, context
+    ).begin_google_authorization(get_settings())
+    return GoogleAuthorizationEnvelope(
+        data=GoogleAuthorizationRead(authorization_url=authorization_url, expires_at=expires_at),
+        meta={"trace_id": context.trace_id},
     )
 
 
@@ -306,14 +326,15 @@ async def google_oauth_callback(
                 redirect_uri=settings.google_oauth_redirect_uri,
             )
 
+        callback = ConnectorOAuthCallbackService(
+            session,
+            None,
+            secret_store,
+            AnalyticsAdminHttpClient(http_client),
+            provider_factory=provider_for,
+        )
         try:
-            await ConnectorOAuthCallbackService(
-                session,
-                None,
-                secret_store,
-                AnalyticsAdminHttpClient(http_client),
-                provider_factory=provider_for,
-            ).complete_authorization(state, code, secrets.token_hex(16))
+            await callback.complete_authorization(state, code, secrets.token_hex(16))
         except HTTPException as refusal:
             # A person is at the end of this redirect, not a client library.
             #
@@ -337,10 +358,14 @@ async def google_oauth_callback(
                 ),
                 status_code=status.HTTP_303_SEE_OTHER,
             )
-    return RedirectResponse(
-        url=f"{settings.app_base_url.rstrip('/')}/settings/connectors?google=connected",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+    target = f"{settings.app_base_url.rstrip('/')}/settings/connectors?google=connected"
+    if callback.outcome is not None:
+        # Counts only: which site got which property is on the page itself.
+        target += f"&linked={len(callback.outcome.linked)}"
+        target += f"&unmatched={len(callback.outcome.unmatched)}"
+        if len(callback.outcome.granted_scopes) < 2:
+            target += "&partial=1"
+    return RedirectResponse(url=target, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post(
@@ -412,10 +437,13 @@ async def github_installation_callback(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="github_connector_callback_not_configured",
         )
+    page = f"{settings.app_base_url.rstrip('/')}/settings/connectors"
     if setup_action not in {"install", "update"}:
-        # A cancelled install returns here too. There is nothing to record.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="installation_not_completed"
+        # A cancelled install returns here too. There is nothing to record,
+        # and the person belongs back on the page they started from.
+        return RedirectResponse(
+            url=f"{page}?error=installation_not_completed",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
     async with httpx.AsyncClient(
         follow_redirects=False, timeout=httpx.Timeout(30.0)
@@ -430,13 +458,20 @@ async def github_installation_callback(
                 )
             return GitHubAppClient(http_client, app.app_id, app.private_key)
 
-        await GitHubInstallationCallbackService(
-            session, app_client_factory=app_client_for
-        ).complete(state, installation_id, secrets.token_hex(16))
-    return RedirectResponse(
-        url=f"{settings.app_base_url.rstrip('/')}/settings/connectors?github=connected",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+        try:
+            await GitHubInstallationCallbackService(
+                session, app_client_factory=app_client_for
+            ).complete(state, installation_id, secrets.token_hex(16))
+        except HTTPException as refusal:
+            # Same reasoning as the Google callback: a person is at the end of
+            # this redirect, and a JSON body at an API URL gives them no way
+            # back. Only refusals are redirected; a 500 still raises.
+            detail = refusal.detail if isinstance(refusal.detail, str) else "connector_refused"
+            return RedirectResponse(
+                url=f"{page}?error={quote(detail, safe='')}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+    return RedirectResponse(url=f"{page}?github=connected", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post(

@@ -18,7 +18,7 @@ from app.connectors.google_oauth import (
     RefreshedToken,
 )
 from app.connectors.grant_check import DUE_SQL, DueGrant, check_grant
-from test_gsc_refresh import (
+from test_gsc_refresh import (  # pyright: ignore[reportMissingImports]
     CONNECTOR,
     KEY,
     KEY_VERSION,
@@ -28,6 +28,7 @@ from test_gsc_refresh import (
     FakePool,
     FakeRefresher,
     grant,
+    sealed,
 )
 
 
@@ -114,3 +115,38 @@ def test_the_sweep_leaves_alone_what_a_sync_is_about_to_renew() -> None:
     """Two renewals at once collide on the one-active-secret index."""
     assert "status IN ('queued', 'running')" in DUE_SQL
     assert "c.status = 'active'" in DUE_SQL
+
+
+ANALYTICS = "https://www.googleapis.com/auth/analytics.readonly"
+
+
+def combined(scopes: list[str]) -> dict:
+    return sealed(
+        {
+            "access_token": "original",
+            "refresh_token": "stored-refresh",
+            "expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+            "scopes": scopes,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_one_consent_for_both_services_renews_for_either() -> None:
+    """The workspace consent seals the same two-scope grant into both connectors."""
+    pool = FakePool(combined([READONLY, ANALYTICS]))
+    google = FakeRefresher(
+        RefreshedToken(
+            "renewed", datetime.now(UTC) + timedelta(hours=1), frozenset({READONLY, ANALYTICS})
+        )
+    )
+    assert await run(pool, google) == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_grant_reaching_beyond_the_two_services_is_still_refused() -> None:
+    pool = FakePool(combined([READONLY, "https://www.googleapis.com/auth/webmasters"]))
+    google = FakeRefresher(RuntimeError("must not be called"))
+
+    assert await run(pool, google) == "connector_secret_invalid"
+    assert google.calls == []

@@ -1022,3 +1022,65 @@ sign-in project — that is what undoes all of this.
 **Still open:** there is no sign-up allowlist. Anyone with a Google account who
 has the address can create a workspace; the only limit is
 `MAX_OWNED_TENANTS = 5` per person.
+
+## 6i. Connections a tester can manage without us (built 2026-09-18, not yet deployed)
+
+A working SEO tester asked for four things: one Google sign-in for Search
+Console and GA4, one step to connect a repository, a page that says which
+connections work and lets him revoke or redo them, and refresh that does not
+need him. While scoping it we found that **every Google connector in production
+had died exactly seven days after consent** (09-13 to 09-15) and nothing a person
+reads had said so. The cause is not code: the connector project
+(`417045140496`) is an External app in **Testing**, and Google expires such an
+app's refresh tokens after seven days.
+
+What was built (`02b5380`, then one commit for 2 and 3):
+
+1. **Connection manager** — `/v1/connections`, `/v1/connectors/{id}/disconnect`,
+   a banner on every signed-in page while anything is broken, and a worker sweep
+   that renews every active Google grant nothing has proven good for 20 hours.
+   Disconnect is local only; revoking at Google removes the app from the whole
+   account and would take every other site down too. Migration `0040`.
+2. **One Google consent** — `POST /v1/connectors/google/authorize` asks for both
+   scopes once. The callback binds each verified site to the property that
+   covers its host (a domain property over a URL-prefix one), never moves a
+   working connector to a different property, and binds only what was granted
+   if a scope is unticked. Both connectors hold a sealed copy of the same grant;
+   the worker now accepts a grant that carries the other Google scope too.
+3. **GitHub App, one step** — the install button, with the access-token form as
+   a fallback. Starting an install no longer touches the connector: the branch
+   and path wait on the state row (migration `0041`) until GitHub returns, so an
+   abandoned install cannot break a site deploying with a token. Refusals and a
+   cancelled install land back on the page with a reason, not as JSON.
+
+### To deploy
+
+Files changed since `c3aa103` go to `/opt/seo-autopilot` as usual, then:
+
+```sh
+DC="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+$DC exec -T api python -m app.cli.migrate --dry-run --database-url "<owner url>"   # expect 0040, 0041
+$DC exec -T api python -m app.cli.migrate --database-url "<owner url>"
+```
+
+Add to `.env.local`:
+
+```
+GOOGLE_GRANT_LIFETIME_DAYS=7        # remove once the connector project is published
+GITHUB_APP_CALLBACK_URL=https://seo.oryxenlabs.com/api/v1/connectors/github/callback
+```
+
+Then `$DC build api worker web && $DC up -d --force-recreate api worker web`.
+
+### What only a person can do
+
+- **Publish the connector project** (Google Auth Platform → Audience → Publish
+  app). Until then every Google connection dies weekly, and only accounts listed
+  as test users can consent at all — a tester signing in with his own Google
+  account must be added under Audience → Test users first.
+- **Register a GitHub App** with Repository permissions *Contents: Read and
+  write* and *Pull requests: Read and write*, Setup URL set to the callback
+  above with *Redirect on update* ticked, then save its ID, slug and private key
+  under Settings → Keys. Until then the page offers the token form.
+- **Reconnect Google once** after deploying: one click on Connect Google repairs
+  all four dead connections.

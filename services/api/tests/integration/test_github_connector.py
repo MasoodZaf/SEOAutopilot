@@ -530,7 +530,8 @@ async def test_an_installation_url_is_issued_with_a_single_use_state(app_engine,
         states = (
             await session.execute(
                 text(
-                    "SELECT requested_scopes, requested_property_ref FROM connector_oauth_state"
+                    "SELECT requested_scopes, requested_property_ref, requested_config"
+                    " FROM connector_oauth_state"
                     " WHERE tenant_id=:t"
                 ),
                 {"t": acme["tenant_id"]},
@@ -539,9 +540,13 @@ async def test_an_installation_url_is_issued_with_a_single_use_state(app_engine,
 
     assert url.startswith("https://github.com/apps/seo-autopilot/installations/new?state=")
     assert connector.status == "pending_authorization"
-    # Nothing is usable yet: the connector holds the layout the tenant asked
-    # for and no authority to act on it.
-    assert connector.config_json["path_template"] == "CalcHive/{path}.html"
+    # Nothing changes on the connector until GitHub sends the tenant back. The
+    # layout they asked for waits on the single-use state row.
+    assert "path_template" not in (connector.config_json or {})
+    assert states[0].requested_config == {
+        "base_branch": "main",
+        "path_template": "CalcHive/{path}.html",
+    }
     assert expires_at > datetime.now(UTC)
     assert states[0].requested_scopes == ["contents:write", "pull_requests:write"]
     assert states[0].requested_property_ref == "MasoodZaf/mindTools"

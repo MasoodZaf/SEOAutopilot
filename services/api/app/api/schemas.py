@@ -401,6 +401,16 @@ class ConnectionRead(ConnectorRead):
     grant_expires_at: datetime | None = None
 
 
+class GoogleAuthorizationRead(BaseModel):
+    authorization_url: str
+    expires_at: datetime
+
+
+class GoogleAuthorizationEnvelope(BaseModel):
+    data: GoogleAuthorizationRead
+    meta: dict[str, Any]
+
+
 class ConnectionCollection(BaseModel):
     data: list[ConnectionRead]
     meta: dict[str, Any]
