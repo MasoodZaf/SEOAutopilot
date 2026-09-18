@@ -236,6 +236,24 @@ async def claim_sync(
     )
 
 
+class GrantOwner(Protocol):
+    """Whose grant this is: all that reading or renewing a credential needs.
+
+    A claimed sync is one. The daily grant check is another -- it renews a
+    connector's token with no sync in flight -- so the credential functions
+    take this rather than the whole sync row.
+    """
+
+    @property
+    def tenant_id(self) -> UUID: ...
+
+    @property
+    def connector_id(self) -> UUID: ...
+
+    @property
+    def secret_ref(self) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class StoredCredential:
     """The whole grant as it sits in the envelope, not just the usable half."""
@@ -254,7 +272,7 @@ class StoredCredential:
 
 async def load_credential(
     pool: asyncpg.Pool,
-    sync: ClaimedSync,
+    sync: GrantOwner,
     encryption_key: bytes,
     *,
     expected_scopes: frozenset[str],
@@ -335,7 +353,7 @@ async def load_credential(
 
 async def store_renewed_credential(
     pool: asyncpg.Pool,
-    sync: ClaimedSync,
+    sync: GrantOwner,
     credential: StoredCredential,
     *,
     access_token: str,
@@ -387,7 +405,7 @@ async def store_renewed_credential(
         )
         await connection.execute(
             """
-            UPDATE connector SET secret_ref=$3,token_expires_at=$4
+            UPDATE connector SET secret_ref=$3,token_expires_at=$4,last_checked_at=now()
             WHERE id=$1 AND tenant_id=$2
             """,
             sync.connector_id,
@@ -412,7 +430,7 @@ class AccessTokenManager:
     def __init__(
         self,
         pool: asyncpg.Pool,
-        sync: ClaimedSync,
+        sync: GrantOwner,
         *,
         encryption_key: bytes,
         key_version: str,
@@ -579,7 +597,10 @@ async def complete_sync(
             json.dumps(payload_counts),
         )
         await connection.execute(
-            "UPDATE connector SET last_sync_at=now() WHERE id=$1 AND tenant_id=$2",
+            """
+            UPDATE connector SET last_sync_at=now(),last_checked_at=now(),last_error_code=NULL
+            WHERE id=$1 AND tenant_id=$2
+            """,
             sync.connector_id,
             sync.tenant_id,
         )
@@ -617,11 +638,22 @@ async def fail_sync(pool: asyncpg.Pool, sync: ClaimedSync, error_code: str) -> N
         if safe_code == "authorization_required":
             await connection.execute(
                 """
-                UPDATE connector SET status='reauthorization_required'
+                UPDATE connector SET status='reauthorization_required',last_error_code=$3
                 WHERE id=$1 AND tenant_id=$2
                 """,
                 sync.connector_id,
                 sync.tenant_id,
+                safe_code,
+            )
+        else:
+            # Recorded so the connection manager can say why the last attempt
+            # failed. The status is left alone: a timeout at Google is not a
+            # reason to ask a person for anything.
+            await connection.execute(
+                "UPDATE connector SET last_error_code=$3 WHERE id=$1 AND tenant_id=$2",
+                sync.connector_id,
+                sync.tenant_id,
+                safe_code,
             )
         await connection.execute(
             """

@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime, timedelta
 from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
@@ -9,6 +10,8 @@ from fastapi.responses import RedirectResponse
 
 from app.api.schemas import (
     AnalyticsAuthorizationCreate,
+    ConnectionCollection,
+    ConnectionRead,
     ConnectorAuthorizationCreate,
     ConnectorAuthorizationEnvelope,
     ConnectorAuthorizationRead,
@@ -87,6 +90,65 @@ async def list_connectors(
         data=[ConnectorRead.model_validate(item) for item in connectors],
         meta={"trace_id": context.trace_id, "count": len(connectors)},
     )
+
+
+GOOGLE_CONNECTOR_TYPES = frozenset({"google_search_console", "google_analytics"})
+
+
+def grant_expires_at(connector, lifetime_days: int | None) -> datetime | None:
+    """When a person will next have to consent, if the provider imposes a date.
+
+    Only Google grants have one, and only while the consent screen is in
+    Testing -- which the operator declares, because nothing Google returns
+    says so. A connector that is not holding a grant has nothing to expire.
+    """
+    if (
+        lifetime_days is None
+        or connector.type not in GOOGLE_CONNECTOR_TYPES
+        or connector.consented_at is None
+        or connector.status not in {"active", "reauthorization_required"}
+    ):
+        return None
+    return connector.consented_at + timedelta(days=lifetime_days)
+
+
+@router.get("/connections", response_model=ConnectionCollection)
+async def list_connections(
+    context: TenantContextDependency, session: TenantSession
+) -> ConnectionCollection:
+    """Every connector in the workspace, for the connection manager and banner."""
+    lifetime = get_settings().google_grant_lifetime_days
+    rows = await ConnectorService(session, context).list_for_tenant()
+    data = [
+        ConnectionRead.model_validate(
+            {
+                **ConnectorRead.model_validate(connector).model_dump(),
+                "site_name": site.name,
+                "site_host": site.normalized_host,
+                "grant_expires_at": grant_expires_at(connector, lifetime),
+            }
+        )
+        for connector, site in rows
+    ]
+    needs_attention = sum(
+        1 for item in data if item.status in {"reauthorization_required", "error"}
+    )
+    return ConnectionCollection(
+        data=data,
+        meta={
+            "trace_id": context.trace_id,
+            "count": len(data),
+            "needs_attention": needs_attention,
+        },
+    )
+
+
+@router.post("/connectors/{connector_id}/disconnect", response_model=ConnectorRead)
+async def disconnect_connector(
+    connector_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> ConnectorRead:
+    connector = await ConnectorService(session, context).disconnect(connector_id)
+    return ConnectorRead.model_validate(connector)
 
 
 @router.post(

@@ -133,3 +133,21 @@ export async function connectRepositoryAction(formData: FormData): Promise<never
   }
   redirectFresh(`${PAGE}?github=connected`);
 }
+
+/**
+ * Stop using one connector and destroy the credential we hold for it.
+ *
+ * Local only, on purpose: revoking at Google removes this application from the
+ * whole Google account, which would take down every other site connected
+ * through it. The page links to the provider's own permissions page for that.
+ */
+export async function disconnectAction(formData: FormData): Promise<never> {
+  const connectorId = String(formData.get("connector_id") ?? "").trim();
+  if (!connectorId) redirectFresh(`${PAGE}?error=connector_not_found`);
+  try {
+    await apiJson(`/v1/connectors/${connectorId}/disconnect`, {method: "POST"});
+  } catch (error) {
+    failure(error);
+  }
+  redirectFresh(`${PAGE}?disconnected=1`);
+}

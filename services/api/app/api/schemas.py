@@ -379,9 +379,31 @@ class ConnectorRead(BaseModel):
     config_json: dict[str, Any] = Field(default_factory=dict)
     granted_scopes: list[str]
     last_sync_at: datetime | None
+    consented_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    last_error_code: str | None = None
     version: int
     created_at: datetime
     updated_at: datetime
+
+
+class ConnectionRead(ConnectorRead):
+    """A connector as the connection manager shows it: with its site, and dates.
+
+    `grant_expires_at` is when the provider will stop honouring the grant and a
+    person has to consent again -- not the hourly access token, which renews on
+    its own and would only be noise on a page. It is null when the provider
+    sets no fixed limit, or when this deployment does not know one.
+    """
+
+    site_name: str
+    site_host: str
+    grant_expires_at: datetime | None = None
+
+
+class ConnectionCollection(BaseModel):
+    data: list[ConnectionRead]
+    meta: dict[str, Any]
 
 
 class AnalyticsAuthorizationCreate(BaseModel):

@@ -1,4 +1,5 @@
 import {Masthead, Tabs} from "@/app/components/ui";
+import {ConnectionsBanner} from "@/app/components/connections-banner";
 import {SessionBar} from "@/app/components/session-bar";
 import {TipDescriptions} from "@/app/components/tips";
 
@@ -19,6 +20,7 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
       <Masthead section="Settings">
         <SessionBar />
       </Masthead>
+      <ConnectionsBanner />
       <Tabs items={TABS} label="Settings" />
       {children}
       <TipDescriptions />

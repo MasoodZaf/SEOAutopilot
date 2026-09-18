@@ -10,6 +10,7 @@ import redis.asyncio as redis
 from app.analysis_consumer import AnalysisPool, AnalysisStream, run_analysis_consumer
 from app.analytics.consumer import run_analytics_consumer
 from app.connectors.google_oauth import GoogleTokenHttpRefresher, TokenRefresher
+from app.connectors.grant_check import run_grant_checker
 from app.connectors.runtime import (
     SyncStream,
     decode_encryption_key,
@@ -160,6 +161,16 @@ async def run() -> None:
             encryption_key=connector_key,
             key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
             refresher=token_refresher,
+            refresher_factory=refresher_factory.for_tenant,
+        ),
+        # Renews every Google grant nothing has proven good for a day, so a
+        # dead one reaches the connection manager the day it dies rather than
+        # at the next scheduled sync -- or never, for a site without one.
+        run_grant_checker(
+            relay_pool,
+            pool,
+            encryption_key=connector_key,
+            key_version=os.environ.get("CONNECTOR_SECRET_KEY_VERSION", "local-v1"),
             refresher_factory=refresher_factory.for_tenant,
         ),
         run_pagespeed_consumer(

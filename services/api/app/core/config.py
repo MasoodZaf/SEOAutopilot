@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
     google_oauth_redirect_uri: str = "http://localhost:8000/v1/connectors/oauth/callback"
+    # How long Google lets a connector grant live before a person must consent
+    # again, when it imposes a limit at all. An External OAuth app still in
+    # "Testing" gets refresh tokens that die after 7 days; a published one gets
+    # tokens with no fixed expiry. Nothing in the token response says which, so
+    # the operator states it: set 7 while the consent screen is in Testing, and
+    # unset it after publishing. Only ever used to show a date to a person.
+    google_grant_lifetime_days: int | None = None
     search_query_hash_key: SecretStr | None = None
     connector_secret_backend: Literal["disabled", "database_envelope", "managed"] = "disabled"
     connector_secret_encryption_key: SecretStr | None = None

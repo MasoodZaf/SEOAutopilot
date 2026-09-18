@@ -7,7 +7,7 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.db.models import (
     AuditEvent,
     Connector,
     ConnectorOauthState,
+    ConnectorSecret,
     ConnectorSync,
     OutboxEvent,
     Site,
@@ -98,6 +99,73 @@ class ConnectorService:
             .order_by(Connector.created_at, Connector.id)
         )
         return list(result)
+
+    async def list_for_tenant(self) -> list[tuple[Connector, Site]]:
+        """Every connector in the workspace, with the site it belongs to.
+
+        One query rather than one per site: this backs the connection manager
+        and the banner on every signed-in page, and the per-site route would
+        make that a request fan-out on each render.
+        """
+        rows = await self.session.execute(
+            select(Connector, Site)
+            .join(Site, (Site.id == Connector.site_id) & (Site.tenant_id == Connector.tenant_id))
+            .where(Connector.tenant_id == self.context.tenant_id)
+            .order_by(Site.name, Site.id, Connector.type)
+        )
+        return [(connector, site) for connector, site in rows.tuples()]
+
+    async def disconnect(self, connector_id: UUID) -> Connector:
+        """Stop using a connector and destroy what we hold for it.
+
+        Deliberately local. Google's revoke endpoint does not revoke one token:
+        it removes this application's access from the Google account, which
+        takes every other connector consented through that account down with
+        it -- on this site and every other one. A person clicking "disconnect"
+        on one site's Analytics must not silently break another site's Search
+        Console. So the sealed grant is revoked here, where it can no longer be
+        read by anything, and the page points at the account's own permissions
+        page for anyone who wants the provider to forget us too.
+
+        Idempotent: disconnecting a disconnected connector returns it unchanged.
+        """
+        self.context.require(Role.OWNER, Role.ADMIN)
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == self.context.tenant_id,
+                Connector.id == connector_id,
+            )
+        )
+        if connector is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connector_not_found")
+        if connector.status == "revoked":
+            return connector
+        await self.session.execute(
+            update(ConnectorSecret)
+            .where(
+                ConnectorSecret.tenant_id == self.context.tenant_id,
+                ConnectorSecret.connector_id == connector.id,
+                ConnectorSecret.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
+        previous = connector.status
+        connector.status = "revoked"
+        connector.secret_ref = None
+        connector.token_expires_at = None
+        connector.last_error_code = None
+        connector.version += 1
+        self.site_service._stage_event(
+            "connector.revoked",
+            "connector",
+            connector.id,
+            {
+                "site_id": str(connector.site_id),
+                "connector_type": connector.type,
+                "previous_status": previous,
+            },
+        )
+        return connector
 
     async def begin_analytics_authorization(
         self, site_id: UUID, property_ref: str, settings: Settings
@@ -665,6 +733,8 @@ class ConnectorOAuthCallbackService:
         connector.consented_by = oauth_state.created_by
         connector.consented_at = now
         connector.token_expires_at = grant.expires_at
+        connector.last_checked_at = now
+        connector.last_error_code = None
         connector.version += 1
         payload = {
             "connector_id": str(connector.id),
