@@ -1,4 +1,6 @@
-import {Masthead, Tabs} from "@/app/components/ui";
+import Link from "next/link";
+
+import {button, Masthead, Tabs} from "@/app/components/ui";
 import {ConnectionsBanner} from "@/app/components/connections-banner";
 import {SessionBar} from "@/app/components/session-bar";
 import {TipDescriptions} from "@/app/components/tips";
@@ -18,7 +20,12 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
   return (
     <div className="min-h-dvh bg-paper">
       <Masthead section="Settings">
-        <SessionBar />
+        <nav aria-label="Main" className="flex items-center gap-3">
+          <Link href="/pilot" className={button.quiet}>
+            Dashboard
+          </Link>
+          <SessionBar />
+        </nav>
       </Masthead>
       <ConnectionsBanner />
       <Tabs items={TABS} label="Settings" />
