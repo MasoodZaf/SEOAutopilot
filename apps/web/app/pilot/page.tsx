@@ -49,6 +49,17 @@ type SearchPerformance = {
   position: number | null;
   is_sparse: boolean;
 };
+type Engagement = {
+  range_start: string;
+  range_end: string;
+  rows: number;
+  sessions: number;
+  engaged_sessions: number;
+  engagement_rate: number | null;
+  views: number;
+  key_events: number;
+  top_landing_pages: {landing_page: string; sessions: number; engaged_sessions: number}[];
+};
 type PerformanceRun = {
   id: string;
   status: string;
@@ -169,6 +180,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   calibration?: CalibrationRun;
   latestCrawl?: Crawl;
   searchPerformance?: SearchPerformance;
+  engagement?: Engagement;
   performanceRun?: PerformanceRun;
   performanceSummary?: PerformanceSummary;
 }> {
@@ -218,6 +230,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
     let calibration: CalibrationRun | undefined;
     let latestCrawl: Crawl | undefined;
     let searchPerformance: SearchPerformance | undefined;
+    let engagement: Engagement | undefined;
     let performanceRun: PerformanceRun | undefined;
     let performanceSummary: PerformanceSummary | undefined;
     try {
@@ -230,6 +243,11 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
         searchPerformance = (await apiJson<{data: SearchPerformance}>(`/v1/sites/${site.id}/search-performance`)).data;
       } catch {
         searchPerformance = undefined;
+      }
+      try {
+        engagement = (await apiJson<{data: Engagement}>(`/v1/sites/${site.id}/engagement`)).data;
+      } catch {
+        engagement = undefined;
       }
       try {
         performanceRun = (await apiJson<{data: PerformanceRun}>(`/v1/sites/${site.id}/performance-runs/latest`)).data;
@@ -261,6 +279,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       calibration,
       latestCrawl,
       searchPerformance,
+      engagement,
       performanceRun,
       performanceSummary,
     };
@@ -666,6 +685,60 @@ export default async function PilotPage({searchParams}: PageProps) {
                   Run Mobile Lab Sample
                 </button>
               </form>
+            </div>
+          </section>
+
+          <section aria-labelledby="visitor-data-heading" className="rounded-[4px] border border-rule bg-paper p-6">
+            <div className="border-b border-rule pb-4">
+              <h2 id="visitor-data-heading" className="text-base font-semibold text-ink">Search and visitor data</h2>
+              <p className="mt-1 max-w-3xl text-xs text-ink-faint">
+                Read-only, from this site&rsquo;s own Google properties
+                {data.searchPerformance ? `, ${data.searchPerformance.range_start} to ${data.searchPerformance.range_end}` : ""}.
+                Search Console counts searches; Analytics counts visits. They measure different things, so neither is subtracted from the other.
+              </p>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <h3 className="text-sm font-semibold text-ink">Google Search Console</h3>
+                {data.searchPerformance && data.searchPerformance.rows > 0 ? (
+                  <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                    <div><dt className="text-ink-faint">Clicks</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.clicks}</dd></div>
+                    <div><dt className="text-ink-faint">Impressions</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.impressions}</dd></div>
+                    <div><dt className="text-ink-faint">Click-through rate</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.ctr === null ? "—" : `${(data.searchPerformance.ctr * 100).toFixed(1)}%`}</dd></div>
+                    <div><dt className="text-ink-faint">Average position</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.position === null ? "—" : data.searchPerformance.position.toFixed(1)}</dd></div>
+                  </dl>
+                ) : (
+                  <p className="mt-3 text-xs text-ink-faint">No Search Console data yet. Connect Google under Settings, then wait for the daily sync.</p>
+                )}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-ink">Google Analytics 4</h3>
+                {data.engagement && data.engagement.rows > 0 ? (
+                  <>
+                    <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                      <div><dt className="text-ink-faint">Sessions</dt><dd className="font-mono text-lg text-ink">{data.engagement.sessions}</dd></div>
+                      <div><dt className="text-ink-faint">Engagement rate</dt><dd className="font-mono text-lg text-ink">{data.engagement.engagement_rate === null ? "—" : `${(data.engagement.engagement_rate * 100).toFixed(0)}%`}</dd></div>
+                      <div><dt className="text-ink-faint">Page views</dt><dd className="font-mono text-lg text-ink">{data.engagement.views}</dd></div>
+                      <div><dt className="text-ink-faint">Key events</dt><dd className="font-mono text-lg text-ink">{data.engagement.key_events}</dd></div>
+                    </dl>
+                    <table className="mt-4 w-full text-left text-xs">
+                      <caption className="mb-1 text-left text-ink-faint">Top landing pages</caption>
+                      <thead><tr className="text-ink-faint"><th className="py-1 font-normal">Page</th><th className="py-1 text-right font-normal">Sessions</th><th className="py-1 text-right font-normal">Engaged</th></tr></thead>
+                      <tbody>
+                        {data.engagement.top_landing_pages.map((page) => (
+                          <tr key={page.landing_page} className="border-t border-rule">
+                            <td className="max-w-0 truncate py-1 font-mono text-ink">{page.landing_page}</td>
+                            <td className="py-1 text-right font-mono text-ink">{page.sessions}</td>
+                            <td className="py-1 text-right font-mono text-ink">{page.engaged_sessions}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                ) : (
+                  <p className="mt-3 text-xs text-ink-faint">No Analytics data yet. Connect Google under Settings; GA4 collects nothing from before its tag went live.</p>
+                )}
+              </div>
             </div>
           </section>
 

@@ -11,6 +11,8 @@ from app.api.schemas import (
     CrawlCreate,
     CrawlEnvelope,
     CrawlRead,
+    EngagementEnvelope,
+    EngagementRead,
     OpportunityCollection,
     OpportunityRead,
     PageCollection,
@@ -39,6 +41,7 @@ from app.services.opportunities import OpportunityService
 from app.services.pages import PageService
 from app.services.performance import PerformanceService
 from app.services.search_performance import SearchPerformanceService
+from app.services.site_engagement import SiteEngagementService
 from app.services.sites import SiteService
 from app.services.verification import DnsTxtVerifier, get_site_verifier
 
@@ -301,4 +304,22 @@ async def get_search_performance(
     summary = await SearchPerformanceService(session, context).summarize(site_id, start, end)
     return SearchPerformanceEnvelope(
         data=SearchPerformanceRead.model_validate(summary), meta={"trace_id": context.trace_id}
+    )
+
+
+@router.get("/{site_id}/engagement", response_model=EngagementEnvelope)
+async def get_engagement(
+    site_id: UUID,
+    context: TenantContextDependency,
+    session: TenantSession,
+    range_start: Annotated[date | None, Query()] = None,
+    range_end: Annotated[date | None, Query()] = None,
+) -> EngagementEnvelope:
+    # The same 28-day window as search-performance, so the two dashboard cards
+    # always describe the same dates.
+    end = range_end or (datetime.now(UTC).date() - timedelta(days=2))
+    start = range_start or (end - timedelta(days=27))
+    summary = await SiteEngagementService(session, context).summarize(site_id, start, end)
+    return EngagementEnvelope(
+        data=EngagementRead.model_validate(summary), meta={"trace_id": context.trace_id}
     )

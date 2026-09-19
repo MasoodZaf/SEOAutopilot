@@ -127,6 +127,31 @@ class SearchPerformanceEnvelope(BaseModel):
     meta: dict[str, str]
 
 
+class LandingPageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    landing_page: str
+    sessions: float
+    engaged_sessions: float
+
+
+class EngagementRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    range_start: date
+    range_end: date
+    rows: int
+    sessions: float
+    engaged_sessions: float
+    engagement_rate: float | None
+    views: float
+    key_events: float
+    top_landing_pages: list[LandingPageRead]
+
+
+class EngagementEnvelope(BaseModel):
+    data: EngagementRead
+    meta: dict[str, str]
+
+
 class PerformanceObservationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     observed_at: datetime
