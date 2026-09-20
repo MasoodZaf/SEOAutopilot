@@ -44,13 +44,20 @@ from app.services.github_connector import (
     GitHubRepositoryHttpProbe,
 )
 from app.services.google_analytics import AnalyticsAdminHttpClient
+from app.services.google_client_check import (
+    ClientCheckResult,
+    GoogleClientProbe,
+    check_google_client,
+)
 from app.services.google_oauth import GoogleOAuthHttpClient
 from app.services.tenant_credentials import github_app_credential, google_oauth_client
 
 router = APIRouter(prefix="/v1", tags=["connectors"])
 
 
-def local_dns_provider_secret_store(settings, session: TenantSession) -> DatabaseEnvelopeSecretStore:
+def local_dns_provider_secret_store(
+    settings, session: TenantSession
+) -> DatabaseEnvelopeSecretStore:
     if (
         not settings.dns_provider_connectors_enabled
         or settings.connector_secret_backend != "database_envelope"
@@ -114,6 +121,22 @@ def grant_expires_at(connector, lifetime_days: int | None) -> datetime | None:
     return connector.consented_at + timedelta(days=lifetime_days)
 
 
+async def google_client_probe(http_client: httpx.AsyncClient, settings) -> GoogleClientProbe:
+    """Ask Google about a client id, with this deployment's callback.
+
+    Built per request rather than held on the service: it closes over the
+    HTTP client, and the point of the check is that it talks to Google right
+    now rather than trusting anything remembered.
+    """
+
+    async def probe(client_id: str) -> ClientCheckResult:
+        return await check_google_client(
+            http_client, client_id=client_id, redirect_uri=settings.google_oauth_redirect_uri
+        )
+
+    return probe
+
+
 @router.get("/connections", response_model=ConnectionCollection)
 async def list_connections(
     context: TenantContextDependency, session: TenantSession
@@ -160,9 +183,11 @@ async def authorize_google(
     context: TenantContextDependency, session: TenantSession
 ) -> GoogleAuthorizationEnvelope:
     """One consent for Search Console and GA4, bound to every verified site."""
-    authorization_url, expires_at = await ConnectorService(
-        session, context
-    ).begin_google_authorization(get_settings())
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as http_client:
+        authorization_url, expires_at = await ConnectorService(
+            session, context
+        ).begin_google_authorization(settings, await google_client_probe(http_client, settings))
     return GoogleAuthorizationEnvelope(
         data=GoogleAuthorizationRead(authorization_url=authorization_url, expires_at=expires_at),
         meta={"trace_id": context.trace_id},
@@ -188,9 +213,16 @@ async def authorize_gsc(
     context: TenantContextDependency,
     session: TenantSession,
 ) -> ConnectorAuthorizationEnvelope:
-    connector, authorization_url, expires_at = await ConnectorService(
-        session, context
-    ).begin_gsc_authorization(site_id, command.property_ref, get_settings())
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as http_client:
+        connector, authorization_url, expires_at = await ConnectorService(
+            session, context
+        ).begin_gsc_authorization(
+            site_id,
+            command.property_ref,
+            settings,
+            await google_client_probe(http_client, settings),
+        )
     return ConnectorAuthorizationEnvelope(
         data=ConnectorAuthorizationRead(
             connector=ConnectorRead.model_validate(connector),
@@ -212,9 +244,16 @@ async def authorize_analytics(
     context: TenantContextDependency,
     session: TenantSession,
 ) -> ConnectorAuthorizationEnvelope:
-    connector, authorization_url, expires_at = await ConnectorService(
-        session, context
-    ).begin_analytics_authorization(site_id, command.property_ref, get_settings())
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as http_client:
+        connector, authorization_url, expires_at = await ConnectorService(
+            session, context
+        ).begin_analytics_authorization(
+            site_id,
+            command.property_ref,
+            settings,
+            await google_client_probe(http_client, settings),
+        )
     return ConnectorAuthorizationEnvelope(
         data=ConnectorAuthorizationRead(
             connector=ConnectorRead.model_validate(connector),
@@ -225,7 +264,9 @@ async def authorize_analytics(
     )
 
 
-def dns_provider_client(provider_key: str, http_client: httpx.AsyncClient) -> CloudflareDnsHttpClient:
+def dns_provider_client(
+    provider_key: str, http_client: httpx.AsyncClient
+) -> CloudflareDnsHttpClient:
     if provider_key != "cloudflare":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="dns_provider_not_supported"
@@ -274,7 +315,9 @@ async def create_dns_provider_verification(
     settings = get_settings()
     secret_store = local_dns_provider_secret_store(settings, session)
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as http_client:
-        record_id, record_name = await ConnectorService(session, context).publish_dns_provider_challenge(
+        record_id, record_name = await ConnectorService(
+            session, context
+        ).publish_dns_provider_challenge(
             site_id,
             provider_key,
             command.token.get_secret_value(),

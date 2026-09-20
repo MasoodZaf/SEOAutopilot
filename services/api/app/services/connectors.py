@@ -35,6 +35,7 @@ from app.services.google_analytics import (
 from app.services.google_analytics import (
     property_matches_site as analytics_property_matches_site,
 )
+from app.services.google_client_check import REFUSAL_DETAIL, GoogleClientProbe
 from app.services.google_oauth import GoogleOAuthError, GoogleOAuthProvider
 from app.services.sites import SiteService, stable_hash
 from app.services.tenant_credentials import GoogleOAuthClient, google_oauth_client
@@ -103,13 +104,25 @@ class ConnectorService:
         self.context = context
         self.site_service = SiteService(session, context)
 
-    async def _google_client(self, settings: Settings) -> GoogleOAuthClient:
+    async def _google_client(
+        self, settings: Settings, probe: GoogleClientProbe | None = None
+    ) -> GoogleOAuthClient:
         """The OAuth client this tenant's consent should run through.
 
         Their own if they have configured one, the deployment's only if an
         operator deliberately left one set. A tenant with neither is refused
         here rather than sent to Google to be told, unhelpfully, that the
         client id is invalid.
+
+        `probe` asks Google whether the client will actually be accepted, and
+        every consent in this service goes through here, so one check covers
+        all of them. Refusing a client that cannot work is checked at the
+        moment of saving too, but that is not enough on its own: a client
+        saved before the check existed, or one whose Google Cloud project was
+        edited afterwards, is broken without anybody having typed anything.
+        This is the last point at which we can still say something useful --
+        after it, the browser is at Google and the refusal never comes back
+        to us.
         """
         if not settings.google_connectors_enabled:
             raise HTTPException(
@@ -122,6 +135,13 @@ class ConnectorService:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="google_oauth_client_not_configured",
             )
+        if probe is not None:
+            result = await probe(client.client_id)
+            if result.blocking:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=REFUSAL_DETAIL[result.status],
+                )
         return client
 
     async def list_for_site(self, site_id: UUID) -> list[Connector] | None:
@@ -214,22 +234,36 @@ class ConnectorService:
         account chooser. Several in a row is somebody trying repeatedly and
         being turned away, which is worth saying out loud rather than waiting
         for them to tell us.
+
+        Only failures since the last consent that *did* complete are counted.
+        Without that, a workspace which hit the problem, fixed it and
+        reconnected keeps being told for a week that a sign-in did not finish
+        -- and the banner says it clears on the next successful connection,
+        which would be a promise the count does not keep.
         """
-        since = datetime.now(UTC) - within
+        now = datetime.now(UTC)
+        succeeded_at = await self.session.scalar(
+            select(func.max(ConnectorOauthState.consumed_at)).where(
+                ConnectorOauthState.tenant_id == self.context.tenant_id
+            )
+        )
+        conditions = [
+            ConnectorOauthState.tenant_id == self.context.tenant_id,
+            ConnectorOauthState.consumed_at.is_(None),
+            ConnectorOauthState.expires_at < now,
+            ConnectorOauthState.created_at >= now - within,
+        ]
+        if succeeded_at is not None:
+            conditions.append(ConnectorOauthState.created_at > succeeded_at)
         return (
             await self.session.scalar(
-                select(func.count())
-                .select_from(ConnectorOauthState)
-                .where(
-                    ConnectorOauthState.tenant_id == self.context.tenant_id,
-                    ConnectorOauthState.consumed_at.is_(None),
-                    ConnectorOauthState.expires_at < datetime.now(UTC),
-                    ConnectorOauthState.created_at >= since,
-                )
+                select(func.count()).select_from(ConnectorOauthState).where(*conditions)
             )
         ) or 0
 
-    async def begin_google_authorization(self, settings: Settings) -> tuple[str, datetime]:
+    async def begin_google_authorization(
+        self, settings: Settings, probe: GoogleClientProbe | None = None
+    ) -> tuple[str, datetime]:
         """One Google consent that connects Search Console and GA4 on every site.
 
         Nothing is bound here and no connector changes state: which property
@@ -242,7 +276,7 @@ class ConnectorService:
         pending one if the site has none yet.
         """
         self.context.require(Role.OWNER, Role.ADMIN)
-        client = await self._google_client(settings)
+        client = await self._google_client(settings, probe)
         anchor = await self.session.scalar(
             select(Site)
             .where(
@@ -307,7 +341,11 @@ class ConnectorService:
         return f"https://accounts.google.com/o/oauth2/v2/auth?{query}", expires_at
 
     async def begin_analytics_authorization(
-        self, site_id: UUID, property_ref: str, settings: Settings
+        self,
+        site_id: UUID,
+        property_ref: str,
+        settings: Settings,
+        probe: GoogleClientProbe | None = None,
     ) -> tuple[Connector, str, datetime]:
         """Start a GA4 consent, without claiming the property is ours yet.
 
@@ -319,7 +357,7 @@ class ConnectorService:
         """
         self.context.require(Role.OWNER, Role.ADMIN)
         site = await self._verified_site(site_id)
-        client = await self._google_client(settings)
+        client = await self._google_client(settings, probe)
         if not _ANALYTICS_PROPERTY_PATTERN.fullmatch(property_ref):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -380,11 +418,15 @@ class ConnectorService:
         return connector, f"https://accounts.google.com/o/oauth2/v2/auth?{query}", expires_at
 
     async def begin_gsc_authorization(
-        self, site_id: UUID, property_ref: str, settings: Settings
+        self,
+        site_id: UUID,
+        property_ref: str,
+        settings: Settings,
+        probe: GoogleClientProbe | None = None,
     ) -> tuple[Connector, str, datetime]:
         self.context.require(Role.OWNER, Role.ADMIN)
         site = await self._verified_site(site_id)
-        client = await self._google_client(settings)
+        client = await self._google_client(settings, probe)
         if not property_matches_site(property_ref, site.normalized_host):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -557,7 +599,10 @@ class ConnectorService:
             self.session.add(connector)
             await self.session.flush()
         secret_ref = await secret_store.store(
-            self.context.tenant_id, connector.id, f"dns_provider:{provider_key}", {"api_token": api_token}
+            self.context.tenant_id,
+            connector.id,
+            f"dns_provider:{provider_key}",
+            {"api_token": api_token},
         )
         now = datetime.now(UTC)
         connector.status = "active"
@@ -790,9 +835,7 @@ class ConnectorOAuthCallbackService:
             ) from error
         granted = set(grant.scopes)
         if not granted or not granted <= set(WORKSPACE_GOOGLE_SCOPES):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="oauth_scope_mismatch"
-            )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="oauth_scope_mismatch")
         try:
             search_properties = (
                 await self.provider.list_properties(grant.access_token)

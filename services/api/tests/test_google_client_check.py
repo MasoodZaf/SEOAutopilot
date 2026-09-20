@@ -14,6 +14,7 @@ from uuid import UUID
 import httpx
 import pytest
 from fastapi import HTTPException
+from pydantic import SecretStr
 
 from app.services.google_client_check import (
     ClientCheck,
@@ -242,3 +243,80 @@ async def test_shape_is_rejected_before_google_is_asked():
 
     assert refusal.value.detail == "google_client_id_invalid"
     assert called is False
+
+
+# --- the connect path ----------------------------------------------------
+#
+# Saving is not the only way a workspace ends up with a client Google will
+# refuse: one saved before this check existed, or one whose Cloud project was
+# edited afterwards, is broken with nobody having typed anything. Every
+# consent resolves its client through `_google_client`, so the check belongs
+# there too -- it is the last moment before the browser leaves for Google,
+# after which the refusal never comes back to us.
+
+
+def _connector_service():
+    from app.services.connectors import ConnectorService
+
+    context = MagicMock()
+    context.tenant_id = UUID("019d0000-0000-7000-8000-0000000000a1")
+    context.actor_id = UUID("019d0000-0000-7000-8000-0000000000a2")
+    context.trace_id = "trace"
+    # No tenant credential row, so the client resolves to the deployment's
+    # own pair -- this is about the probe, not about whose client it is.
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=None)
+    return ConnectorService(session, context)
+
+
+def _settings():
+    from app.core.config import Settings
+
+    return Settings(  # pyright: ignore[reportCallIssue]
+        _env_file=None,
+        app_env="test",
+        cursor_signing_key="c" * 32,
+        google_connectors_enabled=True,
+        google_client_id=GOOD_CLIENT,
+        google_client_secret=SecretStr("a-secret-value"),
+        search_query_hash_key=SecretStr("q" * 32),
+        connector_secret_backend="database_envelope",
+        connector_secret_encryption_key=SecretStr("eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg="),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_consent_is_refused_before_the_browser_leaves_for_google(monkeypatch):
+    service = _connector_service()
+
+    async def probe(client_id: str) -> ClientCheckResult:
+        return ClientCheckResult(ClientCheck.REDIRECT_URI_MISMATCH, REDIRECT_URI)
+
+    with pytest.raises(HTTPException) as refusal:
+        await service._google_client(_settings(), probe)
+
+    assert refusal.value.status_code == 422
+    assert refusal.value.detail == "google_client_redirect_uri_not_registered"
+
+
+@pytest.mark.asyncio
+async def test_a_working_client_still_starts_its_consent():
+    service = _connector_service()
+
+    async def probe(client_id: str) -> ClientCheckResult:
+        return ClientCheckResult(ClientCheck.OK, REDIRECT_URI)
+
+    client = await service._google_client(_settings(), probe)
+    assert client.client_id == GOOD_CLIENT
+
+
+@pytest.mark.asyncio
+async def test_google_being_unreachable_does_not_block_a_consent():
+    """Same reasoning as the save path: their outage is not our refusal."""
+    service = _connector_service()
+
+    async def probe(client_id: str) -> ClientCheckResult:
+        return ClientCheckResult(ClientCheck.UNDETERMINED, REDIRECT_URI)
+
+    client = await service._google_client(_settings(), probe)
+    assert client.client_id == GOOD_CLIENT

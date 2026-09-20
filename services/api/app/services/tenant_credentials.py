@@ -28,7 +28,6 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -42,22 +41,12 @@ from app.core.config import Settings
 from app.core.context import Role, TenantContext
 from app.db.models import AppUser, AuditEvent, TenantCredential
 from app.services.connector_secrets import decode_encryption_key
-from app.services.google_client_check import ClientCheck, ClientCheckResult
+from app.services.google_client_check import REFUSAL_DETAIL, GoogleClientProbe
 from app.services.sites import stable_hash
 
 GOOGLE_OAUTH_CLIENT = "google_oauth_client"
 GITHUB_APP = "github_app"
 SUPPORTED_PROVIDERS = frozenset({GOOGLE_OAUTH_CLIENT, GITHUB_APP})
-
-# Given a client id, what Google says about it. Injected rather than called
-# directly so the service stays free of HTTP, and so a deployment that cannot
-# reach Google is not a deployment where nobody can save a credential.
-GoogleClientProbe = Callable[[str], Awaitable[ClientCheckResult]]
-
-_PROBE_REFUSAL = {
-    ClientCheck.REDIRECT_URI_MISMATCH: "google_client_redirect_uri_not_registered",
-    ClientCheck.CLIENT_UNKNOWN: "google_client_unknown",
-}
 
 
 def credential_aad(tenant_id: UUID, provider: str, key_version: str) -> bytes:
@@ -156,9 +145,7 @@ class TenantCredentialStore:
 
     def _open(self, credential: TenantCredential) -> dict[str, Any]:
         aad = credential_aad(credential.tenant_id, credential.provider, credential.key_version)
-        if not secrets.compare_digest(
-            hashlib.sha256(aad).hexdigest(), credential.aad_hash
-        ):
+        if not secrets.compare_digest(hashlib.sha256(aad).hexdigest(), credential.aad_hash):
             # The row was moved between tenants or providers. Decrypting would
             # fail anyway; refusing here says why.
             raise ValueError("tenant_credential_aad_mismatch")
@@ -356,7 +343,7 @@ class TenantCredentialService:
             if result.blocking:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=_PROBE_REFUSAL[result.status],
+                    detail=REFUSAL_DETAIL[result.status],
                 )
         credential = await store.put(
             self.context.tenant_id,

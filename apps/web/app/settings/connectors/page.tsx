@@ -71,6 +71,10 @@ const REASONS: Record<string, string> = {
   google_connector_not_configured: "Google connectors are not configured on this deployment.",
   google_oauth_client_not_configured:
     "This workspace has no Google OAuth client. Add one under Keys first.",
+  google_client_redirect_uri_not_registered:
+    "Google will not accept this workspace's OAuth client, so the sign-in was not started. Nothing was changed. The steps below fix it.",
+  google_client_unknown:
+    "Google does not recognise this workspace's OAuth client, so the sign-in was not started. Check under Keys that it still exists, or remove it to use this deployment's shared client.",
   site_not_verified:
     "This site has not completed host verification, so no property can be bound to it.",
   repository_and_token_required: "Enter the repository and a token that can read it.",
@@ -116,8 +120,10 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
     abandoned = connectionBody.meta?.abandoned_consents ?? 0;
     // Only when there is something to explain. This asks Google a question
     // over the network, and putting that on every render of the page would
-    // be paying for a diagnosis nobody needs.
-    if (abandoned > 0) {
+    // be paying for a diagnosis nobody needs. Two things ask for it: a
+    // consent that was started and never came back, and a connect the API
+    // has just refused -- the second carries the redirect URI to print.
+    if (abandoned > 0 || query.error === "google_client_redirect_uri_not_registered") {
       clientCheck = await apiJson<ClientCheck>(
         "/v1/tenant/credentials/google_oauth_client/check",
       ).catch(() => null);
@@ -185,7 +191,9 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
         at its own door, so nothing reached us to log -- this banner and the
         guide under it are the only place that failure is ever put into words.
       */}
-      {abandoned > 0 && clientCheck?.status === "redirect_uri_mismatch" ? (
+      {query.error === "google_client_redirect_uri_not_registered" && clientCheck ? (
+        <GoogleClientGuide redirectUri={clientCheck.redirect_uri} />
+      ) : abandoned > 0 && clientCheck?.status === "redirect_uri_mismatch" ? (
         <GoogleClientGuide
           redirectUri={clientCheck.redirect_uri}
           label="Google is refusing this workspace's sign-in"

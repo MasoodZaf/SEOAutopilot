@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import parse_qs, urlparse
@@ -69,6 +70,20 @@ class ClientCheckResult:
         tenant's client.
         """
         return self.status in {ClientCheck.REDIRECT_URI_MISMATCH, ClientCheck.CLIENT_UNKNOWN}
+
+
+# Given a client id, what Google says about it. Injected wherever a consent
+# is about to start, so the services stay free of HTTP and a deployment that
+# cannot reach Google is not one where nobody can connect anything.
+GoogleClientProbe = Callable[[str], Awaitable[ClientCheckResult]]
+
+# The refusal each blocking verdict becomes. Lives here rather than beside
+# either caller because both the save path and the connect path have to name
+# the same fault the same way -- the UI turns these into one guide.
+REFUSAL_DETAIL = {
+    ClientCheck.REDIRECT_URI_MISMATCH: "google_client_redirect_uri_not_registered",
+    ClientCheck.CLIENT_UNKNOWN: "google_client_unknown",
+}
 
 
 def _decode_auth_error(value: str) -> str:
