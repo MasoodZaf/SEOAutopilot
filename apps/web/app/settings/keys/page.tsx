@@ -1,6 +1,7 @@
 import {redirect} from "next/navigation";
 import type {Metadata} from "next";
 
+import {GoogleClientGuide} from "@/app/components/google-client-guide";
 import {apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {revokeCredentialAction, saveGithubAppAction, saveGoogleClientAction} from "./actions";
@@ -26,6 +27,10 @@ const REASONS: Record<string, string> = {
   google_client_id_invalid:
     "That does not look like an OAuth client ID. It ends in .apps.googleusercontent.com — the project number and the API key are different values.",
   google_client_secret_invalid: "That client secret is too short to be one.",
+  google_client_redirect_uri_not_registered:
+    "Google refuses this client: our callback is not one of its authorised redirect URIs. Nothing was saved. The steps below fix it.",
+  google_client_unknown:
+    "Google does not recognise that client ID. Check it was copied whole from the OAuth client you mean to use, and that the client has not been deleted.",
   github_app_incomplete: "Enter the app ID, the app slug and the private key.",
   github_app_id_invalid: "The GitHub app ID is a number, shown on the app's settings page.",
   github_app_slug_invalid: "Enter the app slug — the last part of the app's public URL.",
@@ -39,8 +44,13 @@ const REASONS: Record<string, string> = {
 
 const SOURCE_NOTE: Record<Credential["source"], string> = {
   tenant: "Your own credential is in use.",
+  // Deliberately not a nudge any more. This used to end "Store your own
+  // below", and tenants did -- into a Google Cloud project they then had to
+  // configure correctly, with a redirect URI that fails the whole connection
+  // if it is off by one character. The shared client needs no setup and
+  // works on the first click, so it is the recommendation, not the fallback.
   platform:
-    "Falling back to this deployment's shared credential. It works, but the consent screen names the operator's application and the API quota is shared. Store your own below.",
+    "Using this deployment's shared Google client. Nothing to set up, and this is the normal way to run. The consent screen names the operator's application and the API quota is shared.",
   none: "Nothing is configured, so this connector cannot be used yet.",
 };
 
@@ -130,7 +140,9 @@ export default async function KeysPage({searchParams}: PageProps) {
       ) : null}
       {query.revoked ? (
         <p className="rounded-[4px] border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
-          Removed. Existing connectors keep working until they next need to renew a token.
+          Removed. This workspace is back on the deployment&rsquo;s shared client. A refresh
+          token issued by your own client cannot be renewed by a different one, so each Google
+          connection will ask to be reconnected once — after that it stays connected.
         </p>
       ) : null}
       {query.error ? (
@@ -140,6 +152,9 @@ export default async function KeysPage({searchParams}: PageProps) {
         >
           {REASONS[query.error] ?? "That could not be saved."}
         </p>
+      ) : null}
+      {query.error === "google_client_redirect_uri_not_registered" ? (
+        <GoogleClientGuide redirectUri={callbacks.google_oauth_client ?? ""} />
       ) : null}
       {loadError ? (
         <p
@@ -160,11 +175,18 @@ export default async function KeysPage({searchParams}: PageProps) {
               Google OAuth client
             </h2>
             <p className="mt-1 text-sm text-ink-soft">
-              Used for Search Console and Analytics 4. Create an{" "}
-              <strong className="font-medium">OAuth client ID</strong> of type{" "}
-              <strong className="font-medium">Web application</strong> in your own Google Cloud
-              project, enable the Search Console API and the Google Analytics Admin and Data
-              APIs, and add this deployment&rsquo;s callback as an authorised redirect URI.
+              Used for Search Console and Analytics 4.{" "}
+              <strong className="font-medium">Most workspaces need nothing here</strong> — the
+              shared client above is already connecting Google for you. Bring your own only if
+              you need your own API quota, or your organisation will not consent to a
+              third-party application.
+            </p>
+            <p className="mt-2 text-sm text-ink-soft">
+              If you do: create an <strong className="font-medium">OAuth client ID</strong> of
+              type <strong className="font-medium">Web application</strong> in your own Google
+              Cloud project, enable the Search Console API and the Google Analytics Admin and
+              Data APIs, and register the redirect URI below. We check the client with Google
+              before storing it, so a save that succeeds is one that works.
             </p>
           </div>
           {google ? <SourceBadge source={google.source} /> : null}
@@ -219,7 +241,7 @@ export default async function KeysPage({searchParams}: PageProps) {
             <button
               type="submit"
               className="text-sm font-medium text-stop underline underline-offset-2 hover:text-stop"
-             data-tip="Revoke your stored credential. Existing connectors keep working until they next renew a token, then fall back to this deployment's shared client." aria-describedby="tip-bf1ec7e05e">
+             data-tip="Revoke your stored credential and go back to this deployment's shared client. Each Google connection will ask to be reconnected once, because a refresh token cannot be renewed by a different client." aria-describedby="tip-bf1ec7e05e">
               Remove this credential
             </button>
           </form>

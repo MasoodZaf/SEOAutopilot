@@ -9,11 +9,13 @@ scoped session, like the rest of the API.
 
 from datetime import datetime
 
+import httpx
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.api.schemas import (
     GitHubAppCreate,
+    GoogleClientCheckRead,
     GoogleOAuthClientCreate,
     TenantCreate,
     TenantCredentialCollection,
@@ -27,11 +29,13 @@ from app.core.auth import ActorContextDependency, TenantContextDependency
 from app.core.config import get_settings
 from app.db.models import Tenant, TenantMembership
 from app.db.session import TenantSession, authenticating_session
+from app.services.google_client_check import ClientCheckResult, check_google_client
 from app.services.tenant_credentials import (
     GITHUB_APP,
     GOOGLE_OAUTH_CLIENT,
     SUPPORTED_PROVIDERS,
     TenantCredentialService,
+    google_oauth_client,
     store_for,
 )
 from app.services.tenant_provisioning import TenantProvisioningService
@@ -140,6 +144,39 @@ async def list_credentials(
     )
 
 
+@credentials_router.get("/google_oauth_client/check", response_model=GoogleClientCheckRead)
+async def check_google_oauth_client(
+    context: TenantContextDependency, session: TenantSession
+) -> GoogleClientCheckRead:
+    """Whether a Google sign-in started right now would be accepted.
+
+    Exists so the connection manager can explain a failure it cannot otherwise
+    see. `redirect_uri_mismatch` happens entirely between the person's browser
+    and Google; we are never told. Asking Google ourselves is the only way to
+    turn "the sign-in went nowhere" into a sentence naming what to change.
+    """
+    settings = get_settings()
+    client = await google_oauth_client(session, settings, context.tenant_id)
+    if client is None:
+        return GoogleClientCheckRead(
+            status="not_configured",
+            source="none",
+            redirect_uri=settings.google_oauth_redirect_uri,
+        )
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as http_client:
+        result = await check_google_client(
+            http_client,
+            client_id=client.client_id,
+            redirect_uri=settings.google_oauth_redirect_uri,
+        )
+    return GoogleClientCheckRead(
+        status=result.status.value,
+        source=client.source,
+        redirect_uri=result.redirect_uri,
+        client_id=client.client_id,
+    )
+
+
 @credentials_router.put(
     "/google_oauth_client",
     response_model=TenantCredentialRead,
@@ -152,9 +189,18 @@ async def put_google_client(
 ) -> TenantCredentialRead:
     settings = get_settings()
     store = store_for(session, settings)
-    credential = await TenantCredentialService(session, context).upsert_google_client(
-        store, command.client_id, command.client_secret.get_secret_value()
-    )
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as http_client:
+
+        async def probe(client_id: str) -> ClientCheckResult:
+            return await check_google_client(
+                http_client,
+                client_id=client_id,
+                redirect_uri=settings.google_oauth_redirect_uri,
+            )
+
+        credential = await TenantCredentialService(session, context).upsert_google_client(
+            store, command.client_id, command.client_secret.get_secret_value(), probe=probe
+        )
     return TenantCredentialRead(
         provider=GOOGLE_OAUTH_CLIENT,
         source="tenant",

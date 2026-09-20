@@ -141,6 +141,12 @@ async def list_connections(
             "trace_id": context.trace_id,
             "count": len(data),
             "needs_attention": needs_attention,
+            # Consents that were started and never completed. A provider can
+            # refuse before it ever calls us back, and this is the only
+            # evidence of it we hold.
+            "abandoned_consents": await ConnectorService(
+                session, context
+            ).count_abandoned_consents(),
         },
     )
 

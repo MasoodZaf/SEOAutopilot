@@ -3,6 +3,7 @@ import type {Metadata} from "next";
 import {redirect} from "next/navigation";
 
 import type {Site} from "@/app/pilot/model";
+import {GoogleClientGuide} from "@/app/components/google-client-guide";
 import {Badge, Note, Panel, PanelHead, button, inputMono} from "@/app/components/ui";
 import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
@@ -31,6 +32,13 @@ type PageProps = {
 export const metadata: Metadata = {
   title: "Connections",
   robots: {index: false, follow: false},
+};
+
+type ClientCheck = {
+  status: "ok" | "redirect_uri_mismatch" | "client_unknown" | "undetermined" | "not_configured";
+  source: "tenant" | "platform" | "none";
+  redirect_uri: string;
+  client_id: string | null;
 };
 
 type Connection = {
@@ -94,15 +102,26 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
 
   let sites: Site[] = [];
   let connections: Connection[] = [];
+  let abandoned = 0;
+  let clientCheck: ClientCheck | null = null;
   let githubAppReady = false;
   let loadError: string | null = null;
   try {
     const [siteBody, connectionBody] = await Promise.all([
       apiJson<{data: Site[]}>("/v1/sites"),
-      apiJson<{data: Connection[]}>("/v1/connections"),
+      apiJson<{data: Connection[]; meta: {abandoned_consents?: number}}>("/v1/connections"),
     ]);
     sites = siteBody.data;
     connections = connectionBody.data;
+    abandoned = connectionBody.meta?.abandoned_consents ?? 0;
+    // Only when there is something to explain. This asks Google a question
+    // over the network, and putting that on every render of the page would
+    // be paying for a diagnosis nobody needs.
+    if (abandoned > 0) {
+      clientCheck = await apiJson<ClientCheck>(
+        "/v1/tenant/credentials/google_oauth_client/check",
+      ).catch(() => null);
+    }
     // Whether a one-step install can be offered. Unknown counts as no: the
     // token form still works, and offering an install that cannot start is a
     // button that only ever produces an error.
@@ -158,6 +177,34 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
       {problem ? (
         <Note tone="stop" role="alert">
           {problem}
+        </Note>
+      ) : null}
+
+      {/*
+        A consent that was started and never finished. The provider refused it
+        at its own door, so nothing reached us to log -- this banner and the
+        guide under it are the only place that failure is ever put into words.
+      */}
+      {abandoned > 0 && clientCheck?.status === "redirect_uri_mismatch" ? (
+        <GoogleClientGuide
+          redirectUri={clientCheck.redirect_uri}
+          label="Google is refusing this workspace's sign-in"
+        />
+      ) : abandoned > 0 && clientCheck?.status === "client_unknown" ? (
+        <Note tone="stop" label="Google is refusing this workspace's sign-in">
+          Google does not recognise the OAuth client this workspace is set up with, so the
+          sign-in never reaches a consent screen. Check it still exists under{" "}
+          <strong className="font-medium">Keys</strong>, or remove it there to use this
+          deployment&rsquo;s shared client instead.
+        </Note>
+      ) : abandoned > 0 ? (
+        <Note tone="warn" label="A sign-in did not finish">
+          {abandoned === 1
+            ? "A Google sign-in was started from here and never came back, so nothing was connected."
+            : `${abandoned} Google sign-ins were started from here and never came back, so nothing was connected.`}{" "}
+          If you cancelled it, nothing is wrong and this clears on the next successful
+          connection. If you were shown an error at Google instead, tell us what it said — the
+          refusal happens entirely at Google and we are not told the reason.
         </Note>
       ) : null}
 

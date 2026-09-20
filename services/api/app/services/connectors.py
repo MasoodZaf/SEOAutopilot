@@ -8,7 +8,7 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -200,6 +200,34 @@ class ConnectorService:
             },
         )
         return connector
+
+    async def count_abandoned_consents(self, within: timedelta = timedelta(days=7)) -> int:
+        """Consents this workspace started at a provider and never came back from.
+
+        The only trace a `redirect_uri_mismatch` leaves on our side. Google
+        refuses that request at its own door and redirects the browser to its
+        own error page, so our callback is never called: there is no request
+        to log, no error to record and no connector that visibly failed. What
+        remains is this -- a state row that was created and never consumed.
+
+        One of these is ordinary; somebody can always change their mind at the
+        account chooser. Several in a row is somebody trying repeatedly and
+        being turned away, which is worth saying out loud rather than waiting
+        for them to tell us.
+        """
+        since = datetime.now(UTC) - within
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(ConnectorOauthState)
+                .where(
+                    ConnectorOauthState.tenant_id == self.context.tenant_id,
+                    ConnectorOauthState.consumed_at.is_(None),
+                    ConnectorOauthState.expires_at < datetime.now(UTC),
+                    ConnectorOauthState.created_at >= since,
+                )
+            )
+        ) or 0
 
     async def begin_google_authorization(self, settings: Settings) -> tuple[str, datetime]:
         """One Google consent that connects Search Console and GA4 on every site.

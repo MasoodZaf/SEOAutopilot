@@ -1521,3 +1521,17 @@ class TenantCredentialCollection(BaseModel):
     # person registering it cannot connect to anything they typed.
     callbacks: dict[str, str]
     meta: dict[str, str | int]
+
+
+class GoogleClientCheckRead(BaseModel):
+    """What Google says today about the client this workspace would consent on.
+
+    Asked live rather than remembered. A client that worked when it was saved
+    can stop working the moment somebody edits the project it lives in, and a
+    stored verdict would keep saying "fine" while every sign-in was refused.
+    """
+
+    status: str
+    source: str
+    redirect_uri: str
+    client_id: str | None = None

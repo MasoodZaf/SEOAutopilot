@@ -223,6 +223,7 @@ td:first-child { color: var(--ink); font-weight: 500; width: 42%; }
   <div class="box warn">
     <div class="label">The most common failure</div>
     <p><code>redirect_uri_mismatch</code> at Google means the URI registered on the client is not character-for-character the one on the Keys page. A trailing slash counts. <code>invalid_client</code> means the ID and secret are not a pair; usually one was copied from a different client in the same project.</p>
+    <p>You should no longer meet either of these mid-connection. Saving a client now checks it against Google first: one that would be refused is not stored, and the Keys page prints the steps to fix it. If a sign-in is ever refused anyway, the Connections page says so and shows the same guide — you do not have to work out what happened from Google's error screen.</p>
   </div>
 </section>
 
