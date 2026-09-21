@@ -48,7 +48,7 @@ export function TipDescriptions() {
       <span id="tip-b6ef7312e7">{"Register the domain and issue a one-time TXT record proving you control it."}</span>
       <span id="tip-c6f0c10545">{"Remove this person from the workspace. Their account survives; their access here does not."}</span>
       <span id="tip-386f83ca86">{"Replace the token with a fresh one. The old record stops working immediately."}</span>
-      <span id="tip-bf1ec7e05e">{"Revoke your stored credential. Existing connectors keep working until they next renew a token, then fall back to this deployment's shared client."}</span>
+      <span id="tip-9f56c4389a">{"Revoke your stored credential and go back to this deployment's shared client. Each Google connection will ask to be reconnected once, because a refresh token cannot be renewed by a different client."}</span>
       <span id="tip-728aeb6e5d">{"Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals."}</span>
       <span id="tip-c08dbcd0f5">{"Save this approver count. It applies to proposals drafted from now on, not to ones already waiting."}</span>
       <span id="tip-dd1bb7f2b5">{"Sign in with Google once. Search Console and Analytics are connected for every verified site whose property that account can see."}</span>

@@ -241,7 +241,7 @@ export default async function KeysPage({searchParams}: PageProps) {
             <button
               type="submit"
               className="text-sm font-medium text-stop underline underline-offset-2 hover:text-stop"
-             data-tip="Revoke your stored credential and go back to this deployment's shared client. Each Google connection will ask to be reconnected once, because a refresh token cannot be renewed by a different client." aria-describedby="tip-bf1ec7e05e">
+             data-tip="Revoke your stored credential and go back to this deployment's shared client. Each Google connection will ask to be reconnected once, because a refresh token cannot be renewed by a different client." aria-describedby="tip-9f56c4389a">
               Remove this credential
             </button>
           </form>
