@@ -50,10 +50,41 @@ services:
     # passed through literally instead of being read as compose variables.
     env_file: [infra/local/caddy.env]
     volumes:
-      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The DIRECTORY, not the file. A single-file bind mount pins the
+      # container to one inode, and almost every way of editing a file --
+      # sed -i, an editor's atomic save, a deploy that copies over it --
+      # writes a new inode and renames it into place. The container then
+      # keeps serving the old contents forever, while `cat` on the host
+      # shows the new ones and `caddy reload` reports success reloading
+      # the old ones. That happened here on 2026-09-20: a BidLenz vhost
+      # and the network attachment it needed were added together, only
+      # the network took effect, and seo.oryxenlabs.com served the other
+      # application for a day. Google's reviewer found it, not us.
+      #
+      # Mounting the directory means an edit is visible immediately and
+      # `caddy reload` is enough. Read-only is safe: Caddy writes
+      # certificates to /data and its autosave to /config, never here.
+      - ./infra/caddy:/etc/caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on: [web, api]
+    networks:
+      - default
+      # Declared, because it is load-bearing: bidlenz.oryxenlabs.com is a
+      # vhost here, and its upstreams live on that project's network. It
+      # used to be attached by hand, which meant every `up --force-recreate`
+      # of this container silently took BidLenz off the air until somebody
+      # ran `docker network connect` again from memory.
+      - bidlenz
+
+networks:
+  # External on purpose: this overlay only runs on the host that also runs
+  # BidLenz. Anywhere else it fails at once with "network bidlenz_default
+  # not found", which is a far better outcome than starting and serving
+  # a 502 for one of the two sites.
+  bidlenz:
+    external: true
+    name: bidlenz_default
 
 volumes:
   caddy-data:

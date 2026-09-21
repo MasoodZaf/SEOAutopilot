@@ -39,12 +39,84 @@ seo.oryxenlabs.com {
 	# serving an OWNER-token session to anyone who asked. Nothing detected
 	# it, because every individual piece was correct.
 
+	# The upstreams are named by container, not by compose service, because
+	# this container does not sit on only our network. On 2026-09-20 it was
+	# also attached to `bidlenz_default`, where another project has services
+	# called `api` and `web` too. Docker's DNS answered with whichever it
+	# liked: both `api` and `web` resolved into the 172.19 network, so every
+	# page of seo.oryxenlabs.com served the other application and every
+	# /api/* call returned 502 -- their API listens on 8787, so :8000 was
+	# refused. Nothing here failed; the names simply stopped meaning us.
+	#
+	# It was found because Google rejected the OAuth verification, saying the
+	# homepage and privacy policy were unresponsive. They were. That is the
+	# only reason anybody looked, which is the part worth remembering: an
+	# ambiguous name fails silently and completely.
+	#
+	# A container name cannot collide the way a service name can. The cost is
+	# that renaming the compose project breaks these two lines, loudly, at
+	# reload -- which is the failure we want.
 	handle_path /api/* {
-		reverse_proxy api:8000
+		reverse_proxy seo-autopilot-api-1:8000
 	}
 
 	handle {
-		reverse_proxy web:3000
+		reverse_proxy seo-autopilot-web-1:3000
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Cha-Ching relay (Oryxen Labs) -- the vhost for relay.oryxenlabs.com.
+#
+# This file is now the whole config, not a fragment to be appended. Deploy it
+# by syncing `infra/caddy/`, then validate and reload inside the container --
+# a reload does not restart it, so no vhost drops a connection:
+#
+#   docker exec seo-autopilot-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+#   docker exec seo-autopilot-caddy-1 caddy reload   --config /etc/caddy/Caddyfile
+#
+# WHY THIS BLOCK EXISTS HERE. It was added by hand on 2026-09-02 with the
+# migration off the codeArc box, and lost on 2026-09-08 when that Caddyfile was
+# replaced wholesale by a copy that predated it. relay.oryxenlabs.com then
+# served no certificate at all -- Caddy answered the TLS handshake with an
+# internal-error alert -- and every phone reported "lost connection" until
+# 2026-09-10. Nothing on the seo-autopilot side failed, so nothing showed it.
+#
+# That directory on the box is not a git checkout; it is deployed by copying
+# files onto it. A copy that does not carry this block takes the relay off the
+# air silently -- which is why every vhost the box serves now lives in this
+# file, including BidLenz below. Editing prod by hand is what broke it, twice.
+# `scripts/check_relay.sh` catches it happening.
+#
+# The relay is a HOST systemd service (chaching-relay on 0.0.0.0:8766), not a
+# container, so Caddy reaches it across the Docker bridge gateway rather than
+# by container name. ufw permits 8766 only from the Docker subnets.
+# ---------------------------------------------------------------------------
+relay.oryxenlabs.com {
+	reverse_proxy 172.18.0.1:8766
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+bidlenz.oryxenlabs.com {
+	encode zstd gzip
+
+	handle_path /api/* {
+		reverse_proxy bidlenz-api-1:8787
+	}
+
+	handle {
+		reverse_proxy bidlenz-web-1:3000
 	}
 
 	header {
