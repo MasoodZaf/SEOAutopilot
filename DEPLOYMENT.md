@@ -46,14 +46,18 @@ The repo has no git remote on the server; code is synced by rsync from the
 development machine:
 
 ```bash
-rsync -az \
-  --exclude='.git/' --exclude='node_modules/' --exclude='.next/' \
-  --exclude='.turbo/' --exclude='.venv-*/' --exclude='.venv/' --exclude='__pycache__/' \
-  --exclude='*.pyc' --exclude='*.tsbuildinfo' \
-  --exclude='.ruff_cache/' --exclude='.pytest_cache/' --exclude='._*' \
-  --exclude='.env.local' --exclude='.env' --exclude='infra/local/' \
-  ./ oryxen:/opt/seo-autopilot/
+bash infra/scripts/deploy-sync.sh
 ```
+
+**Use the script, not a hand-typed rsync.** Three of its excludes —
+`infra/local/`, `.env.local` and `.env` — protect host-only state that nothing
+in this repo can regenerate. On 2026-09-20 a resync kept the last two and
+dropped the first; the laptop's 88-byte `infra/local/web.env` overwrote the
+host's 418-byte copy, deleting the OIDC client id, client secret and session
+secret. Sign-in returned `503 authentication_not_configured` for a day, the
+control plane served 200 to anonymous requests because the web tier used to
+fail open, and the client secret had to be fetched from the Cloud Console
+again. The excludes are the whole point of the command.
 
 Everything on the host runs through the production overlay:
 

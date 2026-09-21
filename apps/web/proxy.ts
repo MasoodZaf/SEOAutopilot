@@ -26,7 +26,27 @@ import {SESSION_COOKIE} from "@/lib/cookie-names";
  * not visible there it reads the proxy's forwarding headers instead.
  */
 export function proxy(request: NextRequest) {
-  if (!process.env.OIDC_ISSUER_URL) return NextResponse.next();
+  // Unconfigured authentication is not a reason to stop guarding.
+  //
+  // This used to be `if (!OIDC_ISSUER_URL) return next()` unconditionally, for
+  // the era before sign-in existed. On 2026-09-20 a deploy overwrote
+  // `infra/local/web.env` with a stale copy holding only the pilot token, and
+  // that one line turned a missing file into an open control plane: /pilot and
+  // /settings answered 200 to anonymous requests for a day. Nothing leaked,
+  // because the API refuses the stale token -- but that was the second line of
+  // defence doing the first line's job.
+  //
+  // So the escape hatch is now confined to development, where there is no
+  // sign-in to have and `next dev` is the only way to reach these pages. In
+  // production a missing issuer means nobody can hold a session cookie, so
+  // every request below falls through to the sign-in redirect. Closed, not open.
+  //
+  // This deliberately does not shout about the misconfiguration: what notices
+  // it is check-perimeter.sh, which asserts that /auth/login actually starts an
+  // authorization. That fails loudly while this fails safely.
+  if (!process.env.OIDC_ISSUER_URL && process.env.NODE_ENV !== "production") {
+    return NextResponse.next();
+  }
   if (request.cookies.has(SESSION_COOKIE)) return NextResponse.next();
   const login = new URL("/login", appOrigin(request));
   login.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
