@@ -126,6 +126,14 @@ export default async function KeysPage({searchParams}: PageProps) {
           API quota you spend is your own. They are encrypted before they are written down, and
           no page ever reads one back to you — replacing one is how you change it.
         </p>
+        <p className="text-pretty text-sm text-ink-soft">
+          Storing your own Google client is optional, and it costs more than it looks.
+          Analytics access is a scope Google reviews, and Google reviews the project that asks
+          for it — so your own client eventually means your own verification, your own demo
+          video, and a limit of 100 people until it passes. Leaving this empty uses the
+          client this deployment already maintains, which is the ordinary way to run and needs
+          no setup.
+        </p>
       </header>
 
       {query.created ? (
