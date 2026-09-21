@@ -39,7 +39,10 @@ echo
 # --delete is deliberately absent. It is destructive on the remote and has no
 # way to distinguish a file this repo no longer has from a file the host is
 # supposed to own. Prune by hand when something genuinely needs removing.
-rsync -az --info=stats1 \
+# `--stats`, not `--info=stats1`: macOS 15 replaced rsync with openrsync,
+# which reports itself as "rsync version 2.6.9 compatible" and predates the
+# `--info=` family. `--stats` is understood by both.
+rsync -az --stats \
   --exclude='.git/' --exclude='node_modules/' --exclude='.next/' \
   --exclude='.turbo/' --exclude='.venv-*/' --exclude='.venv/' --exclude='__pycache__/' \
   --exclude='*.pyc' --exclude='*.tsbuildinfo' \
