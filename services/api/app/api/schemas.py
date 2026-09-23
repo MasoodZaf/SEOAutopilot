@@ -99,6 +99,12 @@ class CrawlRead(BaseModel):
     status: str
     config_snapshot: dict[str, object]
     result_summary: dict[str, object]
+    # Live counts while it runs (phase, fetched, pending, saved, ...), and
+    # when the crawler last checked in -- how a slow crawl is told apart from
+    # a stuck one.
+    progress: dict[str, object] = Field(default_factory=dict)
+    attempts: int = 0
+    last_heartbeat_at: datetime | None = None
     started_at: datetime | None
     finished_at: datetime | None
     error_code: str | None
@@ -108,6 +114,11 @@ class CrawlRead(BaseModel):
 class CrawlEnvelope(BaseModel):
     data: CrawlRead
     meta: dict[str, str]
+
+
+class CrawlCollection(BaseModel):
+    data: list[CrawlRead]
+    meta: dict[str, str | int]
 
 
 class SearchPerformanceRead(BaseModel):

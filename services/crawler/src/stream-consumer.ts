@@ -3,7 +3,7 @@ import {hostname} from "node:os";
 import {Pool} from "pg";
 import {createClient} from "redis";
 
-import {crawlSite} from "./crawl-engine.js";
+import {crawlSite, newProgress} from "./crawl-engine.js";
 import {claimCrawl,completeCrawl,heartbeatCrawl,persistObservation,releaseFailedCrawl} from "./database.js";
 import {createAdaptiveFetcher} from "./adaptive-fetcher.js";
 
@@ -51,20 +51,27 @@ export async function runConsumer():Promise<void>{
       if(!crawl)continue;
       const host=new URL(crawl.origin).hostname.toLowerCase();const managedFetcher=createAdaptiveFetcher(new Set([host]),crawl.renderPolicy);
       let heartbeatError:Error|null=null;let heartbeatBusy=false;
+      // Shared with crawlSite, which updates it as it goes; the heartbeat
+      // writes a snapshot so the dashboard can show a live bar.
+      const progress=newProgress(crawl.maxPages);
       const heartbeat=async()=>{
         if(heartbeatBusy||heartbeatError)return;
         heartbeatBusy=true;
         try{
-          await heartbeatCrawl(pool,crawl);
+          await heartbeatCrawl(pool,crawl,progress);
           await redis.sendCommand(["XCLAIM",STREAM,GROUP,consumer,"0",message.id,"JUSTID"]);
         }catch(error){heartbeatError=error instanceof Error?error:new Error("crawl_heartbeat_failed")}
         finally{heartbeatBusy=false}
       };
-      const heartbeatTimer=setInterval(()=>{void heartbeat()},30_000);
+      // Every 10s rather than 30s: it is now what a person watching the bar
+      // sees move, as well as the lease.
+      const heartbeatTimer=setInterval(()=>{void heartbeat()},10_000);
+      void heartbeat();
       try{
-        const result=await crawlSite(crawl.origin,crawl.maxPages,managedFetcher.fetch,crawl.maxDepth);
+        const result=await crawlSite(crawl.origin,crawl.maxPages,managedFetcher.fetch,crawl.maxDepth,progress);
         if(heartbeatError)throw heartbeatError;
-        for(const observation of result.observations)await persistObservation(pool,crawl,observation);
+        progress.phase="saving";
+        for(const observation of result.observations){await persistObservation(pool,crawl,observation);progress.saved+=1}
         await completeCrawl(pool,crawl,result);
         await redis.sendCommand(["XACK",STREAM,GROUP,message.id]);
       }catch(error){await releaseFailedCrawl(pool,crawl,error instanceof Error?error.message:"crawl_failed")}

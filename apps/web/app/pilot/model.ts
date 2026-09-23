@@ -14,6 +14,9 @@ export type Crawl = {
   status: string;
   config_snapshot: Record<string, unknown>;
   result_summary: Record<string, unknown>;
+  progress?: Record<string, unknown>;
+  attempts?: number;
+  last_heartbeat_at?: string | null;
   started_at: string | null;
   finished_at: string | null;
   error_code: string | null;

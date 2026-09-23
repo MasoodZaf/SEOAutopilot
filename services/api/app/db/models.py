@@ -132,6 +132,10 @@ class CrawlJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(80))
     result_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Written by the crawler's heartbeat while it runs; see migration 0042.
+    progress: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    attempts: Mapped[int] = mapped_column(default=0)
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

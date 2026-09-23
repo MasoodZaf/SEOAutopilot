@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {crawlSite, extractSitemapUrls, normalizeCandidate} from "./crawl-engine.js";
+import {crawlSite, extractSitemapUrls, newProgress, normalizeCandidate} from "./crawl-engine.js";
 import type {FetchResource, FetchedResource} from "./types.js";
 
 function resource(url:string,body:string,contentType:string):FetchedResource{return {requestedUrl:url,finalUrl:url,status:200,contentType,body,rendered:false}}
@@ -94,4 +94,27 @@ test("markup boundaries inside a heading are word boundaries, not joins",async()
   // Paragraph boundaries separate words too, and script source is not copy:
   // the five heading words, four from the paragraphs, two from the link.
   assert.equal(home?.wordCount,11);
+});
+
+test("progress counts pages as they are fetched and names no URL",async()=>{
+  const responses=new Map<string,FetchedResource>([
+    ["https://progress.example/robots.txt",resource("https://progress.example/robots.txt","User-agent: *\nDisallow: /private","text/plain")],
+    ["https://progress.example/",resource("https://progress.example/","<html><body><a href='/a'>A</a><a href='/b'>B</a><a href='/private'>P</a></body></html>","text/html")],
+    ["https://progress.example/a",resource("https://progress.example/a","<html><body>A</body></html>","text/html")],
+  ]);
+  const progress=newProgress(10);
+  const seenMidway:number[]=[];
+  const fetcher:FetchResource=async url=>{
+    seenMidway.push(progress.fetched);
+    const found=responses.get(url.toString());if(!found)throw new Error("missing");return found;
+  };
+  await crawlSite("https://progress.example",10,fetcher,10,progress);
+  assert.equal(progress.phase,"fetching");
+  assert.equal(progress.fetched,2);
+  assert.equal(progress.fetch_errors,1);
+  assert.equal(progress.skipped_by_robots,1);
+  assert.equal(progress.pending,0);
+  // The counter moved while the crawl ran, not only at the end.
+  assert.ok(seenMidway.includes(1));
+  assert.ok(!JSON.stringify(progress).includes("progress.example"));
 });

@@ -62,11 +62,11 @@ export async function claimCrawl(pool: Pool, tenantId: string, crawlId: string):
   });
 }
 
-export async function heartbeatCrawl(pool: Pool, crawl: ClaimedCrawl): Promise<void> {
+export async function heartbeatCrawl(pool: Pool, crawl: ClaimedCrawl, progress?: object): Promise<void> {
   await tenantTransaction(pool,crawl.tenantId,async client=>{
     const result=await client.query(
-      "UPDATE crawl_job SET lease_until=now()+interval '2 minutes',last_heartbeat_at=now() WHERE id=$1 AND tenant_id=$2 AND status='running'",
-      [crawl.id,crawl.tenantId],
+      "UPDATE crawl_job SET lease_until=now()+interval '2 minutes',last_heartbeat_at=now(),progress=coalesce($3::jsonb,progress) WHERE id=$1 AND tenant_id=$2 AND status='running'",
+      [crawl.id,crawl.tenantId,progress?JSON.stringify(progress):null],
     );
     if(result.rowCount!==1)throw new Error("crawl_lease_lost");
   });

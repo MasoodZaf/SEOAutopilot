@@ -115,11 +115,33 @@ function extractStructuredData($: ReturnType<typeof load>): unknown[] {
   });
 }
 
+/**
+ * What a running crawl has done so far, for the progress bar.
+ *
+ * Mutated in place by `crawlSite` and read by the heartbeat, which writes it
+ * to `crawl_job.progress`. Counts only -- never a URL, so nothing a site
+ * serves ends up in a status payload.
+ */
+export type CrawlProgress = {
+  phase: "discovering" | "fetching" | "saving";
+  fetched: number;
+  pending: number;
+  fetch_errors: number;
+  skipped_by_robots: number;
+  saved: number;
+  max_pages: number;
+};
+
+export function newProgress(maxPages: number): CrawlProgress {
+  return {phase: "discovering", fetched: 0, pending: 0, fetch_errors: 0, skipped_by_robots: 0, saved: 0, max_pages: maxPages};
+}
+
 export async function crawlSite(
   origin: string,
   maxPages: number,
   fetchResource: FetchResource,
   maxDepth = 10,
+  progress: CrawlProgress = newProgress(maxPages),
 ): Promise<CrawlResult> {
   const root = new URL(origin);
   const host = root.hostname.toLowerCase();
@@ -189,7 +211,16 @@ export async function crawlSite(
   const observations: PageObservation[] = [];
   let skippedByRobots = 0;
   let fetchErrors = 0;
+  progress.phase = "fetching";
+  const report = () => {
+    progress.fetched = observations.length;
+    progress.pending = Math.min(queue.length, maxPages - observations.length);
+    progress.fetch_errors = fetchErrors;
+    progress.skipped_by_robots = skippedByRobots;
+  };
+  report();
   while (queue.length && observations.length < maxPages) {
+    report();
     const entry = queue.shift();
     if (!entry) continue;
     const current = entry.url;
@@ -238,5 +269,6 @@ export async function crawlSite(
       linksTruncated: linkElements.length > MAX_LINKS_PER_PAGE,
     });
   }
+  report();
   return {observations, skippedByRobots, fetchErrors, discoveryTruncated, sitemaps};
 }

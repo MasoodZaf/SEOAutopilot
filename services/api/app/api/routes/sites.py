@@ -8,6 +8,7 @@ from app.api.schemas import (
     CalibrationRunCreate,
     CalibrationRunEnvelope,
     CalibrationRunRead,
+    CrawlCollection,
     CrawlCreate,
     CrawlEnvelope,
     CrawlRead,
@@ -277,6 +278,21 @@ async def create_crawl(
 ) -> CrawlEnvelope:
     crawl = await SiteService(session, context).create_crawl(site_id, command)
     return CrawlEnvelope(data=CrawlRead.model_validate(crawl), meta={"trace_id": context.trace_id})
+
+
+@router.get("/{site_id}/crawls", response_model=CrawlCollection)
+async def list_recent_crawls(
+    site_id: UUID,
+    context: TenantContextDependency,
+    session: TenantSession,
+    limit: int = Query(default=5, ge=1, le=20),
+) -> CrawlCollection:
+    """The most recent crawls, newest first, for the status panel's history."""
+    crawls = await SiteService(session, context).recent_crawls(site_id, limit)
+    return CrawlCollection(
+        data=[CrawlRead.model_validate(item) for item in crawls],
+        meta={"trace_id": context.trace_id, "count": len(crawls)},
+    )
 
 
 @router.get("/{site_id}/crawls/latest", response_model=CrawlEnvelope)

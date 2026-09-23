@@ -29,6 +29,7 @@ import {
 } from "./actions";
 import {advisoryFor} from "./advisory.mjs";
 import {SerpPreview} from "./components/serp-preview";
+import {CrawlPanel} from "./crawl-panel";
 import {challengeCookie, type CalibrationRun, type Crawl, type Site} from "./model";
 import {pilotPath, selectSite} from "./site-selection.mjs";
 
@@ -179,6 +180,8 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   measurements: Measurement[];
   calibration?: CalibrationRun;
   latestCrawl?: Crawl;
+  crawls?: Crawl[];
+  renderedAt?: string;
   searchPerformance?: SearchPerformance;
   engagement?: Engagement;
   performanceRun?: PerformanceRun;
@@ -228,16 +231,13 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
     }
 
     let calibration: CalibrationRun | undefined;
-    let latestCrawl: Crawl | undefined;
+
     let searchPerformance: SearchPerformance | undefined;
     let engagement: Engagement | undefined;
     let performanceRun: PerformanceRun | undefined;
     let performanceSummary: PerformanceSummary | undefined;
-    try {
-      latestCrawl = (await apiJson<{data: Crawl}>(`/v1/sites/${site.id}/crawls/latest`)).data;
-    } catch (error) {
-      if (!(error instanceof Error && "status" in error && error.status === 404)) throw error;
-    }
+    const crawls = (await apiJson<{data: Crawl[]}>(`/v1/sites/${site.id}/crawls?limit=5`)).data;
+    const latestCrawl: Crawl | undefined = crawls[0];
     if (site.status === "active") {
       try {
         searchPerformance = (await apiJson<{data: SearchPerformance}>(`/v1/sites/${site.id}/search-performance`)).data;
@@ -278,6 +278,8 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       measurements,
       calibration,
       latestCrawl,
+      crawls,
+      renderedAt: new Date().toISOString(),
       searchPerformance,
       engagement,
       performanceRun,
@@ -635,13 +637,17 @@ export default async function PilotPage({searchParams}: PageProps) {
         </section>
       ) : (
         <>
+          <CrawlPanel crawls={data.crawls ?? []} now={data.renderedAt ?? new Date().toISOString()} />
+
           {/* Quick Actions Grid */}
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
               <div>
                 <h3 className="text-sm font-semibold text-ink">Bounded Crawl Engine</h3>
                 <p className="mt-1 text-xs text-ink-faint">
-                  {data.latestCrawl ? `Last crawl: ${data.latestCrawl.status}` : "No crawl executed yet."}
+                  {data.latestCrawl && ["queued", "running"].includes(data.latestCrawl.status)
+                    ? "A crawl is in progress — see above."
+                    : "Read-only: gathers evidence and changes nothing on the site."}
                 </p>
               </div>
               <form action={startFirstCrawl} className="mt-3">

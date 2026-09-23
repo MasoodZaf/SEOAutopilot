@@ -201,6 +201,21 @@ class SiteService:
         )
         return crawl
 
+    async def recent_crawls(self, site_id: UUID, limit: int) -> list[CrawlJob]:
+        site = await self.get_site(site_id)
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+        rows = await self.session.scalars(
+            select(CrawlJob)
+            .where(
+                CrawlJob.tenant_id == self.context.tenant_id,
+                CrawlJob.site_id == site.id,
+            )
+            .order_by(CrawlJob.created_at.desc(), CrawlJob.id.desc())
+            .limit(limit)
+        )
+        return list(rows)
+
     async def latest_crawl(self, site_id: UUID) -> CrawlJob | None:
         site = await self.get_site(site_id)
         if site is None:
