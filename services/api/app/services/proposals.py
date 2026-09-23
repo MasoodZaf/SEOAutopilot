@@ -92,18 +92,94 @@ class ProposalService:
         if page is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="page_not_found")
 
-        base_hash = compute_content_hash(command.before_content)
+        return await self._create(
+            site,
+            opportunity_id=command.opportunity_id,
+            page_id=command.page_id,
+            content_draft_id=None,
+            title=command.title,
+            rationale=command.rationale,
+            target_type=command.target_type,
+            target_path=command.target_path,
+            before_content=command.before_content,
+            after_content=command.after_content,
+            evidence_refs=opportunity.evidence_refs,
+            expires_in_days=command.expires_in_days,
+        )
+
+    async def create_new_page(
+        self,
+        site: Site,
+        *,
+        page_id: UUID,
+        content_draft_id: UUID,
+        title: str,
+        rationale: str,
+        target_path: str,
+        after_content: str,
+        evidence_refs: dict[str, Any],
+    ) -> Proposal:
+        """A proposal that adds a file which does not exist yet.
+
+        `before_content` is empty, so the deployment's drift check requires
+        the file to still be absent when it opens the pull request: a post
+        cannot silently overwrite a page someone created in the meantime.
+        """
+        if self.context.role not in ALLOWED_PROPOSAL_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_create_proposal",
+            )
+        return await self._create(
+            site,
+            opportunity_id=None,
+            page_id=page_id,
+            content_draft_id=content_draft_id,
+            title=title,
+            rationale=rationale,
+            target_type="github_file",
+            target_path=target_path,
+            before_content="",
+            after_content=after_content,
+            evidence_refs=evidence_refs,
+            expires_in_days=14,
+        )
+
+    async def _create(
+        self,
+        site: Site,
+        *,
+        opportunity_id: UUID | None,
+        page_id: UUID,
+        content_draft_id: UUID | None,
+        title: str,
+        rationale: str,
+        target_type: str,
+        target_path: str,
+        before_content: str,
+        after_content: str,
+        evidence_refs: dict[str, Any],
+        expires_in_days: int,
+    ) -> Proposal:
+        """Validate, evaluate policy, and record one proposal.
+
+        The one path every proposal takes, whether it came from a finding or
+        from a reviewed content draft, so validation, risk tier, approver
+        count, audit and outbox cannot differ between the two.
+        """
+        site_id = site.id
+        base_hash = compute_content_hash(before_content)
         diff_unified = generate_unified_diff(
-            command.before_content, command.after_content, command.target_path
+            before_content, after_content, target_path
         )
         validations = validate_proposal_content(
-            command.target_type, command.target_path, command.before_content, command.after_content
+            target_type, target_path, before_content, after_content
         )
         policy = evaluate_proposal_policy(
-            command.target_type,
-            command.target_path,
-            command.before_content,
-            command.after_content,
+            target_type,
+            target_path,
+            before_content,
+            after_content,
             validations,
             author_id=self.context.actor_id,
             tenant_mode=site.mode,
@@ -111,16 +187,16 @@ class ProposalService:
         )
 
         proposal_payload = {
-            "title": command.title,
-            "rationale": command.rationale,
-            "target_type": command.target_type,
-            "target_path": command.target_path,
-            "before_content": command.before_content,
-            "after_content": command.after_content,
+            "title": title,
+            "rationale": rationale,
+            "target_type": target_type,
+            "target_path": target_path,
+            "before_content": before_content,
+            "after_content": after_content,
         }
         proposal_hash = stable_hash(proposal_payload)
         now = datetime.now(UTC)
-        expires_at = now + timedelta(days=command.expires_in_days)
+        expires_at = now + timedelta(days=expires_in_days)
 
         if policy.risk == "prohibited":
             initial_status = "rejected"
@@ -134,15 +210,16 @@ class ProposalService:
         proposal = Proposal(
             tenant_id=self.context.tenant_id,
             site_id=site_id,
-            opportunity_id=command.opportunity_id,
-            page_id=command.page_id,
+            opportunity_id=opportunity_id,
+            page_id=page_id,
+            content_draft_id=content_draft_id,
             author_id=self.context.actor_id,
-            title=command.title,
-            rationale=command.rationale,
-            target_type=command.target_type,
-            target_path=command.target_path,
-            before_content=command.before_content,
-            after_content=command.after_content,
+            title=title,
+            rationale=rationale,
+            target_type=target_type,
+            target_path=target_path,
+            before_content=before_content,
+            after_content=after_content,
             diff_unified=diff_unified,
             base_hash=base_hash,
             proposal_hash=proposal_hash,
@@ -150,7 +227,7 @@ class ProposalService:
             status=initial_status,
             validations_json=[v.to_dict() for v in validations],
             policy_evaluation_json=policy.to_dict(),
-            evidence_refs=opportunity.evidence_refs,
+            evidence_refs=evidence_refs,
             expires_at=expires_at,
         )
         self.session.add(proposal)
@@ -159,7 +236,8 @@ class ProposalService:
         event_payload = {
             "proposal_id": str(proposal.id),
             "site_id": str(site_id),
-            "opportunity_id": str(command.opportunity_id),
+            "opportunity_id": str(opportunity_id) if opportunity_id else None,
+            "content_draft_id": str(content_draft_id) if content_draft_id else None,
             "author_id": str(self.context.actor_id),
             "risk": policy.risk,
             "status": initial_status,

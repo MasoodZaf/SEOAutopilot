@@ -33,7 +33,9 @@ export type Opportunity = z.infer<typeof OpportunitySchema>;
 export const ProposalSchema = z.object({
   id: z.string().uuid(),
   site_id: z.string().uuid(),
-  opportunity_id: z.string().uuid(),
+  // Null for a new blog post, which starts from a reviewed content draft.
+  opportunity_id: z.string().uuid().nullable(),
+  content_draft_id: z.string().uuid().nullable().optional(),
   page_id: z.string().uuid(),
   author_id: z.string().uuid(),
   title: z.string().min(3).max(240),

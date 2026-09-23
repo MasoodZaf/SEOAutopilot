@@ -258,3 +258,24 @@ export async function withdrawDraft(formData: FormData): Promise<never> {
   }
   redirectFresh(`${back}?withdrawn=1`);
 }
+
+/**
+ * Send a reviewed draft for approval.
+ *
+ * Creates a proposal to add the post as a new file. It still needs two
+ * approvers who are not its author, and deploying it opens a pull request a
+ * person merges -- nothing here publishes.
+ */
+export async function submitDraft(formData: FormData): Promise<never> {
+  const draftId = String(formData.get("draft_id") ?? "");
+  if (!UUID.test(draftId)) redirectFresh("/pilot/workspace?error=invalid_draft_update");
+  const back = `/pilot/workspace/drafts/${draftId}`;
+  try {
+    await apiJson(`/v1/content-drafts/${draftId}/submit`, {method: "POST"});
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code)}`);
+    throw error;
+  }
+  redirectFresh(`${back}?submitted=1`);
+}

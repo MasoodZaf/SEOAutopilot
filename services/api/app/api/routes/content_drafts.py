@@ -104,6 +104,19 @@ async def update_content_draft(
     return ContentDraftEnvelope(data=await _read(session, draft), meta={"trace_id": context.trace_id})
 
 
+@router.post("/content-drafts/{draft_id}/submit", response_model=ContentDraftEnvelope)
+async def submit_content_draft(
+    draft_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> ContentDraftEnvelope:
+    """Turn a reviewed draft into a proposal to add the post to the site."""
+    service = ContentDraftService(session, context, get_settings())
+    await service.submit(draft_id)
+    draft = await service.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="content_draft_not_found")
+    return ContentDraftEnvelope(data=await _read(session, draft), meta={"trace_id": context.trace_id})
+
+
 @router.post("/content-drafts/{draft_id}/withdraw", response_model=ContentDraftEnvelope)
 async def withdraw_content_draft(
     draft_id: UUID, context: TenantContextDependency, session: TenantSession

@@ -79,6 +79,10 @@ class MeasurementService:
         # change from any other.
         added = changed_lines(proposal.diff_unified)
         expected_pattern = "\n".join(added) if added else proposal.after_content.strip()
+        if proposal.content_draft_id is not None:
+            # A new post's source is Markdown with front matter, which never
+            # appears verbatim in the HTML a generator serves. Its title does.
+            expected_pattern = proposal.title.removeprefix("New post: ").strip()
         ver_result = verify_rendered_content(expected_pattern, live_body, live_status)
         now = datetime.now(UTC)
         ver_status = "verified" if ver_result.is_verified else "failed"

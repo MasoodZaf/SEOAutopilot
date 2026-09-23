@@ -213,6 +213,10 @@ def evaluate_proposal_policy(
     elif directive_changes:
         # Canonical, robots, and redirect directives are never a low-risk edit.
         risk = "high"
+    elif target_type in {"content_edit", "github_file"} and before_content == "":
+        # A file that does not exist yet is a whole new page on the site,
+        # however short: never less than high.
+        risk = "high"
     elif target_type in {"html_meta", "json_ld_schema", "link_insertion"}:
         risk = "low"
     elif target_type in {"content_edit", "github_file"}:

@@ -37,8 +37,10 @@ export type CalibrationReview = {
 export type CalibrationItem = {
   id: string;
   calibration_run_id: string;
-  opportunity_id: string;
+  opportunity_id: string | null;
+  content_draft_id?: string | null;
   page_id: string;
+  page_url?: string | null;
   ordinal: number;
   rule_key: string;
   evidence_snapshot: {

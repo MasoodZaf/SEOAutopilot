@@ -382,8 +382,38 @@ class GitHubDeploymentAdapter:
                 detail="revert_pull_request_already_open",
             )
 
-        await self._create_branch(head, await self._base_sha())
         current = await self._current_file(request.target_path)
+        if request.before_content == "" and current is None:
+            # The proposal added a file that is already gone. There is nothing
+            # to revert, and a branch with no commits cannot become a PR.
+            return RollbackResult(
+                status="applied",
+                external_ref=request.external_ref,
+                restored_hash=compute_content_hash(""),
+                detail="file_already_absent",
+            )
+        await self._create_branch(head, await self._base_sha())
+        if request.before_content == "" and current is not None:
+            # The proposal created this file, so undoing it removes the file.
+            # Writing empty content instead would publish a blank page.
+            removed = await self._request(
+                "DELETE",
+                f"/repos/{self._target.slug}/contents/{request.target_path}",
+                json={
+                    "message": (
+                        f"Revert seo: remove {request.target_path}\n\n"
+                        f"Removes the file proposal {request.proposal_id} added.\n"
+                        f"Reverts #{number}. {request.notes}".strip()
+                    ),
+                    "sha": current[1],
+                    "branch": head,
+                },
+            )
+            if removed.status_code != 200:
+                raise GitHubDeploymentError(
+                    f"github_revert_commit_failed:{removed.status_code}:{head}"
+                )
+            return await self._open_revert_pull(request, number, head)
         payload: dict[str, Any] = {
             "message": (
                 f"Revert seo: {request.target_path}\n\n"
@@ -403,6 +433,13 @@ class GitHubDeploymentAdapter:
                 f"github_revert_commit_failed:{written.status_code}:{head}"
             )
 
+        return await self._open_revert_pull(request, number, head)
+
+
+
+    async def _open_revert_pull(
+        self, request: RollbackRequest, number: int, head: str
+    ) -> RollbackResult:
         opened = await self._request(
             "POST",
             f"/repos/{self._target.slug}/pulls",
@@ -432,7 +469,6 @@ class GitHubDeploymentAdapter:
             restored_hash=compute_content_hash(request.before_content),
             detail="revert_pull_request_opened_not_merged",
         )
-
 
     def _result(self, request: DeploymentRequest, pull: dict[str, Any]) -> DeploymentResult:
         return DeploymentResult(

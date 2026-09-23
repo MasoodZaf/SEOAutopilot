@@ -82,6 +82,7 @@ class FakeGitHub:
         self.fail = fail or {}
         self.next_pull_number = 41
         self.closed: list[int] = []
+        self.deleted: list[dict[str, Any]] = []
 
     def merge(self, number: int) -> None:
         """Mark a pull request merged, as a human clicking the button would."""
@@ -158,6 +159,13 @@ class FakeGitHub:
                 return httpx.Response(409, json={"message": "sha does not match"})
             self.commits.append(body)
             return httpx.Response(200, json={"commit": {"sha": "commit-sha-1"}})
+
+        if request.method == "DELETE" and "/contents/" in path:
+            body = json.loads(request.content)
+            if body.get("branch") not in self.branches or body.get("sha") != self.file_sha:
+                return httpx.Response(409, json={"message": "sha does not match"})
+            self.deleted.append({"path": path, **body})
+            return httpx.Response(200, json={"commit": {"sha": "commit-sha-2"}})
 
         if request.method == "POST" and path.endswith("/pulls"):
             body = json.loads(request.content)
@@ -468,3 +476,56 @@ async def test_a_receipt_without_a_pull_request_number_cannot_be_rolled_back() -
         with pytest.raises(GitHubDeploymentError, match="github_rollback_no_pull_request"):
             await adapter.rollback(rollback_request(pull_number=None))
     assert fake.calls == []
+
+
+def new_post_rollback(pull_number: int) -> RollbackRequest:
+    request = rollback_request(pull_number)
+    return RollbackRequest(
+        tenant_id=request.tenant_id,
+        site_id=request.site_id,
+        proposal_id=request.proposal_id,
+        target_path=request.target_path,
+        before_content="",
+        deployed_hash=compute_content_hash(NEW),
+        external_ref=request.external_ref,
+        manifest_json=request.manifest_json,
+        notes="",
+    )
+
+
+async def test_reverting_a_merged_new_post_deletes_the_file() -> None:
+    """A proposal that created a file is undone by removing it.
+
+    Writing the recorded empty `before_content` back instead would publish a
+    blank page at the post's address.
+    """
+    fake = FakeGitHub(file_content=None)
+    adapter, client = adapter_for(fake)
+    async with client:
+        deployed = await adapter.deploy(make_request(base_hash=compute_content_hash("")))
+        number = deployed.manifest_json["pull_request_number"]
+        fake.merge(number)
+        fake.file_content = NEW
+        result = await adapter.rollback(new_post_rollback(number))
+
+    assert result.status == "pending"
+    assert len(fake.deleted) == 1
+    assert fake.deleted[0]["sha"] == fake.file_sha
+    # Only the original deployment wrote content; the revert wrote none.
+    assert len(fake.commits) == 1
+    assert fake.pulls[-1]["title"].startswith("Revert SEO:")
+
+
+async def test_reverting_a_new_post_whose_file_is_gone_needs_no_pull_request() -> None:
+    fake = FakeGitHub(file_content=None)
+    adapter, client = adapter_for(fake)
+    async with client:
+        deployed = await adapter.deploy(make_request(base_hash=compute_content_hash("")))
+        number = deployed.manifest_json["pull_request_number"]
+        fake.merge(number)
+        result = await adapter.rollback(new_post_rollback(number))
+
+    assert result.status == "applied"
+    assert result.detail == "file_already_absent"
+    assert fake.deleted == []
+    assert len(fake.pulls) == 1

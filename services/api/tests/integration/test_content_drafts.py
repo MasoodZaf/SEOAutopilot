@@ -17,9 +17,10 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.api.schemas import ProposalRead
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
-from app.services.content_drafts import ContentDraftService
+from app.services.content_drafts import ContentDraftService, render_post
 from app.services.tenant_credentials import (
     ANTHROPIC_API_KEY,
     OPENAI_API_KEY,
@@ -76,7 +77,7 @@ async def workspace(engine):
             )
     yield ids
     async with factory() as session, session.begin():
-        for table in ("outbox_event", "audit_event", "content_draft", "tenant_credential", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
+        for table in ("outbox_event", "audit_event", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
             await session.execute(text(f"DELETE FROM {table} WHERE tenant_id=:t"), {"t": ids["tenant"]})
         await session.execute(text("DELETE FROM tenant WHERE id=:t"), {"t": ids["tenant"]})
 
@@ -204,3 +205,90 @@ async def test_a_stored_key_is_described_by_its_suffix_only(tenant_session_facto
             {"t": workspace["tenant"], "p": ANTHROPIC_API_KEY},
         )
         assert b"sk-ant" not in bytes(raw)
+
+
+async def _ready_draft(session, workspace, *, resolved: bool, connected: bool):
+    store = store_for(session, SETTINGS)
+    await TenantCredentialService(session, ctx(workspace)).upsert_ai_key(
+        store, ANTHROPIC_API_KEY, "sk-ant-abcdefghijklmnop1234"
+    )
+    if connected:
+        await session.execute(
+            text("INSERT INTO connector(tenant_id,site_id,type,status,provider_key,config_json)"
+                 " VALUES(:t,:s,'github_repository','active','github_app',"
+                 " '{\"repository\":\"acme/site\",\"base_branch\":\"main\"}'::jsonb)"),
+            {"t": workspace["tenant"], "s": workspace["site"]},
+        )
+    service = ContentDraftService(session, ctx(workspace), SETTINGS)
+    draft = await service.request(workspace["brief"], f"key-{uuid4().hex}", "Asha Rao", "anthropic")
+    draft.status = "ready"
+    draft.title = "How EMI is calculated"
+    draft.slug = "how-emi-is-calculated"
+    draft.meta_description = "The EMI formula, explained."
+    draft.body_markdown = "EMI is a fixed monthly payment.\n\n## The formula\n\nWorked through."
+    draft.flags_json = [{"id": "claim-1", "kind": "claim", "text": "x", "resolved": resolved}]
+    await session.flush()
+    return service, draft
+
+
+async def test_a_reviewed_draft_becomes_a_high_risk_new_page_proposal(tenant_session_factory, workspace):
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+
+        proposal = await service.submit(draft.id)
+
+        assert proposal.content_draft_id == draft.id
+        assert proposal.opportunity_id is None
+        assert proposal.target_path == "content/blog/how-emi-is-calculated.md"
+        assert proposal.before_content == ""
+        assert proposal.after_content.startswith('---\ntitle: "How EMI is calculated"')
+        assert "author: \"Asha Rao\"" in proposal.after_content
+        # A whole new page is high risk: two approvers, neither the author.
+        assert proposal.risk == "high"
+        assert proposal.status == "review_required"
+        assert proposal.policy_evaluation_json["required_approver_count"] >= 2
+        page = await session.execute(
+            text("SELECT normalized_url,lifecycle_status FROM page WHERE id=:p"), {"p": proposal.page_id}
+        )
+        assert tuple(page.one()) == ("https://w.example/blog/how-emi-is-calculated", "planned")
+        # It reads back through the public schema the proposal list uses.
+        read = ProposalRead.model_validate(proposal)
+        assert read.opportunity_id is None
+        assert read.content_draft_id == draft.id
+        refreshed = await service.get(draft.id)
+        assert refreshed is not None and refreshed.status == "submitted"
+
+        # Submitted is final: it cannot be submitted, edited or withdrawn again.
+        with pytest.raises(HTTPException) as again:
+            await service.submit(draft.id)
+        assert again.value.detail == "content_draft_not_editable"
+
+
+async def test_a_draft_with_unresolved_flags_cannot_be_submitted(tenant_session_factory, workspace):
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=False, connected=True)
+        with pytest.raises(HTTPException) as refused:
+            await service.submit(draft.id)
+        assert refused.value.detail == "content_draft_flags_unresolved"
+
+
+async def test_a_site_without_github_cannot_receive_a_post(tenant_session_factory, workspace):
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=False)
+        with pytest.raises(HTTPException) as refused:
+            await service.submit(draft.id)
+        assert refused.value.detail == "github_not_connected"
+
+
+def test_front_matter_escapes_quotes_and_flattens_lines():
+    class Draft:
+        title = 'The "EMI" rule'
+        meta_description = "line one\nline two"
+        author_name = "Asha"
+        slug = "emi-rule"
+        body_markdown = "Body\r\n\r\nMore"
+
+    rendered = render_post(Draft(), "2026-09-23")  # type: ignore[arg-type]
+    assert 'title: "The \\"EMI\\" rule"' in rendered
+    assert 'description: "line one line two"' in rendered
+    assert "\r" not in rendered

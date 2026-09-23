@@ -694,8 +694,13 @@ class ProposalRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     site_id: UUID
-    opportunity_id: UUID
+    # Null for a new blog post, which comes from a reviewed content draft.
+    opportunity_id: UUID | None
+    content_draft_id: UUID | None = None
     page_id: UUID
+    # The public URL the change affects. For a new post this is where it will
+    # be published, which is not derivable from its repository path.
+    page_url: str | None = None
     author_id: UUID
     title: str
     rationale: str

@@ -98,6 +98,8 @@ type Opportunity = {
 type Proposal = {
   id: string;
   title: string;
+  // Where the change is published. For a new post, not its repository path.
+  page_url?: string | null;
   rationale: string;
   target_type: string;
   target_path: string;
@@ -1003,7 +1005,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                       <div className="grid gap-4 px-6 py-5 lg:grid-cols-2">
                         <SerpPreview
                           title={prop.title}
-                          url={`${target.origin}/${prop.target_path.replace(/^\//, "")}`}
+                          url={prop.page_url ?? `${target.origin}/${prop.target_path.replace(/^\//, "")}`}
                           description={prop.rationale}
                           isModified={true}
                         />

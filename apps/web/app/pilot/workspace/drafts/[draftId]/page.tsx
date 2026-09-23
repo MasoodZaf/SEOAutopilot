@@ -7,7 +7,7 @@ import {lineDiff} from "@/lib/line-diff.mjs";
 import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {LiveRefresh} from "../../../live-refresh";
-import {saveDraft, withdrawDraft} from "../../actions";
+import {saveDraft, submitDraft, withdrawDraft} from "../../actions";
 import type {ContentDraftDetail, DraftFlag} from "../../model";
 
 export const metadata: Metadata = {
@@ -57,6 +57,12 @@ const ERRORS: Record<string, string> = {
   content_draft_not_editable: "This draft can no longer be edited.",
   content_draft_not_withdrawable: "This draft can no longer be withdrawn.",
   insufficient_permissions_for_content_draft: "Your role cannot edit drafts. An owner, admin, SEO manager or editor can.",
+  content_draft_flags_unresolved: "Resolve every flag before sending the post for approval.",
+  content_draft_incomplete: "Add a title, slug, body and author before sending the post for approval.",
+  github_not_connected: "Connect this site's GitHub repository under Settings → Connectors first. Posts arrive as a pull request there.",
+  blog_path_template_invalid: "This site's blog path setting is not usable. It must contain {slug} and stay inside the repository.",
+  content_draft_already_submitted: "This draft has already been sent for approval.",
+  insufficient_permissions_to_create_proposal: "Your role cannot send changes for approval.",
 };
 
 const FLAG_LABEL: Record<string, string> = {
@@ -71,7 +77,7 @@ const field =
 
 type PageProps = {
   params: Promise<{draftId: string}>;
-  searchParams: Promise<{error?: string; saved?: string; withdrawn?: string}>;
+  searchParams: Promise<{error?: string; saved?: string; withdrawn?: string; submitted?: string}>;
 };
 
 async function load(draftId: string) {
@@ -126,7 +132,7 @@ function FlagRow({flag}: {flag: DraftFlag}) {
 
 export default async function DraftPage({params, searchParams}: PageProps) {
   const {draftId} = await params;
-  const {error, saved, withdrawn} = await searchParams;
+  const {error, saved, withdrawn, submitted} = await searchParams;
   const {data: draft, meta} = await load(draftId);
   const status = STATUS[draft.status] ?? {label: draft.status, tone: "neutral" as Tone};
   const working = draft.status === "queued" || draft.status === "running";
@@ -169,6 +175,13 @@ export default async function DraftPage({params, searchParams}: PageProps) {
           {error ? <Note tone="stop" role="alert">{ERRORS[error] ?? "That did not work. Try again."}</Note> : null}
           {saved ? <Note tone="good" role="status">Saved.</Note> : null}
           {withdrawn ? <Note tone="neutral" role="status">Withdrawn. The brief can be drafted again.</Note> : null}
+          {submitted || draft.status === "submitted" ? (
+            <Note tone="good" role="status" label="Sent for approval">
+              The post is now a proposal to add a new page. Two people other than you must approve it on the{" "}
+              <Link href="/pilot" className="underline underline-offset-4">dashboard</Link>, under Proposals; then deploying
+              it opens a pull request that a person merges to publish.
+            </Note>
+          ) : null}
 
           {working ? (
             <Panel className="px-6 py-14 text-center">
@@ -311,12 +324,24 @@ export default async function DraftPage({params, searchParams}: PageProps) {
 
           {draft.status === "ready" ? (
             <Panel className="p-6">
-              <h2 className="font-display text-[17px] font-medium tracking-tight text-ink">Next step</h2>
+              <h2 className="font-display text-[17px] font-medium tracking-tight text-ink">Send for approval</h2>
               <p className="mt-2 text-[13px] leading-6 text-pretty text-ink-soft">
                 {unresolved.length
-                  ? `Resolve the ${unresolved.length} remaining ${unresolved.length === 1 ? "flag" : "flags"}, then send the post for approval. Two people other than the author must approve it before a pull request can open.`
-                  : "Every flag is resolved. The next step sends it for approval; two people other than the author must approve it before a pull request can open."}
+                  ? `Resolve the ${unresolved.length} remaining ${unresolved.length === 1 ? "flag" : "flags"} and save first.`
+                  : "Creates a proposal to add this post as a new page. Two people other than the author must approve it; deploying then opens a pull request a person merges."}
               </p>
+              <form action={submitDraft} className="mt-4">
+                <input type="hidden" name="draft_id" value={draft.id} />
+                <button
+                  type="submit"
+                  disabled={unresolved.length > 0}
+                  aria-disabled={unresolved.length > 0}
+                  className={`${button.primary} w-full`}
+                >
+                  Send for approval
+                </button>
+              </form>
+              <p className="mt-3 text-[12px] leading-5 text-ink-faint">Save your edits before sending: unsaved changes are not included.</p>
             </Panel>
           ) : null}
 

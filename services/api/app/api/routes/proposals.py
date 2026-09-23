@@ -3,6 +3,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
@@ -22,6 +23,7 @@ from app.api.schemas import (
 from app.core.auth import TenantContextDependency
 from app.core.config import Settings, get_settings
 from app.core.context import TenantContext
+from app.db.models import Page
 from app.db.session import TenantSession
 from app.domain.deployments import DeploymentAdapter, MockDeploymentAdapter
 from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
@@ -67,8 +69,20 @@ async def list_proposals(
         risk_filter=risk_filter,
         limit=limit,
     )
+    page_urls: dict[UUID, str] = {}
+    if proposals:
+        rows = await session.execute(
+            select(Page.id, Page.normalized_url).where(
+                Page.tenant_id == context.tenant_id,
+                Page.id.in_({p.page_id for p in proposals}),
+            )
+        )
+        page_urls = {page_id: url for page_id, url in rows.all()}
     return ProposalCollection(
-        data=[ProposalRead.model_validate(p) for p in proposals],
+        data=[
+            ProposalRead.model_validate(p).model_copy(update={"page_url": page_urls.get(p.page_id)})
+            for p in proposals
+        ],
         meta={"trace_id": context.trace_id, "count": len(proposals)},
     )
 

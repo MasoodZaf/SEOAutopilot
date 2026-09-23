@@ -30,7 +30,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
-from app.db.models import AuditEvent, ContentBrief, ContentDraft, OutboxEvent
+from app.db.models import (
+    AuditEvent,
+    Connector,
+    ContentBrief,
+    ContentDraft,
+    OutboxEvent,
+    Page,
+    Proposal,
+    Site,
+)
+from app.services.proposals import ProposalService
 from app.services.tenant_credentials import ANTHROPIC_API_KEY, OPENAI_API_KEY, store_for
 
 REQUEST_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR}
@@ -249,6 +259,108 @@ class ContentDraftService:
         await self.session.flush()
         return draft
 
+    async def submit(self, draft_id: UUID) -> Proposal:
+        """Send a reviewed draft for approval, as a proposal to add the post.
+
+        Refused until the review is done: every flag resolved, and a title,
+        slug, body and named author present. The proposal then goes through
+        the same gates as any other change -- high risk, so at least two
+        approvers who are not its author -- and deploying it opens a pull
+        request that a person merges.
+        """
+        self._require_editor()
+        draft = await self._editable(draft_id)
+        if unresolved_flags(draft):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="content_draft_flags_unresolved"
+            )
+        if not (draft.title and draft.slug and draft.body_markdown and draft.author_name):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="content_draft_incomplete",
+            )
+        site = await self.session.scalar(
+            select(Site).where(Site.id == draft.site_id, Site.tenant_id == self.context.tenant_id)
+        )
+        if site is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+        connector = await self.session.scalar(
+            select(Connector).where(
+                Connector.tenant_id == self.context.tenant_id,
+                Connector.site_id == site.id,
+                Connector.type == "github_repository",
+                Connector.status == "active",
+            )
+        )
+        if connector is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="github_not_connected"
+            )
+        template = str(
+            (connector.config_json or {}).get("blog_path_template")
+            or self.settings.github_blog_path_template
+        )
+        target_path = blog_target_path(template, draft.slug)
+
+        # The page the post will become, named the way the crawler names it
+        # (origin + path, no trailing slash) so its first crawl finds this row
+        # instead of creating a second. `planned` until that crawl sees it.
+        path = "/" + self.settings.blog_url_template.replace("{slug}", draft.slug).strip("/")
+        url = site.canonical_origin.rstrip("/") + path
+        url_hash = hashlib.sha256(url.encode()).hexdigest()
+        page = await self.session.scalar(
+            select(Page).where(Page.site_id == site.id, Page.url_hash == url_hash)
+        )
+        if page is None:
+            page = Page(
+                tenant_id=self.context.tenant_id,
+                site_id=site.id,
+                normalized_url=url,
+                url_hash=url_hash,
+                lifecycle_status="planned",
+            )
+            self.session.add(page)
+            await self.session.flush()
+
+        flags = draft.flags_json or []
+        rationale = (
+            f"New post from a reviewed AI draft ({draft.provider}, {draft.model or 'model'}). "
+            f"{len(flags)} review flag(s) resolved by a person. Publishes at {path}."
+        )
+        try:
+            async with self.session.begin_nested():
+                proposal = await ProposalService(self.session, self.context).create_new_page(
+                    site,
+                    page_id=page.id,
+                    content_draft_id=draft.id,
+                    title=f"New post: {draft.title}"[:240],
+                    rationale=rationale,
+                    target_path=target_path,
+                    after_content=render_post(draft, datetime.now(UTC).date().isoformat()),
+                    evidence_refs={
+                        "content_draft_id": str(draft.id),
+                        "content_brief_id": str(draft.content_brief_id),
+                        "flags_resolved": len(flags),
+                        "provider": draft.provider,
+                        "model": draft.model,
+                    },
+                )
+        except IntegrityError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="content_draft_already_submitted"
+            ) from error
+
+        draft.status = "submitted"
+        draft.version += 1
+        draft.updated_at = datetime.now(UTC)
+        self.session.add(
+            self._audit_event(
+                "content_draft.submitted", draft.id, {"proposal_id": str(proposal.id), "target_path": target_path}
+            )
+        )
+        await self.session.flush()
+        return proposal
+
     async def withdraw(self, draft_id: UUID) -> ContentDraft:
         self._require_editor()
         draft = await self.get(draft_id)
@@ -288,6 +400,38 @@ class ContentDraftService:
             metadata_json=metadata,
             event_hash=_hash(body),
         )
+
+
+def _yaml(value: str) -> str:
+    """A single-line YAML double-quoted scalar."""
+    flat = " ".join(value.split())
+    return '"' + flat.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def render_post(draft: ContentDraft, published_on: str) -> str:
+    """The file a static-site generator reads: front matter, then the body."""
+    front = [
+        "---",
+        f"title: {_yaml(draft.title or '')}",
+        f"description: {_yaml(draft.meta_description or '')}",
+        f"author: {_yaml(draft.author_name or '')}",
+        f"date: {published_on}",
+        f"slug: {draft.slug}",
+        "draft: false",
+        "---",
+        "",
+    ]
+    body = (draft.body_markdown or "").replace("\r\n", "\n").strip()
+    return "\n".join(front) + body + "\n"
+
+
+def blog_target_path(template: str, slug: str) -> str:
+    """Where the post lands in the repository, refusing anything unsafe."""
+    if "{slug}" not in template or template.startswith("/") or ".." in template or "\\" in template:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="blog_path_template_invalid"
+        )
+    return template.replace("{slug}", slug)
 
 
 def unresolved_flags(draft: ContentDraft) -> list[dict[str, Any]]:
