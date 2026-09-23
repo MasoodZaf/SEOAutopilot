@@ -19,7 +19,9 @@ import {resolveTab, workspacePath} from "./paths";
  * existed; the page was showing a cached render from before it was sent.
  */
 function redirectFresh(path: string): never {
-  revalidatePath("/pilot/workspace", "page");
+  // "layout", so a brief's own page under /pilot/workspace/briefs is
+  // invalidated along with the workspace list that shows its status.
+  revalidatePath("/pilot/workspace", "layout");
   redirect(path);
 }
 
@@ -132,4 +134,35 @@ export async function runRoutineNow(formData: FormData): Promise<never> {
     if (error instanceof ApiError) redirectFresh(workspacePath(host, {tab, error: safeCode(error.code)}));
     throw error;
   }
+}
+
+const BRIEF_STATUSES = new Set(["queued", "in_progress", "done", "dismissed"]);
+
+/**
+ * Move a content brief through its queue.
+ *
+ * A brief is advisory: this records a person's decision about a topic and
+ * nothing else. It writes nothing to the site. Dismissing needs a reason,
+ * which the API enforces and records in the audit trail.
+ */
+export async function updateBriefStatus(formData: FormData): Promise<never> {
+  const briefId = String(formData.get("brief_id") ?? "");
+  const status = String(formData.get("status") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim().slice(0, 200);
+  if (!/^[0-9a-f-]{36}$/i.test(briefId) || !BRIEF_STATUSES.has(status)) {
+    redirectFresh("/pilot/workspace?error=invalid_brief_update");
+  }
+  const back = `/pilot/workspace/briefs/${briefId}`;
+  if (status === "dismissed" && !reason) redirectFresh(`${back}?error=dismiss_reason_required`);
+  try {
+    await apiJson(`/v1/content-briefs/${briefId}`, {
+      method: "PATCH",
+      body: JSON.stringify({status, reason}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code)}`);
+    throw error;
+  }
+  redirectFresh(`${back}?updated=${status}`);
 }

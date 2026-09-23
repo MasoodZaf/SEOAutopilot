@@ -98,6 +98,35 @@ export type ContentBrief = {
   priority_score: number;
 };
 
+export type BriefSection = {
+  key: string;
+  title: string;
+  finding: string;
+  recommendation: string;
+  evidence: Record<string, unknown>;
+};
+
+export type ContentBriefDetail = ContentBrief & {
+  site_id: string;
+  keyword_cluster_id: string;
+  target_page_id: string | null;
+  sections_json: BriefSection[];
+  evidence_json: Record<string, unknown>;
+  dismissed_reason: string | null;
+  version: number;
+  updated_at: string;
+};
+
+/** A search in a keyword cluster. Reading these is audited by the API. */
+export type KeywordMember = {
+  query_hash: string;
+  term: string;
+  clicks: number;
+  impressions: number;
+  position: number;
+  is_question: boolean;
+};
+
 export type AiVisibility = {
   id: string;
   captured_on: string;

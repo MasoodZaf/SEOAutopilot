@@ -467,7 +467,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                           <td className="py-2 pr-3 text-ink">
                             {cluster.label}
                             {cluster.answer_engine_candidate && (
-                              <span className={`${chip} ml-2 border-sky-800 bg-sky-950/50 text-sky-300`}>AEO</span>
+                              <span className={`${chip} ml-2 border-accent-rule bg-accent-soft text-accent`}>AEO</span>
                             )}
                           </td>
                           <td className="py-2 pr-3 text-ink-faint">{cluster.intent}</td>
@@ -484,21 +484,33 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
             </div>
 
             <div className={panel}>
-              <h2 className={heading}>Content brief queue</h2>
+              <h2 className={heading}>Content briefs</h2>
+              <p className={`${muted} mt-1`}>
+                Topics from this site&apos;s own searches: new posts to write, and existing pages to refresh.
+                Open one to read its plan and decide.
+              </p>
               {briefs.length === 0 ? (
-                <div className="mt-3"><Empty>No briefs queued. Run the content briefs routine after a keyword refresh.</Empty></div>
+                <div className="mt-3"><Empty>No briefs yet. Run the content briefs routine after a keyword refresh.</Empty></div>
               ) : (
-                <ul className="mt-3 flex flex-col gap-2">
+                <ul className="mt-4 flex flex-col divide-y divide-rule overflow-hidden rounded-xl border border-rule">
                   {briefs.map((brief) => (
-                    <li key={brief.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rule bg-surface px-3 py-2">
-                      <span className="text-sm text-ink">
-                        {brief.cluster_label}
-                        <span className={`${chip} ml-2 border-rule-strong bg-paper text-ink-faint`}>{brief.kind.replace("_", " ")}</span>
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <span className={muted}>priority {brief.priority_score.toFixed(0)}</span>
-                        <span className={statusChip(brief.status)}>{brief.status}</span>
-                      </span>
+                    <li key={brief.id}>
+                      <Link
+                        href={`/pilot/workspace/briefs/${brief.id}`}
+                        className="flex flex-wrap items-center justify-between gap-3 bg-surface px-4 py-3 transition-colors hover:bg-sunk"
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <span className={`${chip} ${brief.kind === "new_page" ? "border-accent-rule bg-accent-soft text-accent" : "border-rule-strong bg-paper text-ink-faint"}`}>
+                            {brief.kind === "new_page" ? "New post" : "Refresh"}
+                          </span>
+                          <span className="truncate text-sm text-ink">{brief.cluster_label}</span>
+                        </span>
+                        <span className="flex items-center gap-3">
+                          <span className={`${muted} tabular`}>priority {brief.priority_score.toFixed(0)}</span>
+                          <span className={statusChip(brief.status)}>{brief.status.replace("_", " ")}</span>
+                          <span aria-hidden="true" className="text-accent">&rsaquo;</span>
+                        </span>
+                      </Link>
                     </li>
                   ))}
                 </ul>
