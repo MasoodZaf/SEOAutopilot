@@ -87,7 +87,8 @@ def fake_github(
                 json={
                     "total_count": len(installed),
                     "installations": [
-                        {"id": item, "account": {"login": "MasoodZaf"}} for item in installed
+                        {"id": item, "account": {"login": "MasoodZaf", "type": "User"}}
+                        for item in installed
                     ],
                 },
             )
@@ -212,9 +213,17 @@ async def signed_in(app_engine, ids, client=None) -> None:
 
 async def test_only_repositories_the_person_can_push_to_are_offered(app_engine, acme) -> None:
     await signed_in(app_engine, acme)
-    listed, expires_at = await choices(app_engine, acme)
+    listed, configure, expires_at = await choices(app_engine, acme)
 
     assert [item["full_name"] for item in listed] == ["MasoodZaf/mindTools"]
+    # "Add a repository" goes to the installation's own settings, where the
+    # repository choice lives -- not to the install page, which skips it.
+    assert configure == [
+        {
+            "account": "MasoodZaf",
+            "url": f"https://github.com/settings/installations/{INSTALLATION}",
+        }
+    ]
     assert listed[0]["installation_id"] == INSTALLATION
     assert expires_at is not None
 
@@ -268,7 +277,7 @@ async def test_another_admin_cannot_pick_from_my_list(app_engine, acme) -> None:
     await signed_in(app_engine, acme)
     colleague = uuid4()
 
-    listed, _ = await choices(app_engine, acme, actor=colleague)
+    listed, _, _ = await choices(app_engine, acme, actor=colleague)
     assert listed == []
     with pytest.raises(HTTPException) as refused:
         await choose(app_engine, acme, WRITABLE["id"], fake_github(), actor=colleague)
@@ -352,5 +361,5 @@ async def test_a_code_github_rejects_offers_nothing(app_engine, acme) -> None:
     with pytest.raises(HTTPException) as refused:
         await callback(app_engine, state, "stale", fake_github(code_ok=False))
     assert refused.value.detail == "github_authorization_failed"
-    listed, _ = await choices(app_engine, acme)
+    listed, _, _ = await choices(app_engine, acme)
     assert listed == []

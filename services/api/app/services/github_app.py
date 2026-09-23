@@ -194,6 +194,30 @@ class GitHubAppClient:
 
 
 @dataclass(frozen=True, slots=True)
+class Installation:
+    """One account the app is installed on, as the signed-in person sees it."""
+
+    id: int
+    account: str
+    account_type: str
+
+    @property
+    def configure_url(self) -> str:
+        """GitHub's page for choosing which repositories this installation reaches.
+
+        The install page is the wrong link for adding a repository: once the
+        app is on the person's only account, GitHub skips straight back to the
+        setup URL without ever showing the repository choice.
+        """
+        if self.account_type == "Organization":
+            return (
+                f"https://github.com/organizations/{self.account}"
+                f"/settings/installations/{self.id}"
+            )
+        return f"https://github.com/settings/installations/{self.id}"
+
+
+@dataclass(frozen=True, slots=True)
 class PushableRepository:
     """A repository the signed-in person can write to, through one installation."""
 
@@ -282,9 +306,9 @@ class GitHubUserClient:
             raise GitHubAppError("github_user_lookup_malformed")
         return body
 
-    async def installations(self, token: str) -> list[tuple[int, str]]:
-        """This app's installations the person can reach, as (id, account login)."""
-        found: list[tuple[int, str]] = []
+    async def installations(self, token: str) -> list[Installation]:
+        """This app's installations the person can reach."""
+        found: list[Installation] = []
         for page in range(1, MAX_REPOSITORY_PAGES + 1):
             body = await self._get(f"/user/installations?per_page=100&page={page}", token)
             listed = body.get("installations")
@@ -295,7 +319,8 @@ class GitHubUserClient:
                     continue
                 account = item.get("account")
                 login = account.get("login") if isinstance(account, dict) else None
-                found.append((item["id"], str(login or "")))
+                kind = account.get("type") if isinstance(account, dict) else None
+                found.append(Installation(item["id"], str(login or ""), str(kind or "User")))
             if len(listed) < 100:
                 return found
         raise GitHubAppError("github_user_installations_too_many")

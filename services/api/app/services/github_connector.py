@@ -418,15 +418,21 @@ class GitHubConnectorService:
 
     async def repository_choices(
         self, site_id: UUID
-    ) -> tuple[list[dict[str, object]], datetime | None]:
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime | None]:
         self.context.require(Role.OWNER, Role.ADMIN)
         if await self.site_service.get_site(site_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
         choice = await self._choice(site_id)
         if choice is None:
-            return [], None
-        listed = (choice.requested_config or {}).get("repositories")
-        return (list(listed) if isinstance(listed, list) else []), choice.expires_at
+            return [], [], None
+        config = choice.requested_config or {}
+        listed = config.get("repositories")
+        configure = config.get("configure")
+        return (
+            list(listed) if isinstance(listed, list) else [],
+            list(configure) if isinstance(configure, list) else [],
+            choice.expires_at,
+        )
 
     async def choose_repository(
         self,
@@ -821,9 +827,9 @@ class GitHubSignInCallbackService:
                     redirect_url=install_url(app.app_slug, state)
                 )
             offered: list[dict[str, object]] = []
-            for installation_id, account in installations:
+            for installation in installations:
                 for repository in await user.pushable_repositories(
-                    token, installation_id, account
+                    token, installation.id, installation.account
                 ):
                     offered.append(
                         {
@@ -852,7 +858,15 @@ class GitHubSignInCallbackService:
                 # Never handed out: the picker finds this row by site and actor.
                 state_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
                 requested_scopes=list(GITHUB_CHOICE),
-                requested_config={"repositories": offered},
+                requested_config={
+                    "repositories": offered,
+                    # Where each account's repository choice is changed on
+                    # GitHub. Built from GitHub's answer, never from input.
+                    "configure": [
+                        {"account": item.account, "url": item.configure_url}
+                        for item in installations
+                    ],
+                },
                 expires_at=now + CHOICE_TTL,
                 created_by=oauth_state.created_by,
             )

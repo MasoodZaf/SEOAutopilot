@@ -27,11 +27,14 @@ export function RepositoryPicker({
   siteId,
   siteName,
   repositories,
+  configure,
   previousTemplate,
 }: {
   siteId: string;
   siteName: string;
   repositories: RepositoryChoice[];
+  /** GitHub's page, per account, for choosing which repositories the app reaches. */
+  configure: {account: string; url: string}[];
   previousTemplate?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -66,22 +69,38 @@ export function RepositoryPicker({
           Choose a repository for {siteName}
         </h2>
         <p className="mt-1 text-pretty text-[13px] text-ink-soft">
-          These are the repositories you can push to that SEO Autopilot can reach. Approved
-          changes arrive in the one you pick as pull requests.
+          The repositories on your GitHub account that you have given SEO Autopilot access to.
+          Approved changes arrive in the one you pick as pull requests.
         </p>
       </div>
+      {configure.length > 0 ? (
+        <p className="border-b border-rule bg-sunk px-5 py-3 text-pretty text-[13px] text-ink-soft">
+          Not seeing a repository? On GitHub, choose{" "}
+          <strong className="font-medium text-ink">All repositories</strong> (or add it to the
+          selected ones) and save:{" "}
+          {configure.map((item, index) => (
+            <span key={item.url}>
+              {index > 0 ? ", " : null}
+              <a href={item.url} className={button.quiet}>
+                {configure.length > 1 ? item.account : "change repository access on GitHub"}
+              </a>
+            </span>
+          ))}
+          . GitHub brings you back to Connections; open this list again from there.
+        </p>
+      ) : null}
 
       {repositories.length === 0 ? (
         <div className="px-5 py-6">
           <p className="text-pretty text-[13px] text-ink-soft">
             GitHub did not return a repository you can push to. Give SEO Autopilot access to the
-            one this site is built from.
+            one this site is built from{configure.length > 0 ? " using the link above" : ""}.
           </p>
           <form action={connectGitHubAction} className="mt-4">
             <input type="hidden" name="site_id" value={siteId} />
             <input type="hidden" name="install" value="1" />
             <button type="submit" className={button.primary}>
-              Add a repository on GitHub
+              {configure.length > 0 ? "Install on another account" : "Add a repository on GitHub"}
             </button>
           </form>
         </div>
@@ -167,7 +186,7 @@ export function RepositoryPicker({
               value="1"
               className={button.quiet}
             >
-              Missing a repository? Add it on GitHub
+              Install on another account or organisation
             </button>
             <div className="flex gap-2">
               <button

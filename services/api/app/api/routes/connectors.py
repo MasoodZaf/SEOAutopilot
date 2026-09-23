@@ -27,6 +27,7 @@ from app.api.schemas import (
     GitHubAuthorizationEnvelope,
     GitHubAuthorizationRead,
     GitHubConnectorCreate,
+    GitHubInstallationLink,
     GitHubRepositoryChoice,
     GitHubRepositoryChoices,
     GitHubRepositorySelect,
@@ -484,12 +485,13 @@ async def list_github_repository_choices(
     site_id: UUID, context: TenantContextDependency, session: TenantSession
 ) -> GitHubRepositoryChoices:
     """The repositories GitHub said this person can push to, at their last sign-in."""
-    listed, expires_at = await GitHubConnectorService(session, context).repository_choices(
-        site_id
-    )
+    listed, configure, expires_at = await GitHubConnectorService(
+        session, context
+    ).repository_choices(site_id)
     data = [GitHubRepositoryChoice.model_validate(item) for item in listed]
     return GitHubRepositoryChoices(
         data=data,
+        configure=[GitHubInstallationLink.model_validate(item) for item in configure],
         expires_at=expires_at,
         meta={"trace_id": context.trace_id, "count": len(data)},
     )

@@ -556,8 +556,16 @@ class GitHubRepositoryChoice(BaseModel):
     account: str
 
 
+class GitHubInstallationLink(BaseModel):
+    """GitHub's page for changing which repositories one account grants."""
+
+    account: str
+    url: str
+
+
 class GitHubRepositoryChoices(BaseModel):
     data: list[GitHubRepositoryChoice]
+    configure: list[GitHubInstallationLink] = Field(default_factory=list)
     expires_at: datetime | None
     meta: dict[str, str | int]
 

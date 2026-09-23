@@ -124,6 +124,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
   let clientCheck: ClientCheck | null = null;
   let githubAppReady = false;
   let choices: RepositoryChoice[] | null = null;
+  let configure: {account: string; url: string}[] = [];
   let loadError: string | null = null;
   try {
     const [siteBody, connectionBody] = await Promise.all([
@@ -155,11 +156,14 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
       .catch(() => false);
     // Back from GitHub: the repositories it said this person can push to.
     if (query.github === "choose" && query.site) {
-      choices = await apiJson<{data: RepositoryChoice[]}>(
-        `/v1/sites/${encodeURIComponent(query.site)}/connectors/github/repositories`,
-      )
-        .then((body) => body.data)
-        .catch(() => null);
+      const listed = await apiJson<{
+        data: RepositoryChoice[];
+        configure?: {account: string; url: string}[];
+      }>(`/v1/sites/${encodeURIComponent(query.site)}/connectors/github/repositories`).catch(
+        () => null,
+      );
+      choices = listed?.data ?? null;
+      configure = listed?.configure ?? [];
     }
   } catch (error) {
     // A brand-new account is in no workspace yet. Rendering that as a load
@@ -201,7 +205,8 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
       ) : null}
       {query.github === "updated" ? (
         <Note role="status">
-          GitHub saved your changes. Use Connect GitHub to pick the repository.
+          GitHub saved which repositories SEO Autopilot can reach. Use Connect GitHub or
+          Change repository on the site again to pick from the updated list.
         </Note>
       ) : null}
       {query.github === "choose" && !pickingFor && !loadError ? (
@@ -214,6 +219,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
           siteId={pickingFor.id}
           siteName={pickingFor.name}
           repositories={choices}
+          configure={configure}
           previousTemplate={find(pickingFor.id, "github_repository")?.config_json?.path_template}
         />
       ) : null}

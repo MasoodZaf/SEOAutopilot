@@ -206,3 +206,14 @@ async def test_a_refused_code_names_githubs_reason_and_nothing_else() -> None:
 
     with pytest.raises(GitHubAppError, match="^github_authorization_failed:bad_verification_code$"):
         await user_client(handler).exchange_code("stale")
+
+
+def test_an_organisations_repository_choice_lives_under_the_organisation() -> None:
+    from app.services.github_app import Installation
+
+    assert Installation(5, "Acme", "Organization").configure_url == (
+        "https://github.com/organizations/Acme/settings/installations/5"
+    )
+    assert Installation(6, "someone", "User").configure_url == (
+        "https://github.com/settings/installations/6"
+    )
