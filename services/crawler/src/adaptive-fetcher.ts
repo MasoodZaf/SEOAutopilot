@@ -13,6 +13,50 @@ const MAX_BROWSER_REQUESTS = 100;
 const IDLE_TIMEOUT_MS = 10_000;
 // And a last moment for a still-empty shell to paint something.
 const PAINT_TIMEOUT_MS = 8_000;
+// Content counts as settled once the visible text has not changed for this
+// long and nothing on the page says it is still loading...
+const SETTLE_QUIET_MS = 1_500;
+const SETTLE_POLL_MS = 250;
+// ...or, whatever the page is doing, once this much time has passed.
+const SETTLE_MAX_MS = 15_000;
+
+export type RouteDecision = "continue" | "abort" | "stub";
+
+/**
+ * What the rendering browser does with one request.
+ *
+ * Off-host requests never leave this machine -- that is the SSRF boundary and
+ * it does not move. What changed is *how* they are refused. Aborting them made
+ * the page's own code see a failed load, and codearc.net's tutorial pages
+ * crash on a failed analytics or font-stylesheet load: all 127 of them were
+ * stored as its "Oops! Something went wrong" screen. A real visitor, and
+ * Googlebot, load those scripts fine, so the error screen was our artefact.
+ *
+ * So a sub-resource from another host is answered here with an empty 200: the
+ * page carries on as if the script loaded and did nothing, and still no byte
+ * goes out. A navigation off-host is still aborted -- stubbing it would swap
+ * the page being observed for an empty one. Images, media and fonts on the
+ * site's own host are skipped as before; they cost bandwidth and carry no
+ * evidence.
+ */
+export function routeDecision(
+  safe: boolean,
+  resourceType: string,
+  isNavigation: boolean,
+): RouteDecision {
+  if (!safe) return isNavigation ? "abort" : "stub";
+  if (["image", "media", "font"].includes(resourceType)) return "abort";
+  return "continue";
+}
+
+export function stubResponse(resourceType: string): {status: number; contentType: string; body: string} {
+  const contentType =
+    resourceType === "script" ? "application/javascript"
+    : resourceType === "stylesheet" ? "text/css"
+    : resourceType === "fetch" || resourceType === "xhr" ? "application/json"
+    : "text/plain";
+  return {status: 200, contentType, body: contentType === "application/json" ? "{}" : ""};
+}
 
 export function shouldRender(resource: FetchedResource, policy: RenderPolicy): boolean {
   if (!resource.contentType.includes("text/html") || policy === "never") return false;
@@ -60,6 +104,57 @@ export async function waitForRenderedContent(page: Page): Promise<void> {
       {timeout: PAINT_TIMEOUT_MS},
     )
     .catch(() => undefined);
+
+  await waitForSettledText(page);
+}
+
+/**
+ * Wait until the page has stopped changing what it shows.
+ *
+ * Network idle is not enough on its own. On codearc.net the app's main bundle
+ * arrives, the network pauses for the half-second it takes to execute, and
+ * idle fires -- with the page showing "Loading challenge...". Only then does
+ * it request the route's code and the challenge itself. Every one of 230
+ * challenge pages was stored as that same 47-word loading screen, 0.5 seconds
+ * before the real 249-word problem appeared, and the evidence guard refused
+ * five crawls in a row for it (2026-09-06 to 2026-09-23).
+ *
+ * So also wait for the visible text to hold still, and for anything that
+ * announces itself as loading -- `aria-busy` or the words
+ * "loading..." -- to be gone. Bounded: a page that animates forever is taken
+ * as it stands at the deadline.
+ */
+export async function waitForSettledText(
+  page: Page,
+  {quietMs = SETTLE_QUIET_MS, pollMs = SETTLE_POLL_MS, maxMs = SETTLE_MAX_MS} = {},
+): Promise<void> {
+  const deadline = Date.now() + maxMs;
+  let last = "";
+  let unchangedSince = Date.now();
+  while (Date.now() < deadline) {
+    let snapshot: {text: string; loading: boolean};
+    try {
+      snapshot = await page.evaluate(() => {
+        const text = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
+        const busy = document.querySelector('[aria-busy="true"]') !== null;
+        return {text, loading: busy || /\bloading\b[^.!?]{0,40}(\.\.\.|…)/i.test(text)};
+      });
+    } catch {
+      // A client-side redirect destroys the context mid-poll. Let the new
+      // document start over rather than failing the page.
+      last = "";
+      unchangedSince = Date.now();
+      await page.waitForTimeout(pollMs);
+      continue;
+    }
+    if (snapshot.text !== last) {
+      last = snapshot.text;
+      unchangedSince = Date.now();
+    } else if (!snapshot.loading && Date.now() - unchangedSince >= quietMs) {
+      return;
+    }
+    await page.waitForTimeout(pollMs);
+  }
 }
 
 export function createAdaptiveFetcher(
@@ -87,17 +182,20 @@ export function createAdaptiveFetcher(
           await route.abort("blockedbyclient");
           return;
         }
+        let safe = true;
         try {
           await assertSafeUrl(request.url(), allowedHosts);
         } catch {
-          await route.abort("blockedbyclient");
-          return;
+          safe = false;
         }
-        if (["image", "media", "font"].includes(request.resourceType())) {
+        const decision = routeDecision(safe, request.resourceType(), request.isNavigationRequest());
+        if (decision === "stub") {
+          await route.fulfill(stubResponse(request.resourceType()));
+        } else if (decision === "abort") {
           await route.abort("blockedbyclient");
-          return;
+        } else {
+          await route.continue();
         }
-        await route.continue();
       });
       const response = await page.goto(resource.finalUrl, {
         waitUntil: "load",

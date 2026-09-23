@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {chromium} from "playwright";
 
-import {shouldRender, waitForRenderedContent} from "./adaptive-fetcher.js";
+import {routeDecision, shouldRender, stubResponse, waitForRenderedContent} from "./adaptive-fetcher.js";
 import type {FetchedResource} from "./types.js";
 
 const resource = (body: string, contentType = "text/html"): FetchedResource => ({
@@ -124,4 +124,62 @@ test("rendering still returns a page whose content never arrives", async () => {
       await browser.close();
     }
   });
+});
+
+/* The shape codearc.net actually has: the app mounts, says it is loading, and
+ * then goes quiet on the network while it executes before asking for the
+ * route's content. Network idle fires inside that quiet gap. */
+const pausingShell = (pauseMs: number) => `<!doctype html><html><body>
+<div id="chrome">${CHROME}</div><div id="content">Loading challenge... This won't take long!</div>
+<script>
+  setTimeout(() => fetch("/content?delay=0")
+    .then(r => r.text())
+    .then(t => { document.getElementById("content").textContent = t; }), ${pauseMs});
+</script></body></html>`;
+
+test("rendering does not stop at a loading screen while the app is still working", async () => {
+  const {createServer} = await import("node:http");
+  const server = createServer((req, res) => {
+    if ((req.url ?? "").startsWith("/content")) {
+      res.writeHead(200, {"content-type": "text/plain"});
+      res.end(CONTENT);
+      return;
+    }
+    res.writeHead(200, {"content-type": "text/html"});
+    // Longer than the 500ms network idle needs, so idle fires first.
+    res.end(pausingShell(900));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const {port} = server.address() as {port: number};
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${port}/`, {waitUntil: "load"});
+    await waitForRenderedContent(page);
+    const text = await page.evaluate(() => document.body.innerText);
+    assert.ok(text.includes("UNIQUE_CONTENT_MARKER"), `snapshotted the loading screen: ${JSON.stringify(text.slice(-120))}`);
+    assert.ok(!text.includes("Loading challenge"));
+  } finally {
+    await browser.close();
+    await new Promise<void>(resolve => { server.close(() => resolve()); });
+  }
+});
+
+test("off-host sub-resources are answered locally, never fetched and never failed", () => {
+  // The SSRF boundary: nothing unsafe continues to the network.
+  for (const type of ["script", "stylesheet", "fetch", "xhr", "image", "font", "other"]) {
+    assert.notEqual(routeDecision(false, type, false), "continue");
+  }
+  // A script or stylesheet from another host loads as empty, so the page's own
+  // code does not see a failure it may not handle (codearc.net crashed on it).
+  assert.equal(routeDecision(false, "script", false), "stub");
+  assert.equal(stubResponse("script").contentType, "application/javascript");
+  assert.equal(stubResponse("stylesheet").body, "");
+  assert.equal(stubResponse("fetch").body, "{}");
+  // Navigating away would replace the page under observation, so it is refused.
+  assert.equal(routeDecision(false, "document", true), "abort");
+  // On the site's own host, only evidence-free heavy types are skipped.
+  assert.equal(routeDecision(true, "image", false), "abort");
+  assert.equal(routeDecision(true, "script", false), "continue");
+  assert.equal(routeDecision(true, "document", true), "continue");
 });
