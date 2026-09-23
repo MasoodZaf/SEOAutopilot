@@ -1,5 +1,8 @@
 import Link from "next/link";
 
+import {Badge, button} from "@/app/components/ui";
+import {SiteFooter, SiteHeader} from "@/app/components/site-header";
+
 const agents = [
   ["Technical SEO", "Crawl, indexability, canonical tags, and status code evidence.", "Rule-backed"],
   ["Content SEO", "Deterministic checks for titles, descriptions, headings, and thin content.", "Rule-backed"],
@@ -17,6 +20,19 @@ const stages = [
   ["Separation-of-duties approval", "In validation"],
   ["Git / CMS deployment", "Certification gate"],
   ["28-day outcome tracking", "In validation"],
+];
+
+/* The lifecycle every change travels. No stage may be skipped, and that
+   sentence is the product -- so it is drawn, not buried in a paragraph. */
+const lifecycle = [
+  "Finding",
+  "Opportunity",
+  "Proposal",
+  "Validation",
+  "Approval",
+  "Deployment",
+  "Verification",
+  "Measurement",
 ];
 
 const faqs = [
@@ -66,126 +82,151 @@ export default function Home() {
     ],
   };
 
+  const proven = stages.filter(([, status]) => status === "Proven").length;
+
   return (
     <>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{__html: JSON.stringify(jsonLd)}}
       />
-      <main className="min-h-dvh bg-sunk text-ink">
-        <header className="border-b border-rule bg-surface">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-            <div>
-              <p className="font-display text-[15px] font-semibold tracking-tight text-ink">SEO Autopilot</p>
-              <p className="text-xs text-ink-faint">Evidence to measured change</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <Link
-                href="/pilot"
-                className="rounded-[4px] bg-accent px-3.5 py-1.5 text-xs font-semibold text-accent-ink shadow-sm hover:bg-accent"
-              >
-                Control Plane
-              </Link>
-            </div>
-          </div>
-        </header>
+      <div className="bg-paper text-ink">
+        <SiteHeader />
 
-        <div className="mx-auto max-w-7xl px-6 py-12">
-          <section className="grid gap-8 lg:grid-cols-[1.4fr_1fr]">
-            <div>
-              <p className="eyebrow mb-3">Governed SEO Operations</p>
-              <h1 className="max-w-3xl font-display text-balance text-[40px] leading-[1.12] font-semibold tracking-tight text-ink sm:text-[52px]">
-                Your highest-value SEO work, explained, verified, and controlled.
-              </h1>
-              <p className="mt-5 max-w-2xl text-pretty text-lg leading-8 text-ink-soft">
-                Connect crawl, Search Console, and mobile lab-performance evidence. Rank opportunities,
-                review exact diffs, and prepare governed changes. External deployment stays blocked until each connector passes certification.
-              </p>
-              <div className="mt-8 flex gap-4">
-                <Link
-                  href="/pilot"
-                  className="inline-flex rounded-[4px] bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink shadow-sm hover:bg-accent"
-                >
-                  Connect your first site
-                </Link>
+        <main>
+          <section className="dot-field border-b border-rule">
+            <div className="mx-auto grid max-w-6xl gap-14 px-6 pt-20 pb-20 lg:grid-cols-[1.35fr_1fr] lg:items-end lg:pt-28">
+              <div>
+                <p className="eyebrow flex items-center gap-3">
+                  <span aria-hidden="true" className="size-1.5 rounded-full bg-signal" />
+                  Governed SEO operations
+                </p>
+                <h1 className="mt-6 font-display text-[44px] leading-[1.02] font-light tracking-[-0.035em] text-balance text-ink sm:text-[68px]">
+                  Your highest&#8209;value SEO work, <span className="text-accent">explained, verified,</span> and controlled.
+                </h1>
+                <p className="mt-8 max-w-xl text-[16px] leading-7 text-pretty text-ink-soft">
+                  Connect crawl, Search Console, and mobile lab-performance evidence. Rank opportunities,
+                  review exact diffs, and prepare governed changes. External deployment stays blocked until each connector passes certification.
+                </p>
+                <div className="mt-10 flex flex-wrap items-center gap-3">
+                  <Link href="/pilot" className={`${button.primary} px-6 py-2.5 text-[14px]`}>
+                    Connect your first site
+                  </Link>
+                  <Link href="/tutorial" className={`${button.secondary} px-6 py-2.5 text-[14px]`}>
+                    Read the tutorial
+                  </Link>
+                </div>
               </div>
+
+              <aside aria-labelledby="stages-heading" className="rounded-2xl border border-rule bg-surface p-7">
+                <div className="flex items-start justify-between gap-4">
+                  <p id="stages-heading" className="eyebrow">Operation stages</p>
+                  <Badge tone="accent">Live</Badge>
+                </div>
+                <p className="mt-5 flex items-baseline gap-2">
+                  <span className="figure text-[64px] text-ink">{proven}</span>
+                  <span className="figure text-[28px] text-ink-faint">/ {stages.length}</span>
+                  <span className="ml-2 font-mono text-[12px] tracking-wider text-ink-faint uppercase">proven</span>
+                </p>
+                <ol className="relative mt-7">
+                  <span aria-hidden="true" className="absolute top-2 bottom-2 left-[5px] w-px bg-rule-strong" />
+                  {stages.map(([stage, stageStatus]) => {
+                    const done = stageStatus === "Proven";
+                    return (
+                      <li key={stage} className="relative flex items-center gap-4 py-2">
+                        <span
+                          aria-hidden="true"
+                          className={`relative size-[11px] shrink-0 rounded-full border-2 ${done ? "border-signal bg-signal" : "border-rule-strong bg-surface"}`}
+                        />
+                        <span className={`flex-1 text-[13px] ${done ? "text-ink" : "text-ink-soft"}`}>{stage}</span>
+                        <span className="font-mono text-[11px] text-ink-faint">{stageStatus}</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </aside>
             </div>
-            <aside className="rounded-[4px] border border-rule bg-surface p-6 shadow-sm">
-              <p className="text-sm font-medium text-ink-faint">Operation Stages</p>
-              <p className="mt-1 font-display text-[28px] font-semibold tabular-nums text-ink">2 / 6 Proven</p>
-              <ol className="mt-6 space-y-3">
-                {stages.map(([stage, stageStatus], index) => (
-                  <li key={stage} className="flex items-center gap-3 text-sm text-ink-soft">
-                    <span className="flex size-7 items-center justify-center rounded-full border border-accent-rule bg-accent-soft font-medium tabular-nums text-accent">
-                      {index + 1}
-                    </span>
-                    <span className="flex-1">{stage}</span>
-                    <span className="text-xs text-ink-faint">{stageStatus}</span>
+          </section>
+
+          {/* The lifecycle band. */}
+          <section id="lifecycle" aria-labelledby="lifecycle-heading" className="border-b border-rule bg-surface">
+            <div className="mx-auto max-w-6xl px-6 py-14">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+                <h2 id="lifecycle-heading" className="font-display text-[22px] font-light tracking-tight text-ink">
+                  One path for every change. No stage may be skipped.
+                </h2>
+                <p className="eyebrow">8 stages · each one audited</p>
+              </div>
+              <ol className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-rule bg-rule sm:grid-cols-4 lg:grid-cols-8">
+                {lifecycle.map((stage, index) => (
+                  <li key={stage} className="flex flex-col gap-6 bg-surface p-5">
+                    <span className="font-mono text-[11px] text-accent">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="font-display text-[15px] font-medium tracking-tight text-ink">{stage}</span>
                   </li>
                 ))}
               </ol>
-            </aside>
-          </section>
-
-          {/* 7-Agent Architecture Section */}
-          <section className="mt-16">
-            <h2 className="font-display text-balance text-[26px] font-semibold tracking-tight text-ink">
-              Seven Specialist Workflows, One Governed Lifecycle
-            </h2>
-            <p className="mt-2 text-pretty text-sm text-ink-faint">
-              Six rule-backed evidence dimensions are active. The content-generation workflow is planned and remains human-reviewed.
-            </p>
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {agents.map(([name, purpose, agentStatus]) => (
-                /* h-full + mt-auto so the status label sits on one baseline
-                   across the row. Without it each card is only as tall as its
-                   own copy, and a row of cards whose footers wander is the
-                   thing that reads as unfinished before anyone can say why. */
-                <article
-                  key={name}
-                  className="flex h-full flex-col rounded-[4px] border border-rule bg-surface p-5"
-                >
-                  <h3 className="text-balance font-semibold text-ink">{name}</h3>
-                  <p className="mt-2 text-pretty text-xs leading-5 text-ink-soft">{purpose}</p>
-                  <p className="eyebrow mt-auto pt-4">{agentStatus}</p>
-                </article>
-              ))}
             </div>
           </section>
 
-          {/* FAQ Section with Rich Answerability */}
-          <section className="mt-16 border-t border-rule pt-12">
-            <h2 className="font-display text-[26px] font-semibold tracking-tight text-ink">
-              Frequently Asked Questions
-            </h2>
-            <div className="mt-6 grid gap-6 sm:grid-cols-3">
-              {faqs.map((faq) => (
-                <div key={faq.q} className="rounded-[4px] border border-rule bg-surface p-5 shadow-sm">
-                  <h3 className="text-sm font-semibold text-ink">{faq.q}</h3>
-                  <p className="mt-2 text-xs leading-relaxed text-ink-soft">{faq.a}</p>
-                </div>
-              ))}
+          <section aria-labelledby="workflows-heading" className="mx-auto max-w-6xl px-6 py-24">
+            <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
+              <div>
+                <p className="eyebrow">Workflows</p>
+                <h2 id="workflows-heading" className="mt-4 font-display text-[34px] leading-[1.1] font-light tracking-tight text-balance text-ink">
+                  Seven specialist workflows, one governed lifecycle
+                </h2>
+                <p className="mt-4 max-w-sm text-[14px] leading-6 text-pretty text-ink-soft">
+                  Six rule-backed evidence dimensions are active. The content-generation workflow is planned and remains human-reviewed.
+                </p>
+              </div>
+              <div className="grid gap-px overflow-hidden rounded-2xl border border-rule bg-rule sm:grid-cols-2">
+                {agents.map(([name, purpose, agentStatus], index) => (
+                  <article key={name} className="flex flex-col bg-surface p-6 transition-colors hover:bg-sunk">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-mono text-[11px] text-ink-faint">{String(index + 1).padStart(2, "0")}</span>
+                      <Badge tone={agentStatus === "Planned" ? "neutral" : "good"}>{agentStatus}</Badge>
+                    </div>
+                    <h3 className="mt-6 font-display text-[17px] font-medium tracking-tight text-balance text-ink">{name}</h3>
+                    <p className="mt-2 text-[13px] leading-6 text-pretty text-ink-soft">{purpose}</p>
+                  </article>
+                ))}
+                {/* Seven items in a two-column grid leaves one cell open; it
+                    carries the call to action rather than sitting empty. */}
+                <Link href="/pilot" className="group flex flex-col justify-between bg-surface p-6 transition-colors hover:bg-sunk">
+                  <span className="font-mono text-[11px] text-ink-faint">Start</span>
+                  <span className="mt-6 font-display text-[17px] font-medium tracking-tight text-accent">
+                    Open the control plane <span aria-hidden="true">&rarr;</span>
+                  </span>
+                </Link>
+              </div>
             </div>
           </section>
-        </div>
+
+          <section aria-labelledby="faq-heading" className="border-t border-rule">
+            <div className="mx-auto grid max-w-6xl gap-10 px-6 py-24 lg:grid-cols-[1fr_2fr]">
+              <div>
+                <p className="eyebrow">Questions</p>
+                <h2 id="faq-heading" className="mt-4 font-display text-[34px] leading-[1.1] font-light tracking-tight text-ink">
+                  Frequently asked questions
+                </h2>
+              </div>
+              <dl className="divide-y divide-rule border-y border-rule">
+                {faqs.map((faq) => (
+                  <div key={faq.q} className="grid gap-3 py-7 sm:grid-cols-[1fr_1.3fr] sm:gap-8">
+                    <dt className="font-display text-[16px] leading-6 font-medium tracking-tight text-balance text-ink">{faq.q}</dt>
+                    <dd className="text-[14px] leading-6 text-pretty text-ink-soft">{faq.a}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </section>
+        </main>
 
         {/* Google will not publish an External OAuth app whose privacy policy
             and terms are not reachable, and it checks the links rather than
-            taking the form's word for it. They belong in a footer regardless. */}
-        <footer className="border-t border-rule bg-surface">
-          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-6 py-8 text-xs text-ink-faint sm:flex-row sm:items-center sm:justify-between">
-            <p>SEO Autopilot &middot; Oryxen Labs</p>
-            <nav className="flex gap-4">
-              <Link href="/privacy" className="hover:text-ink">
-                Privacy Policy
-              </Link>
-              <Link href="/terms" className="hover:text-ink">
-                Terms of Service
-              </Link>
-            </nav>
-          </div>
-        </footer>
-      </main>
+            taking the form's word for it. The footer carries both. */}
+        <SiteFooter />
+      </div>
     </>
   );
 }

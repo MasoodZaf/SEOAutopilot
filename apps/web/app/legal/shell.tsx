@@ -38,7 +38,7 @@ export function Legal({
       </header>
 
       <div className="mx-auto max-w-3xl px-6 py-12">
-        <h1 className="font-display text-balance text-[30px] font-semibold tracking-tight text-ink">{title}</h1>
+        <h1 className="font-display text-balance text-[36px] font-light tracking-tight text-ink">{title}</h1>
         <p className="mt-2 text-sm text-ink-faint">Last updated {updated}</p>
         <div className="mt-8 flex flex-col gap-8">{children}</div>
       </div>

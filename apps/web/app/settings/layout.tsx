@@ -20,7 +20,10 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
   return (
     <div className="min-h-dvh bg-paper">
       <Masthead section="Settings">
-        <nav aria-label="Main" className="flex items-center gap-3">
+        <nav aria-label="Main" className="flex items-center gap-4">
+          <Link href="/tutorial" className={button.quiet}>
+            Tutorial
+          </Link>
           <Link href="/pilot" className={button.quiet}>
             Dashboard
           </Link>
@@ -28,8 +31,10 @@ export default function SettingsLayout({children}: {children: React.ReactNode}) 
         </nav>
       </Masthead>
       <ConnectionsBanner />
-      <Tabs items={TABS} label="Settings" />
-      {children}
+      <div className="mx-auto grid max-w-6xl lg:grid-cols-[13rem_minmax(0,1fr)]">
+        <Tabs items={TABS} label="Settings" />
+        <div className="min-w-0">{children}</div>
+      </div>
       <TipDescriptions />
     </div>
   );

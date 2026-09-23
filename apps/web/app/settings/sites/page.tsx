@@ -45,9 +45,9 @@ const REASONS: Record<string, string> = {
 };
 
 const field =
-  "rounded-[4px] border border-rule-strong px-3 py-2 text-sm font-normal text-ink";
+  "rounded-xl border border-rule-strong bg-paper px-3.5 py-2 text-sm font-normal text-ink";
 const submit =
-  "self-start rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk";
+  "self-start rounded-full bg-signal px-5 py-2 text-sm font-semibold text-signal-ink transition-colors hover:bg-signal-hover";
 
 export default async function SitesPage({searchParams}: PageProps) {
   const query = await searchParams;
@@ -65,9 +65,9 @@ export default async function SitesPage({searchParams}: PageProps) {
   const pending = sites.filter((site) => site.status !== "active");
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-10">
+    <main className="flex max-w-3xl flex-col gap-8 px-6 py-10">
       <header className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold tracking-tight text-ink">Your sites</h1>
+        <h1 className="font-display text-[32px] leading-tight font-light tracking-tight text-ink">Your sites</h1>
         <p className="text-pretty text-sm text-ink-soft">
           Add a site you control, then prove it with a DNS record. Nothing is crawled and no
           connector will bind until that proof exists — which is what stops anybody pointing
@@ -76,19 +76,19 @@ export default async function SitesPage({searchParams}: PageProps) {
       </header>
 
       {query.verified ? (
-        <p className="rounded-[4px] border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
+        <p className="rounded-xl border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
           Verified. You can connect Search Console and a repository to it now.
         </p>
       ) : null}
       {query.published ? (
-        <p className="rounded-[4px] border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
+        <p className="rounded-xl border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
           Cloudflare published the record. Give it a moment, then check the record below.
         </p>
       ) : null}
       {query.error ? (
         <p
           role="alert"
-          className="rounded-[4px] border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
+          className="rounded-xl border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
         >
           {REASONS[query.error] ?? "That did not work. Try again."}
         </p>
@@ -96,7 +96,7 @@ export default async function SitesPage({searchParams}: PageProps) {
       {loadError ? (
         <p
           role="alert"
-          className="rounded-[4px] border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
+          className="rounded-xl border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
         >
           {loadError}
         </p>
@@ -104,10 +104,10 @@ export default async function SitesPage({searchParams}: PageProps) {
 
       <section
         aria-labelledby="add-heading"
-        className="flex flex-col gap-4 rounded-[4px] border border-rule bg-surface p-5"
+        className="flex flex-col gap-4 rounded-xl border border-rule bg-surface p-5"
       >
         <div>
-          <h2 id="add-heading" className="text-base font-semibold text-ink">
+          <h2 id="add-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
             Add a site
           </h2>
           <p className="mt-1 text-sm text-ink-soft">
@@ -140,10 +140,10 @@ export default async function SitesPage({searchParams}: PageProps) {
       {challenge ? (
         <section
           aria-labelledby="verify-heading"
-          className="flex flex-col gap-4 rounded-[4px] border border-warn-rule bg-warn-soft p-5"
+          className="flex flex-col gap-4 rounded-xl border border-warn-rule bg-warn-soft p-5"
         >
           <div>
-            <h2 id="verify-heading" className="text-base font-semibold text-ink">
+            <h2 id="verify-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
               Publish this DNS record
             </h2>
             <p className="mt-1 text-pretty text-sm text-ink-soft">
@@ -153,7 +153,7 @@ export default async function SitesPage({searchParams}: PageProps) {
             </p>
           </div>
 
-          <dl className="grid gap-3 rounded-[4px] border border-warn-rule bg-surface p-4 text-sm sm:grid-cols-[7rem_1fr]">
+          <dl className="grid gap-3 rounded-xl border border-warn-rule bg-surface p-4 text-sm sm:grid-cols-[7rem_1fr]">
             <dt className="font-medium text-ink-soft">Type</dt>
             <dd className="font-mono text-ink">TXT</dd>
             <dt className="font-medium text-ink-soft">Name</dt>
@@ -186,7 +186,7 @@ export default async function SitesPage({searchParams}: PageProps) {
             </form>
           </div>
 
-          <details className="rounded-[4px] border border-warn-rule bg-surface p-4">
+          <details className="rounded-xl border border-warn-rule bg-surface p-4">
             <summary className="cursor-pointer text-sm font-medium text-ink">
               Optional: let Cloudflare add it for you
             </summary>
@@ -222,11 +222,11 @@ export default async function SitesPage({searchParams}: PageProps) {
       ) : null}
 
       <section aria-labelledby="list-heading" className="flex flex-col gap-3">
-        <h2 id="list-heading" className="text-base font-semibold text-ink">
+        <h2 id="list-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
           Sites in this workspace
         </h2>
         {sites.length === 0 ? (
-          <p className="rounded-[4px] border border-dashed border-rule-strong bg-surface px-4 py-6 text-center text-sm text-ink-soft">
+          <p className="rounded-xl border border-dashed border-rule-strong bg-surface px-4 py-6 text-center text-sm text-ink-soft">
             No sites yet. Add the first one above.
           </p>
         ) : (
@@ -234,7 +234,7 @@ export default async function SitesPage({searchParams}: PageProps) {
             {sites.map((site) => (
               <li
                 key={site.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-[4px] border border-rule bg-surface px-4 py-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rule bg-surface px-4 py-3"
               >
                 <div className="min-w-0">
                   <p className="truncate font-medium text-ink">{site.name}</p>

@@ -12,93 +12,105 @@
  * (`bg-paper`, `text-ink`, `border-rule`). That is what makes the dark theme
  * nearly free: the tokens are redefined under `prefers-color-scheme`, and
  * anything built from them follows. It also means a page that reaches for a
- * raw `bg-zinc-900` is now visibly off-system rather than merely inconsistent.
+ * raw neutral ramp is now visibly off-system rather than merely inconsistent.
  */
 
 :root {
   color-scheme: light;
 
-  /* Ground and surfaces. Warm rather than blue-grey: this is meant to read as
-     paper an instrument prints onto, not as another dark-mode dashboard. */
-  --paper: #f7f6f2;
+  /* Ground and surfaces. A cool porcelain rather than warm paper: the product
+     is a console for live systems, and the ground should read as glass and
+     light, not as print. */
+  --paper: #f3f4f1;
   --surface: #ffffff;
-  --sunk: #efeee8;
+  --sunk: #e9ebe6;
+  /* The dot field behind page headers. A colour, not an image, so it themes. */
+  --field: #cdd1c9;
 
-  /* Ink. Slightly cool against the warm ground so text stays crisp. */
-  --ink: #17181c;
-  --ink-soft: #55575e;
-  --ink-faint: #676970;
-  --ink-inverse: #f7f6f2;
+  --ink: #0c0e10;
+  --ink-soft: #474d54;
+  --ink-faint: #5b6168;
+  --ink-inverse: #f3f4f1;
 
-  /* Hairlines carry most of the structure here, so they get two weights. */
-  --rule: #e3e1d9;
-  --rule-strong: #cbc8bd;
+  --rule: #dfe2dc;
+  --rule-strong: #c2c6bf;
 
-  /* One accent, for interaction and the current thing only. */
-  --accent: #0d5c68;
-  --accent-hover: #0a4a54;
-  /* What sits ON the accent. It has to flip with the theme: the dark palette
-     lightens the accent so it reads against a dark ground, and white text on a
-     light teal is about 1.9:1 -- unreadable, and invisible to anyone who only
-     ever reviews the light theme. */
+  /* Two greens with two jobs. `accent` is for text and lines: links, the
+     current tab, a focus ring. It has to hold 4.5:1 on every ground, which
+     lime cannot do on white, so on the light theme it is a deep olive.
+     `signal` is the fill: the primary action and the live indicator. It is
+     only ever a background, with `signal-ink` on it, and that is what lets it
+     be the same electric lime in both themes. */
+  --accent: #3d5c00;
+  --accent-hover: #2f4700;
   --accent-ink: #ffffff;
-  --accent-soft: #e2eff1;
-  --accent-rule: #b9d6db;
+  --accent-soft: #eef5d8;
+  --accent-rule: #c6dc8a;
 
-  /* Semantics, deliberately muted. A product whose claim is calm, reviewable
-     control should not signal with alarm colours. */
-  --good: #14654b;
+  --signal: #c6f03a;
+  --signal-hover: #b5e024;
+  --signal-ink: #0c0e10;
+
+  /* Semantics, still muted. The one loud colour on screen is the signal. */
+  --good: #0f6a49;
   --good-ink: #ffffff;
-  --good-soft: #e3f0ea;
-  --good-rule: #b7d8c9;
-  --warn: #7d520c;
+  --good-soft: #e2f1e9;
+  --good-rule: #b3d9c6;
+  --warn: #7a5000;
   --warn-ink: #ffffff;
-  --warn-soft: #faf1de;
-  --warn-rule: #e7d3ac;
-  --stop: #8c2f2a;
+  --warn-soft: #f8efdb;
+  --warn-rule: #e5cf9f;
+  --stop: #a02e28;
   --stop-ink: #ffffff;
-  --stop-soft: #faeae8;
-  --stop-rule: #eccbc7;
+  --stop-soft: #fae8e6;
+  --stop-rule: #ecc4c0;
 
-  --focus: #0d5c68;
+  --focus: #3d5c00;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
 
-    --paper: #121316;
-    --surface: #191b1f;
-    --sunk: #0d0e11;
+    /* Near-black with a trace of green in it, so the lime belongs here rather
+       than sitting on top. */
+    --paper: #08090a;
+    --surface: #0f1112;
+    --sunk: #050606;
+    --field: #22262a;
 
-    --ink: #eceae4;
-    --ink-soft: #a4a6ad;
-    --ink-faint: #84868e;
-    --ink-inverse: #121316;
+    --ink: #eef1ea;
+    --ink-soft: #a7adb2;
+    --ink-faint: #878d93;
+    --ink-inverse: #08090a;
 
-    --rule: #2a2d33;
-    --rule-strong: #3d414a;
+    --rule: #1c1f22;
+    --rule-strong: #2d3236;
 
-    --accent: #5fbecb;
-    --accent-hover: #7fcdd8;
-    --accent-ink: #08222a;
-    --accent-soft: #102f35;
-    --accent-rule: #1d4c56;
+    --accent: #c6f03a;
+    --accent-hover: #d6ff5a;
+    --accent-ink: #0c0e10;
+    --accent-soft: #151c05;
+    --accent-rule: #3a4a0f;
 
-    --good: #6cc7a2;
-    --good-ink: #0a2018;
-    --good-soft: #102a20;
-    --good-rule: #1d4a38;
-    --warn: #dfad63;
-    --warn-ink: #251b0c;
-    --warn-soft: #2a2114;
-    --warn-rule: #4a3a1e;
-    --stop: #e39b95;
+    --signal: #c6f03a;
+    --signal-hover: #d6ff5a;
+    --signal-ink: #0c0e10;
+
+    --good: #6ad3a4;
+    --good-ink: #06201a;
+    --good-soft: #0c2219;
+    --good-rule: #1b4634;
+    --warn: #e7b465;
+    --warn-ink: #241a0a;
+    --warn-soft: #231a0c;
+    --warn-rule: #4a381a;
+    --stop: #f09a93;
     --stop-ink: #2a1210;
-    --stop-soft: #2c1614;
-    --stop-rule: #4d2723;
+    --stop-soft: #261210;
+    --stop-rule: #4f2622;
 
-    --focus: #5fbecb;
+    --focus: #c6f03a;
   }
 }
 
@@ -106,6 +118,7 @@
   --color-paper: var(--paper);
   --color-surface: var(--surface);
   --color-sunk: var(--sunk);
+  --color-field: var(--field);
 
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
@@ -120,6 +133,10 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-ink: var(--accent-ink);
   --color-accent-rule: var(--accent-rule);
+
+  --color-signal: var(--signal);
+  --color-signal-hover: var(--signal-hover);
+  --color-signal-ink: var(--signal-ink);
 
   --color-good: var(--good);
   --color-good-soft: var(--good-soft);
@@ -136,27 +153,43 @@
 
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
-  --font-display: var(--font-plex-serif), ui-serif, Georgia, serif;
+  --font-display: var(--font-sora), var(--font-plex-sans), ui-sans-serif, sans-serif;
 }
 
-* {
-  box-sizing: border-box;
-}
+/*
+ * Base rules live in the base layer. Unlayered CSS beats every Tailwind
+ * utility regardless of specificity, so `button { color: inherit }` sitting
+ * outside a layer silently overrode `text-signal-ink` on every filled button
+ * and drew light text on the lime.
+ */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
 
-body {
-  margin: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-}
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+  /* A hidden tooltip balloon near the right edge still has width, and was
+     enough to give phones a few pixels of sideways scroll. `clip`, not
+     `hidden`: it creates no scroll container, so the sticky masthead keeps
+     working. On html, because body's overflow is propagated to the viewport. */
+  html {
+    overflow-x: clip;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
 }
 
 /*
@@ -303,13 +336,15 @@ table {
 }
 
 /* The small uppercase mono label that names every region of the instrument. */
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+@layer components {
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
 }
 
 /* One focus treatment everywhere, visible on paper and on ink. */
@@ -327,4 +362,50 @@ table {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * The dot field.
+ *
+ * A quiet coordinate grid behind a page's header, the one piece of texture in
+ * the product. Drawn as a mask over a solid token colour rather than as a
+ * gradient or an image, so it follows the theme and is not a gradient.
+ * It sits under the content and never behind body copy.
+ */
+.dot-field {
+  position: relative;
+  isolation: isolate;
+}
+
+.dot-field::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--field);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22'%3E%3Ccircle cx='1' cy='1' r='1' fill='black'/%3E%3C/svg%3E") repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22'%3E%3Ccircle cx='1' cy='1' r='1' fill='black'/%3E%3C/svg%3E") repeat;
+  pointer-events: none;
+}
+
+/* Large figures. Display face, light weight, tabular, tight. */
+@layer components {
+  .figure {
+    font-family: var(--font-display);
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+}
+
+/* A disclosure's marker is ours, not the browser's triangle. */
+details > summary {
+  list-style: none;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details[open] > summary [data-chevron] {
+  transform: rotate(90deg);
 }

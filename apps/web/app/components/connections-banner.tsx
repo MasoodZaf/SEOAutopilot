@@ -46,7 +46,7 @@ export async function ConnectionsBanner() {
 
   return (
     <aside aria-label="Connection problems" className="border-b border-stop-rule bg-stop-soft">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 py-2.5 text-[13px] text-ink">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 py-2.5 text-[13px] text-ink">
         <p className="text-pretty">
           <strong className="font-semibold text-stop">
             {broken.length === 1

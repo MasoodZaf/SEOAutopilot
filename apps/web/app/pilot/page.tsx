@@ -5,7 +5,8 @@ import Link from "next/link";
 
 import {redirect} from "next/navigation";
 
-import {button} from "@/app/components/ui";
+import {Badge, button, Copyable, Field, input, inputMono, Meter, Metric, Note, Panel, type Tone} from "@/app/components/ui";
+import {cn} from "@/lib/cn";
 import {apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {
@@ -299,6 +300,51 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   }
 }
 
+/** A numbered section heading: the page reads as a sequence, top to bottom. */
+function SectionHead({
+  index,
+  title,
+  id,
+  description,
+  aside,
+}: {
+  index: string;
+  title: string;
+  id: string;
+  description?: React.ReactNode;
+  aside?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <p className="eyebrow flex items-center gap-3">
+          <span className="text-accent">{index}</span>
+          <span aria-hidden="true" className="h-px w-8 bg-rule-strong" />
+        </p>
+        <h2 id={id} className="mt-3 font-display text-[26px] leading-tight font-light tracking-tight text-balance text-ink">
+          {title}
+        </h2>
+        {description ? (
+          <p className="mt-2 max-w-2xl text-[13px] leading-6 text-pretty text-ink-soft">{description}</p>
+        ) : null}
+      </div>
+      {aside ? <div className="shrink-0">{aside}</div> : null}
+    </div>
+  );
+}
+
+const riskTone = (risk: string): Tone =>
+  risk === "low" ? "good" : risk === "prohibited" ? "stop" : "warn";
+
+const smallButton = {
+  primary:
+    "inline-flex items-center justify-center rounded-full bg-signal px-3.5 py-1.5 text-[12px] font-semibold text-signal-ink transition-colors hover:bg-signal-hover",
+  secondary:
+    "inline-flex items-center justify-center rounded-full border border-rule-strong px-3.5 py-1.5 text-[12px] font-medium text-ink transition-colors hover:border-ink-faint hover:bg-sunk",
+  caution:
+    "inline-flex items-center justify-center rounded-full border border-stop-rule px-3.5 py-1.5 text-[12px] font-medium text-stop transition-colors hover:bg-stop-soft",
+} as const;
+
 export default async function PilotPage({searchParams}: PageProps) {
   const {error, governance: govUpdated, simulation, proposal: propMsg, site: requestedHost} = await searchParams;
   const data = await loadPilot(requestedHost);
@@ -319,715 +365,759 @@ export default async function PilotPage({searchParams}: PageProps) {
     : undefined;
   const selectedChallenge = challenge?.siteId === data.site?.id ? challenge : undefined;
   const performanceIdempotencyKey = randomUUID();
+  const gov = data.governance;
+  const crawlActive = Boolean(data.latestCrawl && ["queued", "running"].includes(data.latestCrawl.status));
 
   return (
-    <main className="min-h-dvh bg-paper text-ink">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
-      {/* Emergency Freeze Banner */}
-      {data.governance?.emergency_freeze && (
-        <div className="flex items-center justify-between rounded-[4px] border border-stop-rule bg-stop-soft p-4 text-stop">
-          <div className="flex items-center gap-3">
-            <span aria-hidden="true" className="text-xl">!</span>
-            <div>
-              <p className="font-semibold">EMERGENCY KILL-SWITCH ACTIVE</p>
-              <p className="text-xs text-stop">Automated deployment is blocked site-wide.</p>
-            </div>
+    <main className="bg-paper text-ink">
+      {gov?.emergency_freeze && (
+        <div role="alert" className="border-b border-stop-rule bg-stop-soft">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-3">
+            <p className="flex items-center gap-3 text-[13px] text-ink">
+              <Badge tone="stop">Kill switch active</Badge>
+              Automated deployment is blocked site-wide.
+            </p>
+            <p className="max-w-md text-[12px] text-pretty text-stop">
+              An owner must complete incident review before lifting this freeze through the governed API.
+            </p>
           </div>
-          <p className="max-w-56 text-right text-xs text-stop">An owner must complete incident review before lifting this freeze through the governed API.</p>
         </div>
       )}
 
-      {/* The masthead in the layout carries the product name now, so this
-          heading names the thing the page is actually about: the site being
-          operated on. It used to read "SEO Autopilot Operations" above a
-          masthead already saying "SEO Autopilot", and the host -- the one fact
-          that changes what every control below does -- was a grey sentence
-          underneath. */}
-      <header className="flex flex-col gap-2 border-b border-rule pb-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="eyebrow">Operating on</p>
-            <h1 className="mt-1 font-display text-[26px] leading-tight font-semibold tracking-tight text-ink">
-              {target.host || target.name}
-            </h1>
-          </div>
-          {data.site && data.governance && (
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Navigation, not a status: this was drawn in the semantic green
-                  reserved for "this succeeded", and its hover state repainted
-                  the colour it already had. */}
-              <Link
-                href={`/pilot/workspace?site=${target.host}`}
-                className={button.secondary}
-                data-tip="Conversations, scheduled routines, keyword clusters and content briefs for this site."
-                data-tip-side="bottom"
-               aria-describedby="tip-4b1f1f81a7">
-                Agent workspace
-              </Link>
-              <form action={runPolicySimulationAction}>
-                <input type="hidden" name="site_host" value={target.host} />
-                <button
-                  type="submit"
-                  className={button.secondary}
-                  data-tip="Dry run: reports what the current policy would allow or block on open proposals. Changes nothing."
+      {/* The masthead in the layout carries the product name, so this header
+          names the thing the page is actually about: the site being operated
+          on. The host is the one fact that changes what every control below
+          does, so it is the largest thing on the page. */}
+      <header className="dot-field border-b border-rule">
+        <div className="mx-auto max-w-6xl px-6 pt-12 pb-8">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <p className="eyebrow">Operating on</p>
+              <h1 className="mt-3 font-display text-[40px] leading-none font-light tracking-tight break-words text-ink sm:text-[60px]">
+                {target.host || target.name}
+              </h1>
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                {data.site ? (
+                  <Badge tone={data.site.status === "active" ? "good" : "warn"}>
+                    {data.site.status.replaceAll("_", " ")}
+                  </Badge>
+                ) : null}
+                {gov ? <Badge tone="accent">{gov.mode}</Badge> : null}
+                <Badge tone="warn">Human consent required</Badge>
+              </div>
+            </div>
+            {data.site && gov && (
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Navigation, not a status. */}
+                <Link
+                  href={`/pilot/workspace?site=${target.host}`}
+                  className={button.primary}
+                  data-tip="Conversations, scheduled routines, keyword clusters and content briefs for this site."
                   data-tip-side="bottom"
-                 aria-describedby="tip-2d6f77dd1b">
-                  Run policy simulation
-                </button>
-              </form>
-              {!data.governance.emergency_freeze && (
-                <form action={toggleEmergencyFreezeAction}>
+                 aria-describedby="tip-4b1f1f81a7">
+                  Agent workspace
+                </Link>
+                <form action={runPolicySimulationAction}>
                   <input type="hidden" name="site_host" value={target.host} />
-                  <input type="hidden" name="current_freeze" value="false" />
                   <button
                     type="submit"
-                    className={`${button.secondary} border-stop-rule bg-stop-soft text-stop`}
-                    data-tip="Kill switch. Blocks every automated deployment for this site until an owner lifts it after an incident review."
+                    className={button.secondary}
+                    data-tip="Dry run: reports what the current policy would allow or block on open proposals. Changes nothing."
                     data-tip-side="bottom"
-                   aria-describedby="tip-9cb2174ecd">
-                    Emergency freeze
+                   aria-describedby="tip-2d6f77dd1b">
+                    Run policy simulation
                   </button>
                 </form>
-              )}
-            </div>
-          )}
+                {!gov.emergency_freeze && (
+                  <form action={toggleEmergencyFreezeAction}>
+                    <input type="hidden" name="site_host" value={target.host} />
+                    <input type="hidden" name="current_freeze" value="false" />
+                    <button
+                      type="submit"
+                      className={button.caution}
+                      data-tip="Kill switch. Blocks every automated deployment for this site until an owner lifts it after an incident review."
+                      data-tip-side="bottom"
+                     aria-describedby="tip-9cb2174ecd">
+                      Emergency freeze
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Selection never grants permission to publish changes. */}
+          <nav aria-label="Sites in this workspace" className="mt-10 flex flex-wrap gap-2">
+            {data.sites.map((item) => {
+              const selected = item.normalized_host === target.host;
+              return (
+                <Link
+                  key={item.id}
+                  href={pilotPath(item.normalized_host)}
+                  aria-current={selected ? "page" : undefined}
+                  className={cn(
+                    "group inline-flex items-center gap-2.5 rounded-full border py-1.5 pr-4 pl-3 text-[13px] transition-colors",
+                    selected
+                      ? "border-ink bg-ink text-ink-inverse"
+                      : "border-rule-strong bg-surface text-ink-soft hover:border-ink-faint hover:text-ink",
+                  )}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn("size-1.5 rounded-full", item.status === "active" ? "bg-good" : "bg-ink-faint")}
+                  />
+                  <span className="font-medium">{item.name}</span>
+                  <span className={cn("font-mono text-[11px]", selected ? "text-ink-inverse" : "text-ink-faint")}>
+                    {item.normalized_host}
+                  </span>
+                  <span className="sr-only">{item.status}</span>
+                </Link>
+              );
+            })}
+            <Link
+              href="/settings/sites"
+              className="inline-flex items-center gap-2 rounded-full border border-dashed border-rule-strong px-4 py-1.5 text-[13px] text-ink-soft transition-colors hover:border-ink-faint hover:text-ink"
+            >
+              <span aria-hidden="true">+</span> Add a site
+            </Link>
+          </nav>
         </div>
       </header>
 
-      <section aria-labelledby="portfolio-heading" className="rounded-[4px] border border-rule bg-paper p-4">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 id="portfolio-heading" className="text-sm font-semibold text-ink">Your sites</h2>
-            <p className="text-xs text-ink-faint">The same bounded workflow across every site in this workspace. Selection never grants permission to publish changes.</p>
-          </div>
-          <span className="mt-2 w-fit rounded border border-warn-rule bg-warn-soft px-2 py-1 text-xs font-medium text-warn sm:mt-0">
-            Human consent required
-          </span>
-        </div>
-        <nav aria-label="Sites in this workspace" className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {data.sites.map((item) => {
-            const selected = item.normalized_host === target.host;
-            return (
-              <Link
-                key={item.id}
-                href={pilotPath(item.normalized_host)}
-                aria-current={selected ? "page" : undefined}
-                className={`rounded border p-3 outline-none focus-visible:ring-2 focus-visible:ring-white ${selected ? "border-white bg-surface" : "border-rule bg-paper hover:bg-surface"}`}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-ink">{item.name}</span>
-                  <span className={`rounded px-2 py-0.5 text-xs ${item.status === "active" ? "bg-good-soft text-good" : "bg-sunk text-ink-faint"}`}>
-                    {item.status}
-                  </span>
-                </span>
-                <span className="mt-1 block text-xs text-ink-faint">{item.normalized_host}</span>
-              </Link>
-            );
-          })}
-          <Link
-            href="/settings/sites"
-            className="rounded border border-dashed border-rule-strong p-3 text-center outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-white"
-          >
-            <span className="text-sm font-semibold text-ink-soft">Add a site</span>
-            <span className="mt-1 block text-xs text-ink-faint">Verify a domain you control</span>
-          </Link>
-        </nav>
-      </section>
-
-      {/* Notifications */}
-      {error && (
-        <div role="alert" className="rounded border border-stop-rule bg-stop-soft p-3 text-xs text-stop">
-          {errorMessages[error] ?? `Error: ${error}`}
-        </div>
-      )}
-      {govUpdated && <div role="status" aria-live="polite" className="rounded border border-good-rule bg-good-soft p-3 text-xs text-good">Governance settings updated.</div>}
-      {simulation && <div role="status" aria-live="polite" className="rounded border border-sky-800 bg-sky-950/40 p-3 text-xs text-sky-300">Policy simulation completed successfully.</div>}
-      {propMsg && <div role="status" aria-live="polite" className="rounded border border-good-rule bg-good-soft p-3 text-xs text-good">Proposal status transition applied: {propMsg}.</div>}
-
-      {/* Governance & Autopilot Status Bar */}
-      {data.governance && (
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <div className="rounded-[4px] border border-rule bg-paper p-4">
-            <p className="text-xs text-ink-faint">Operation Mode</p>
-            <p className="text-lg font-semibold uppercase text-ink">{data.governance.mode}</p>
-            {/*
-              Readable here since this dashboard was built, and changeable only
-              by an operator token that no longer exists. A site could sit in
-              `observe` for ever, refusing every deployment, with no way to say
-              otherwise. The reason is required by the API, not decoration: this
-              is recorded like a freeze.
-            */}
-            {data.site && (
-              <form action={setSiteModeAction} className="mt-3 space-y-2">
-                <input type="hidden" name="site_host" value={target.host} />
-                <input type="hidden" name="site_id" value={data.site.id} />
-                {/* The balloon lives on a wrapper: ::before and ::after do not
-                    apply to replaced elements, so a tooltip set directly on a
-                    <select> or <input> silently draws nothing. */}
-                <span
-                  className="block"
-                  data-tip="How far this site may go on its own. Observe measures only; recommend drafts proposals for approval; autopilot deploys unattended."
-                >
-                  <select
-                    name="mode"
-                    defaultValue={data.governance.mode}
-                    aria-label="Operation mode"
-                    className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink"
-                   aria-describedby="tip-8dcda9ad6f">
-                    <option value="observe">observe — measure only</option>
-                    <option value="recommend">recommend — deploy with approval</option>
-                    <option value="autopilot">autopilot — deploy unattended</option>
-                  </select>
-                </span>
-                <span
-                  className="block"
-                  data-tip="Why you are changing the mode. Required by the API and recorded in the audit trail against your name."
-                >
-                  <input
-                    name="reason"
-                    required
-                    minLength={3}
-                    placeholder="Why this change"
-                    aria-label="Reason for the mode change"
-                    className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
-                   aria-describedby="tip-266be79a7f"/>
-                </span>
-                <button
-                  type="submit"
-                  className="w-full rounded-[4px] border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:bg-sunk"
-                  data-tip="Apply the selected mode. Recorded with your reason; nothing publishes without approval unless you chose autopilot."
-                 aria-describedby="tip-6f07753cce">
-                  Set mode
-                </button>
-              </form>
+      <div className="mx-auto flex max-w-6xl flex-col gap-14 px-6 py-10">
+        {(error || govUpdated || simulation || propMsg) && (
+          <div className="flex flex-col gap-2">
+            {error && (
+              <Note tone="stop" role="alert">
+                {errorMessages[error] ?? `Error: ${error}`}
+              </Note>
             )}
+            {govUpdated && <Note tone="good" role="status">Governance settings updated.</Note>}
+            {simulation && <Note tone="accent" role="status">Policy simulation completed successfully.</Note>}
+            {propMsg && <Note tone="good" role="status">Proposal status transition applied: {propMsg}.</Note>}
           </div>
-          <div className="rounded-[4px] border border-rule bg-paper p-4">
-            <p className="text-xs text-ink-faint">Autopilot Governor</p>
-            <p className={`text-lg font-semibold ${data.governance.autopilot_enabled ? "text-good" : "text-warn"}`}>
-              {data.governance.autopilot_enabled ? "Active" : "Human Approvals Only"}
-            </p>
-          </div>
-          <div className="rounded-[4px] border border-rule bg-paper p-4">
-            <p className="text-xs text-ink-faint">Daily Change Budget</p>
-            <p className="text-lg font-semibold text-ink font-mono">
-              {data.governance.today_deployments_count} / {data.governance.daily_change_budget} used
-            </p>
-          </div>
-          <div className="rounded-[4px] border border-rule bg-paper p-4">
-            <p className="text-xs text-ink-faint">Approvers Required</p>
-            <p className="text-lg font-semibold text-ink font-mono">
-              {data.governance.required_approver_count ?? "tier default"}
-            </p>
-            {/*
-              Raising is always allowed. Lowering stops at the tier floor for
-              anything touching canonical, robots or redirect directives, so
-              this cannot talk a dangerous change down to one pair of eyes. The
-              count is frozen into a proposal when it is drafted, so a change
-              here governs the next draft, not the ones already waiting.
-            */}
-            {data.site && (
-              <form action={setApproverCountAction} className="mt-3 flex gap-2">
-                <input type="hidden" name="site_host" value={target.host} />
-                <input type="hidden" name="site_id" value={data.site.id} />
-                <span
-                  className="block w-full"
-                  data-tip="How many different people must approve a change before it can deploy. An author can never approve their own."
-                >
-                  <input
-                    name="required_approver_count"
-                    type="number"
-                    min={1}
-                    max={5}
-                    defaultValue={data.governance.required_approver_count ?? ""}
-                    placeholder="default"
-                    aria-label="Approvers required"
-                    className="w-full rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
-                   aria-describedby="tip-a909e65d70"/>
-                </span>
-                <button
-                  type="submit"
-                  className="rounded border border-rule-strong px-2 py-1 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
-                 data-tip="Save this approver count. It applies to proposals drafted from now on, not to ones already waiting." aria-describedby="tip-c08dbcd0f5">
-                  Set
-                </button>
-              </form>
-            )}
-          </div>
+        )}
 
-          <div className="rounded-[4px] border border-rule bg-paper p-4">
-            <p className="text-xs text-ink-faint">Freeze Window</p>
-            <p className="text-sm font-medium text-ink-faint">
-              {data.governance.freeze_window_start ? "Scheduled" : "None Active"}
-            </p>
-          </div>
-        </section>
-      )}
-
-      {/* Site Onboarding & Crawl Actions */}
-      {!data.site ? (
-        <section className="rounded-[4px] border border-rule bg-paper p-6 text-center">
-          <h2 className="text-lg font-semibold text-ink">No site selected</h2>
-          <p className="mt-1 text-sm text-ink-faint">
-            Add a site you control and prove it with a DNS record. Adding one lives in settings,
-            because it needs the address and a name only you can give.
-          </p>
-          <Link
-            href="/settings/sites"
-            className="mt-4 inline-block rounded bg-surface px-4 py-2 text-xs font-semibold text-black hover:bg-sunk"
-          data-tip="Add a domain you control and prove it with a DNS record." aria-describedby="tip-26b5b277ea">
-            Add a site
-          </Link>
-        </section>
-      ) : data.site.status !== "active" ? (
-        <section className="rounded-[4px] border border-rule bg-paper p-6">
-          <h2 className="text-base font-semibold text-ink">DNS Ownership Verification</h2>
-          <p className="mt-1 text-xs text-ink-faint">Add the following DNS TXT record to verify ownership of {data.site.canonical_origin}:</p>
-          {selectedChallenge && (
-            <div className="mt-3 rounded border border-rule bg-surface p-3 font-mono text-xs text-ink-soft">
-              <p><span className="text-ink-faint">Host:</span> {selectedChallenge.record_name}</p>
-              <p><span className="text-ink-faint">Value:</span> {selectedChallenge.record_value}</p>
-            </div>
-          )}
-          {!selectedChallenge && <p className="mt-3 text-xs text-warn">Generate a fresh site-specific TXT token before verification.</p>}
-          <div className="mt-4 flex gap-3">
-            <form action={verifyPortfolioDns}>
-              <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded bg-good px-3 py-1.5 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Check DNS now for the TXT record shown above. Safe to retry while it propagates." aria-describedby="tip-93fc91618b">
-                Verify DNS Record
-              </button>
-            </form>
-            <form action={refreshDnsChallenge}>
-              <input type="hidden" name="site_host" value={target.host} />
-              <button type="submit" className="rounded border border-rule-strong px-3 py-1.5 text-xs text-ink-soft hover:bg-sunk" data-tip="Issue a fresh verification token. The previous record stops working immediately." aria-describedby="tip-ad2bc41307">
-                Regenerate Token
-              </button>
-            </form>
-          </div>
-          <section className="mt-5 rounded border border-rule bg-surface/50 p-4">
-            <h3 className="text-sm font-semibold text-ink">DNS provider assistant</h3>
-            <p className="mt-1 text-xs text-ink-faint">The manual TXT record above works with every DNS host. This optional assistant adds provider-specific support without changing the consent policy.</p>
-            {data.dnsProviderConnector?.status === "active" ? (
-              <form action={createDnsProviderVerification} className="mt-3">
-                <input type="hidden" name="site_host" value={target.host} />
-                <input type="hidden" name="provider_key" value={data.dnsProviderConnector.provider_key ?? ""} />
-                <button type="submit" className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-violet-500">
-                  Create this TXT record with {data.dnsProviderConnector.provider_key ?? "your DNS provider"}
-                </button>
-              </form>
-            ) : (
-              <form action={connectDnsProvider} className="mt-3 grid gap-2 sm:grid-cols-2">
-                <label className="text-xs text-ink-faint">Provider
-                  <select name="provider_key" defaultValue="cloudflare" className="mt-1 block w-full rounded border border-rule-strong bg-paper px-2 py-1.5 text-xs text-ink">
-                    <option value="cloudflare">Cloudflare (available now)</option>
-                  </select>
-                </label>
-                <label className="text-xs text-ink-faint">Zone ID
-                  <input required name="zone_id" pattern="[A-Fa-f0-9]{32}" className="mt-1 block w-full rounded border border-rule-strong bg-paper px-2 py-1.5 font-mono text-xs text-ink" />
-                </label>
-                <label className="text-xs text-ink-faint">Scoped API token
-                  <input required name="api_token" type="password" autoComplete="off" className="mt-1 block w-full rounded border border-rule-strong bg-paper px-2 py-1.5 text-xs text-ink" />
-                </label>
-                <input type="hidden" name="site_host" value={target.host} />
-                <p className="text-xs text-ink-faint sm:col-span-2">The selected adapter states its least-privilege scope. Connecting does not create or change DNS records; creation requires a second approval.</p>
-                <button type="submit" className="justify-self-start rounded border border-violet-500 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-950 sm:col-span-2">Connect selected provider</button>
-              </form>
-            )}
-          </section>
-        </section>
-      ) : (
-        <>
-          <CrawlPanel crawls={data.crawls ?? []} now={data.renderedAt ?? new Date().toISOString()} />
-
-          {/* Quick Actions Grid */}
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
-              <div>
-                <h3 className="text-sm font-semibold text-ink">Bounded Crawl Engine</h3>
-                <p className="mt-1 text-xs text-ink-faint">
-                  {data.latestCrawl && ["queued", "running"].includes(data.latestCrawl.status)
-                    ? "A crawl is in progress — see above."
-                    : "Read-only: gathers evidence and changes nothing on the site."}
-                </p>
-              </div>
-              <form action={startFirstCrawl} className="mt-3">
-                <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Start a bounded crawl of this site now. Read-only: it gathers evidence and changes nothing on the site." aria-describedby="tip-e3ef53a7eb">
-                  Trigger New Crawl
-                </button>
-              </form>
-            </div>
-
-            <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
-              <div>
-                <h3 className="text-sm font-semibold text-ink">Search Console Connector</h3>
-                <p className="mt-1 text-xs text-ink-faint">
-                  {data.searchPerformance ? `${data.searchPerformance.clicks} clicks / ${data.searchPerformance.impressions} impressions` : "Google Search Console ready."}
-                </p>
-              </div>
-              <form action={connectSearchConsole} className="mt-3">
-                <input type="hidden" name="site_host" value={target.host} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
-                  {data.searchConsoleConnector ? "Re-sync Search Console" : "Connect Search Console"}
-                </button>
-              </form>
-            </div>
-
-            <div className="flex flex-col justify-between rounded-[4px] border border-rule bg-paper p-4">
-              <div>
-                <h3 className="text-sm font-semibold text-ink">Mobile Lighthouse Lab</h3>
-                <p className="mt-1 text-xs text-ink-faint">
-                  {data.performanceSummary
-                    ? `${data.performanceSummary.sample_count}/${data.performanceSummary.required_sample_count} samples · ${data.performanceSummary.status}`
-                    : data.performanceRun?.observation
-                      ? `Latest lab score: ${data.performanceRun.observation.performance_score}/100`
-                      : "No lab sample yet. This is not field Core Web Vitals data."}
-                </p>
-              </div>
-              <form action={startPerformanceRun} className="mt-3">
-                <input type="hidden" name="site_host" value={target.host} />
-                <input type="hidden" name="idempotency_key" value={performanceIdempotencyKey} />
-                <button type="submit" className="w-full rounded bg-sunk px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk"data-tip="Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals." aria-describedby="tip-728aeb6e5d">
-                  Run Mobile Lab Sample
-                </button>
-              </form>
-            </div>
-          </section>
-
-          <section aria-labelledby="visitor-data-heading" className="rounded-[4px] border border-rule bg-paper p-6">
-            <div className="border-b border-rule pb-4">
-              <h2 id="visitor-data-heading" className="text-base font-semibold text-ink">Search and visitor data</h2>
-              <p className="mt-1 max-w-3xl text-xs text-ink-faint">
-                Read-only, from this site&rsquo;s own Google properties
-                {data.searchPerformance ? `, ${data.searchPerformance.range_start} to ${data.searchPerformance.range_end}` : ""}.
-                Search Console counts searches; Analytics counts visits. They measure different things, so neither is subtracted from the other.
-              </p>
-            </div>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <div>
-                <h3 className="text-sm font-semibold text-ink">Google Search Console</h3>
-                {data.searchPerformance && data.searchPerformance.rows > 0 ? (
-                  <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                    <div><dt className="text-ink-faint">Clicks</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.clicks}</dd></div>
-                    <div><dt className="text-ink-faint">Impressions</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.impressions}</dd></div>
-                    <div><dt className="text-ink-faint">Click-through rate</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.ctr === null ? "—" : `${(data.searchPerformance.ctr * 100).toFixed(1)}%`}</dd></div>
-                    <div><dt className="text-ink-faint">Average position</dt><dd className="font-mono text-lg text-ink">{data.searchPerformance.position === null ? "—" : data.searchPerformance.position.toFixed(1)}</dd></div>
-                  </dl>
-                ) : (
-                  <p className="mt-3 text-xs text-ink-faint">No Search Console data yet. Connect Google under Settings, then wait for the daily sync.</p>
-                )}
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-ink">Google Analytics 4</h3>
-                {data.engagement && data.engagement.rows > 0 ? (
-                  <>
-                    <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                      <div><dt className="text-ink-faint">Sessions</dt><dd className="font-mono text-lg text-ink">{data.engagement.sessions}</dd></div>
-                      <div><dt className="text-ink-faint">Engagement rate</dt><dd className="font-mono text-lg text-ink">{data.engagement.engagement_rate === null ? "—" : `${(data.engagement.engagement_rate * 100).toFixed(0)}%`}</dd></div>
-                      <div><dt className="text-ink-faint">Page views</dt><dd className="font-mono text-lg text-ink">{data.engagement.views}</dd></div>
-                      <div><dt className="text-ink-faint">Key events</dt><dd className="font-mono text-lg text-ink">{data.engagement.key_events}</dd></div>
-                    </dl>
-                    <table className="mt-4 w-full text-left text-xs">
-                      <caption className="mb-1 text-left text-ink-faint">Top landing pages</caption>
-                      <thead><tr className="text-ink-faint"><th className="py-1 font-normal">Page</th><th className="py-1 text-right font-normal">Sessions</th><th className="py-1 text-right font-normal">Engaged</th></tr></thead>
-                      <tbody>
-                        {data.engagement.top_landing_pages.map((page) => (
-                          <tr key={page.landing_page} className="border-t border-rule">
-                            <td className="max-w-0 truncate py-1 font-mono text-ink">{page.landing_page}</td>
-                            <td className="py-1 text-right font-mono text-ink">{page.sessions}</td>
-                            <td className="py-1 text-right font-mono text-ink">{page.engaged_sessions}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </>
-                ) : (
-                  <p className="mt-3 text-xs text-ink-faint">No Analytics data yet. Connect Google under Settings; GA4 collects nothing from before its tag went live.</p>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section aria-labelledby="advisory-heading" className="rounded-[4px] border border-rule bg-paper p-6">
-            <div className="flex flex-col gap-3 border-b border-rule pb-4 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 id="advisory-heading" className="text-base font-semibold text-ink">Auto-correction Advisory Queue</h2>
-                <p className="mt-1 max-w-3xl text-xs text-ink-faint">
-                  Ranked candidates only. Every correction must pass evidence review, validation, and explicit human approval before a certified connector may act.
-                </p>
-              </div>
-              <span className="w-fit rounded border border-warn-rule bg-warn-soft px-2 py-1 text-xs font-medium text-warn">
-                0 automatic changes
-              </span>
-            </div>
-
-            {data.opportunities.length === 0 ? (
-              <div className="py-8 text-center">
-                <p className="text-sm font-medium text-ink-soft">No ranked advisory candidates yet.</p>
-                <p className="mt-1 text-xs text-ink-faint">Complete a bounded crawl and analysis to generate the top 20 evidence-backed opportunities.</p>
-              </div>
-            ) : (
-              <div className="mt-4 flex flex-col gap-3">
-                {data.opportunities.map((opportunity, index) => (
-                  <article key={opportunity.id} className="rounded border border-rule bg-surface/40 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="flex gap-3">
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded bg-sunk text-xs font-semibold tabular-nums text-ink-soft">
-                          {index + 1}
+        {/* Governance, as one strip of readings. The controls that change it sit
+            behind a disclosure: they are used rarely and deliberately, and five
+            always-open forms made the readings hard to find. */}
+        {gov && (
+          <section aria-labelledby="governance-heading">
+            <h2 id="governance-heading" className="sr-only">Governance</h2>
+            <Panel as="div" className="overflow-hidden">
+              <dl className="grid grid-cols-2 divide-rule sm:grid-cols-3 lg:grid-cols-5 lg:divide-x">
+                <Metric
+                  className="border-b border-rule p-6 lg:border-b-0"
+                  label="Operation mode"
+                  value={<span className="uppercase">{gov.mode}</span>}
+                />
+                <Metric
+                  className="border-b border-rule p-6 lg:border-b-0"
+                  label="Autopilot governor"
+                  value={<span className={gov.autopilot_enabled ? "text-good" : "text-warn"}>{gov.autopilot_enabled ? "Active" : "Human"}</span>}
+                  hint={gov.autopilot_enabled ? undefined : "Approvals only"}
+                />
+                <div className="border-b border-rule p-6 lg:border-b-0">
+                  <Metric
+                    label="Daily change budget"
+                    value={gov.today_deployments_count}
+                    unit={`/ ${gov.daily_change_budget} used`}
+                  />
+                  <Meter
+                    className="mt-4"
+                    label="Daily change budget used"
+                    value={gov.daily_change_budget ? gov.today_deployments_count / gov.daily_change_budget : 0}
+                    tone={gov.today_deployments_count >= gov.daily_change_budget ? "warn" : "accent"}
+                  />
+                </div>
+                <Metric
+                  className="border-b border-rule p-6 sm:border-b-0"
+                  label="Approvers required"
+                  value={gov.required_approver_count ?? "—"}
+                  hint={gov.required_approver_count === null ? "Risk-tier default" : undefined}
+                />
+                <Metric
+                  className="p-6"
+                  label="Freeze window"
+                  value={gov.freeze_window_start ? "Set" : "None"}
+                  hint={gov.freeze_window_start ? "Scheduled" : "No window active"}
+                />
+              </dl>
+              {data.site && (
+                <details className="group border-t border-rule">
+                  <summary className="flex items-center gap-2 px-6 py-3 text-[13px] font-medium text-ink-soft transition-colors hover:text-ink">
+                    <span data-chevron aria-hidden="true" className="inline-block text-accent transition-transform">&rsaquo;</span>
+                    Adjust governance
+                  </summary>
+                  <div className="grid gap-6 border-t border-rule bg-sunk/60 px-6 py-5 md:grid-cols-2">
+                    {/*
+                      Changeable here, where it used to be changeable only by an
+                      operator token that no longer exists. The reason is
+                      required by the API, not decoration: it is recorded like a
+                      freeze.
+                    */}
+                    <form action={setSiteModeAction} className="flex flex-col gap-2">
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="site_id" value={data.site.id} />
+                      <p className="eyebrow">Operation mode</p>
+                      {/* The balloon lives on a wrapper: ::before and ::after do
+                          not apply to replaced elements, so a tooltip set
+                          directly on a <select> or <input> draws nothing. */}
+                      <span
+                        className="block"
+                        data-tip="How far this site may go on its own. Observe measures only; recommend drafts proposals for approval; autopilot deploys unattended."
+                      >
+                        <select
+                          name="mode"
+                          defaultValue={gov.mode}
+                          aria-label="Operation mode"
+                          className={input}
+                         aria-describedby="tip-8dcda9ad6f">
+                          <option value="observe">observe — measure only</option>
+                          <option value="recommend">recommend — deploy with approval</option>
+                          <option value="autopilot">autopilot — deploy unattended</option>
+                        </select>
+                      </span>
+                      <div className="flex gap-2">
+                        <span
+                          className="block flex-1"
+                          data-tip="Why you are changing the mode. Required by the API and recorded in the audit trail against your name."
+                        >
+                          <input
+                            name="reason"
+                            required
+                            minLength={3}
+                            placeholder="Why this change"
+                            aria-label="Reason for the mode change"
+                            className={input}
+                           aria-describedby="tip-266be79a7f"/>
                         </span>
-                        <div>
-                          <h3 className="text-sm font-medium text-ink">{opportunity.title}</h3>
-                          <p className="mt-1 text-xs text-ink-faint">{opportunity.type.replaceAll("_", " ")}</p>
-                          {opportunity.page_url && (
-                            <p className="mt-2 break-all font-mono text-xs text-sky-300">{opportunity.page_url}</p>
+                        <button
+                          type="submit"
+                          className={button.secondary}
+                          data-tip="Apply the selected mode. Recorded with your reason; nothing publishes without approval unless you chose autopilot."
+                         aria-describedby="tip-6f07753cce">
+                          Set mode
+                        </button>
+                      </div>
+                    </form>
+                    {/*
+                      Raising is always allowed. Lowering stops at the tier floor
+                      for anything touching canonical, robots or redirect
+                      directives. The count is frozen into a proposal when it is
+                      drafted, so a change here governs the next draft only.
+                    */}
+                    <form action={setApproverCountAction} className="flex flex-col gap-2">
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="site_id" value={data.site.id} />
+                      <p className="eyebrow">Approvers required</p>
+                      <div className="flex gap-2">
+                        <span
+                          className="block flex-1"
+                          data-tip="How many different people must approve a change before it can deploy. An author can never approve their own."
+                        >
+                          <input
+                            name="required_approver_count"
+                            type="number"
+                            min={1}
+                            max={5}
+                            defaultValue={gov.required_approver_count ?? ""}
+                            placeholder="default"
+                            aria-label="Approvers required"
+                            className={inputMono}
+                           aria-describedby="tip-a909e65d70"/>
+                        </span>
+                        <button
+                          type="submit"
+                          className={button.secondary}
+                         data-tip="Save this approver count. It applies to proposals drafted from now on, not to ones already waiting." aria-describedby="tip-c08dbcd0f5">
+                          Set
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </details>
+              )}
+            </Panel>
+          </section>
+        )}
+
+        {!data.site ? (
+          <Panel className="dot-field px-6 py-16 text-center">
+            <h2 className="font-display text-[28px] font-light tracking-tight text-ink">No site selected</h2>
+            <p className="mx-auto mt-3 max-w-md text-[13px] leading-6 text-pretty text-ink-soft">
+              Add a site you control and prove it with a DNS record. Adding one lives in settings,
+              because it needs the address and a name only you can give.
+            </p>
+            <Link
+              href="/settings/sites"
+              className={cn(button.primary, "mt-6")}
+            data-tip="Add a domain you control and prove it with a DNS record." aria-describedby="tip-26b5b277ea">
+              Add a site
+            </Link>
+          </Panel>
+        ) : data.site.status !== "active" ? (
+          <section aria-labelledby="dns-heading" className="flex flex-col gap-6">
+            <SectionHead
+              index="01"
+              id="dns-heading"
+              title="Prove you own this domain"
+              description={`Add the following DNS TXT record to verify ownership of ${data.site.canonical_origin}.`}
+            />
+            <Panel className="flex flex-col gap-5 p-6">
+              {selectedChallenge ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Copyable label="Host" value={selectedChallenge.record_name} />
+                  <Copyable label="Value" value={selectedChallenge.record_value} />
+                </div>
+              ) : (
+                <Note tone="warn">Generate a fresh site-specific TXT token before verification.</Note>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <form action={verifyPortfolioDns}>
+                  <input type="hidden" name="site_host" value={target.host} />
+                  <button type="submit" className={button.primary} data-tip="Check DNS now for the TXT record shown above. Safe to retry while it propagates." aria-describedby="tip-93fc91618b">
+                    Verify DNS record
+                  </button>
+                </form>
+                <form action={refreshDnsChallenge}>
+                  <input type="hidden" name="site_host" value={target.host} />
+                  <button type="submit" className={button.secondary} data-tip="Issue a fresh verification token. The previous record stops working immediately." aria-describedby="tip-ad2bc41307">
+                    Regenerate token
+                  </button>
+                </form>
+              </div>
+            </Panel>
+            <Panel className="p-6">
+              <h3 className="font-display text-[17px] font-medium tracking-tight text-ink">DNS provider assistant</h3>
+              <p className="mt-1.5 max-w-2xl text-[13px] leading-6 text-pretty text-ink-soft">
+                The manual TXT record above works with every DNS host. This optional assistant adds provider-specific support without changing the consent policy.
+              </p>
+              {data.dnsProviderConnector?.status === "active" ? (
+                <form action={createDnsProviderVerification} className="mt-4">
+                  <input type="hidden" name="site_host" value={target.host} />
+                  <input type="hidden" name="provider_key" value={data.dnsProviderConnector.provider_key ?? ""} />
+                  <button type="submit" className={button.primary}>
+                    Create this TXT record with {data.dnsProviderConnector.provider_key ?? "your DNS provider"}
+                  </button>
+                </form>
+              ) : (
+                <form action={connectDnsProvider} className="mt-4 grid gap-4 sm:grid-cols-3">
+                  <Field label="Provider">
+                    <select name="provider_key" defaultValue="cloudflare" className={input}>
+                      <option value="cloudflare">Cloudflare (available now)</option>
+                    </select>
+                  </Field>
+                  <Field label="Zone ID">
+                    <input required name="zone_id" pattern="[A-Fa-f0-9]{32}" className={inputMono} />
+                  </Field>
+                  <Field label="Scoped API token">
+                    <input required name="api_token" type="password" autoComplete="off" className={input} />
+                  </Field>
+                  <input type="hidden" name="site_host" value={target.host} />
+                  <p className="text-[12px] leading-5 text-pretty text-ink-faint sm:col-span-3">
+                    The selected adapter states its least-privilege scope. Connecting does not create or change DNS records; creation requires a second approval.
+                  </p>
+                  <button type="submit" className={cn(button.secondary, "justify-self-start sm:col-span-3")}>Connect selected provider</button>
+                </form>
+              )}
+            </Panel>
+          </section>
+        ) : (
+          <>
+            {/* 01 — Evidence */}
+            <section aria-labelledby="evidence-heading" className="flex flex-col gap-6">
+              <SectionHead
+                index="01"
+                id="evidence-heading"
+                title="Evidence"
+                description="Read-only instruments. Each gathers evidence about the site and changes nothing on it."
+              />
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="lg:col-span-2">
+                  <CrawlPanel crawls={data.crawls ?? []} now={data.renderedAt ?? new Date().toISOString()}>
+                    <form action={startFirstCrawl}>
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <button type="submit" className={crawlActive ? smallButton.secondary : smallButton.primary} data-tip="Start a bounded crawl of this site now. Read-only: it gathers evidence and changes nothing on the site." aria-describedby="tip-e3ef53a7eb">
+                        Trigger new crawl
+                      </button>
+                    </form>
+                  </CrawlPanel>
+                </div>
+                <Panel className="flex flex-col divide-y divide-rule">
+                  <div className="flex flex-1 flex-col justify-between gap-4 p-6">
+                    <div>
+                      <p className="eyebrow">Search Console</p>
+                      <p className="mt-2 text-[13px] leading-6 text-ink-soft tabular">
+                        {data.searchPerformance ? `${data.searchPerformance.clicks} clicks · ${data.searchPerformance.impressions} impressions` : "Google Search Console ready."}
+                      </p>
+                    </div>
+                    <form action={connectSearchConsole}>
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <button type="submit" className={smallButton.secondary}>
+                        {data.searchConsoleConnector ? "Re-sync Search Console" : "Connect Search Console"}
+                      </button>
+                    </form>
+                  </div>
+                  <div className="flex flex-1 flex-col justify-between gap-4 p-6">
+                    <div>
+                      <p className="eyebrow">Mobile Lighthouse lab</p>
+                      <p className="mt-2 text-[13px] leading-6 text-ink-soft tabular">
+                        {data.performanceSummary
+                          ? `${data.performanceSummary.sample_count}/${data.performanceSummary.required_sample_count} samples · ${data.performanceSummary.status}`
+                          : data.performanceRun?.observation
+                            ? `Latest lab score: ${data.performanceRun.observation.performance_score}/100`
+                            : "No lab sample yet. This is not field Core Web Vitals data."}
+                      </p>
+                      {data.performanceSummary ? (
+                        <Meter
+                          className="mt-3"
+                          label="Lab samples collected"
+                          value={data.performanceSummary.required_sample_count ? data.performanceSummary.sample_count / data.performanceSummary.required_sample_count : 0}
+                        />
+                      ) : null}
+                    </div>
+                    <form action={startPerformanceRun}>
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="idempotency_key" value={performanceIdempotencyKey} />
+                      <button type="submit" className={smallButton.secondary} data-tip="Run one mobile Lighthouse sample. Lab data, not real-user Core Web Vitals." aria-describedby="tip-728aeb6e5d">
+                        Run mobile lab sample
+                      </button>
+                    </form>
+                  </div>
+                </Panel>
+              </div>
+            </section>
+
+            {/* 02 — Search and visitors */}
+            <section aria-labelledby="visitor-data-heading" className="flex flex-col gap-6">
+              <SectionHead
+                index="02"
+                id="visitor-data-heading"
+                title="Search and visitors"
+                description={
+                  <>
+                    Read-only, from this site&rsquo;s own Google properties
+                    {data.searchPerformance ? `, ${data.searchPerformance.range_start} to ${data.searchPerformance.range_end}` : ""}.
+                    Search Console counts searches; Analytics counts visits. They measure different things, so neither is subtracted from the other.
+                  </>
+                }
+              />
+              <div className="grid gap-4 md:grid-cols-2">
+                <Panel className="p-6">
+                  <h3 className="font-display text-[15px] font-medium tracking-tight text-ink">Google Search Console</h3>
+                  {data.searchPerformance && data.searchPerformance.rows > 0 ? (
+                    <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
+                      <Metric label="Clicks" value={data.searchPerformance.clicks} />
+                      <Metric label="Impressions" value={data.searchPerformance.impressions} />
+                      <Metric label="Click-through rate" value={data.searchPerformance.ctr === null ? "—" : (data.searchPerformance.ctr * 100).toFixed(1)} unit={data.searchPerformance.ctr === null ? undefined : "%"} />
+                      <Metric label="Average position" value={data.searchPerformance.position === null ? "—" : data.searchPerformance.position.toFixed(1)} />
+                    </dl>
+                  ) : (
+                    <p className="mt-4 text-[13px] leading-6 text-pretty text-ink-faint">No Search Console data yet. Connect Google under Settings, then wait for the daily sync.</p>
+                  )}
+                </Panel>
+                <Panel className="p-6">
+                  <h3 className="font-display text-[15px] font-medium tracking-tight text-ink">Google Analytics 4</h3>
+                  {data.engagement && data.engagement.rows > 0 ? (
+                    <>
+                      <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
+                        <Metric label="Sessions" value={data.engagement.sessions} />
+                        <Metric label="Engagement rate" value={data.engagement.engagement_rate === null ? "—" : (data.engagement.engagement_rate * 100).toFixed(0)} unit={data.engagement.engagement_rate === null ? undefined : "%"} />
+                        <Metric label="Page views" value={data.engagement.views} />
+                        <Metric label="Key events" value={data.engagement.key_events} />
+                      </dl>
+                      <table className="mt-8 w-full text-left text-[12px]">
+                        <caption className="eyebrow mb-2 text-left">Top landing pages</caption>
+                        <thead>
+                          <tr className="text-ink-faint">
+                            <th scope="col" className="py-1.5 font-normal">Page</th>
+                            <th scope="col" className="py-1.5 text-right font-normal">Sessions</th>
+                            <th scope="col" className="py-1.5 text-right font-normal">Engaged</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.engagement.top_landing_pages.map((page) => (
+                            <tr key={page.landing_page} className="border-t border-rule">
+                              <td className="max-w-0 truncate py-2 pr-4 font-mono text-ink">{page.landing_page}</td>
+                              <td className="py-2 text-right font-mono text-ink">{page.sessions}</td>
+                              <td className="py-2 text-right font-mono text-ink-soft">{page.engaged_sessions}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  ) : (
+                    <p className="mt-4 text-[13px] leading-6 text-pretty text-ink-faint">No Analytics data yet. Connect Google under Settings; GA4 collects nothing from before its tag went live.</p>
+                  )}
+                </Panel>
+              </div>
+            </section>
+
+            {/* 03 — Advisory queue */}
+            <section aria-labelledby="advisory-heading" className="flex flex-col gap-6">
+              <SectionHead
+                index="03"
+                id="advisory-heading"
+                title="Advisory queue"
+                description="Ranked candidates only. Every correction must pass evidence review, validation, and explicit human approval before a certified connector may act."
+                aside={<Badge tone="warn">0 automatic changes</Badge>}
+              />
+              <Panel className="overflow-hidden">
+                {data.opportunities.length === 0 ? (
+                  <div className="px-6 py-14 text-center">
+                    <p className="font-display text-[17px] font-light text-ink">No ranked advisory candidates yet.</p>
+                    <p className="mt-2 text-[13px] text-ink-faint">Complete a bounded crawl and analysis to generate the top 20 evidence-backed opportunities.</p>
+                  </div>
+                ) : (
+                  <ol className="divide-y divide-rule">
+                    {data.opportunities.map((opportunity, index) => {
+                      const advice = advisoryFor(opportunity.title);
+                      return (
+                        <li key={opportunity.id} className="grid grid-cols-[2.5rem_1fr] gap-x-4 px-6 py-5 transition-colors hover:bg-sunk/50 sm:grid-cols-[3rem_1fr_auto]">
+                          <span className="figure pt-0.5 text-[26px] text-ink-faint">
+                            {String(index + 1).padStart(2, "0")}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge tone="neutral">{opportunity.type.replaceAll("_", " ")}</Badge>
+                              <Badge tone={riskTone(opportunity.risk)}>{opportunity.risk} risk</Badge>
+                            </div>
+                            <h3 className="mt-2.5 text-[14px] leading-6 font-medium text-pretty text-ink">{opportunity.title}</h3>
+                            {opportunity.page_url && (
+                              <p className="mt-1 font-mono text-[12px] break-all text-accent">{opportunity.page_url}</p>
+                            )}
+                            <details className="mt-3">
+                              <summary className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-soft transition-colors hover:text-ink">
+                                <span data-chevron aria-hidden="true" className="inline-block text-accent transition-transform">&rsaquo;</span>
+                                Correction and validation
+                              </summary>
+                              <div className="mt-3 grid gap-4 rounded-xl bg-sunk/70 p-4 sm:grid-cols-2">
+                                <div>
+                                  <p className="eyebrow">Suggested correction</p>
+                                  <p className="mt-1.5 text-[12px] leading-5 text-pretty text-ink-soft">{advice.correction}</p>
+                                </div>
+                                <div>
+                                  <p className="eyebrow">Required validation</p>
+                                  <p className="mt-1.5 text-[12px] leading-5 text-pretty text-ink-soft">{advice.validation}</p>
+                                </div>
+                              </div>
+                            </details>
+                          </div>
+                          <div className="col-start-2 mt-4 flex flex-col gap-3 sm:col-start-3 sm:mt-0 sm:w-52 sm:items-end">
+                            <div className="w-full">
+                              <div className="flex items-baseline justify-between font-mono text-[11px] text-ink-faint tabular">
+                                <span>Score</span>
+                                <span className="text-[13px] text-ink">{Math.round(opportunity.score)}</span>
+                              </div>
+                              <Meter className="mt-1.5" label="Opportunity score" value={opportunity.score / 100} />
+                              <p className="mt-1.5 text-right font-mono text-[11px] text-ink-faint tabular">
+                                {Math.round(opportunity.confidence * 100)}% confidence
+                              </p>
+                            </div>
+                            {/*
+                              Drafting is not approving. This builds the change the
+                              opportunity implies and submits it for review; it
+                              writes nothing to the site.
+                            */}
+                            <form action={draftProposalAction}>
+                              <input type="hidden" name="site_host" value={target.host} />
+                              <input type="hidden" name="opportunity_id" value={opportunity.id} />
+                              <button
+                                type="submit"
+                                className={smallButton.secondary}
+                               data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing." aria-describedby="tip-6d09637632">
+                                Draft proposal
+                              </button>
+                            </form>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+
+                <div className="flex flex-col gap-3 border-t border-rule bg-sunk/50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[13px] font-medium text-ink">Human quality calibration</p>
+                    <p className="text-[12px] text-ink-faint tabular">
+                      {data.calibration
+                        ? `${data.calibration.summary.reviewed}/${data.calibration.target_size} reviewed${data.calibration.summary.precision === null ? "" : ` · ${Math.round(data.calibration.summary.precision * 100)}% precision`}`
+                        : "Freeze a reproducible 20-item review set before trusting advisory accuracy."}
+                    </p>
+                  </div>
+                  {!data.calibration && data.opportunities.length > 0 && (
+                    <form action={createCalibrationSet}>
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="idempotency_key" value={randomUUID()} />
+                      <button type="submit" className={smallButton.secondary}>
+                        Freeze 20-item human review set
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </Panel>
+            </section>
+
+            {/* 04 — Proposals */}
+            <section aria-labelledby="proposals-heading" className="flex flex-col gap-6">
+              <SectionHead
+                index="04"
+                id="proposals-heading"
+                title="Proposals and review"
+                description="Auditable diffs and policy evaluations. Deploying opens a pull request; a person still merges it."
+                aside={<Badge tone="neutral">{data.proposals.length} proposals</Badge>}
+              />
+              {data.proposals.length === 0 ? (
+                <Panel className="px-6 py-12 text-center">
+                  <p className="text-[13px] text-ink-faint">No active proposals generated yet. Run analysis to create proposals.</p>
+                </Panel>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {data.proposals.map((prop) => (
+                    <Panel as="article" key={prop.id} className="overflow-hidden">
+                      <div className="flex flex-wrap items-start justify-between gap-3 px-6 pt-5">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={riskTone(prop.risk)}>{prop.risk}</Badge>
+                            <Badge tone="neutral">{prop.status.replaceAll("_", " ")}</Badge>
+                          </div>
+                          <h3 className="mt-3 font-display text-[17px] font-medium tracking-tight text-pretty text-ink">{prop.title}</h3>
+                          <p className="mt-1.5 max-w-3xl text-[13px] leading-6 text-pretty text-ink-soft">{prop.rationale}</p>
+                        </div>
+                      </div>
+                      <div className="grid gap-4 px-6 py-5 lg:grid-cols-2">
+                        <SerpPreview
+                          title={prop.title}
+                          url={`${target.origin}/${prop.target_path.replace(/^\//, "")}`}
+                          description={prop.rationale}
+                          isModified={true}
+                        />
+                        {prop.diff_unified && (
+                          <pre className="max-h-72 overflow-auto rounded-xl border border-rule bg-sunk p-4 font-mono text-[12px] leading-5 text-ink-soft">
+                            {prop.diff_unified}
+                          </pre>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule px-6 py-3">
+                        <span className="font-mono text-[12px] break-all text-ink-faint">{prop.target_path}</span>
+                        <div className="flex gap-2">
+                          {/*
+                            `review_required` as well as `validated`: a proposal
+                            needing two approvers stays `review_required` until
+                            enough approvals arrive.
+                          */}
+                          {(prop.status === "validated" || prop.status === "review_required") && (
+                            <>
+                              <form action={approveProposalAction}>
+                                <input type="hidden" name="site_host" value={target.host} />
+                                <input type="hidden" name="proposal_id" value={prop.id} />
+                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. You cannot approve a change you authored yourself." aria-describedby="tip-ec0ccb8c77">
+                                  Approve
+                                </button>
+                              </form>
+                              {/* Withdrawing ends the proposal and can never put
+                                  anything on a site. */}
+                              <form action={withdrawProposalAction}>
+                                <input type="hidden" name="site_host" value={target.host} />
+                                <input type="hidden" name="proposal_id" value={prop.id} />
+                                <button type="submit" className={smallButton.secondary} data-tip="Take this proposal off the table. It stops counting toward approvals and cannot deploy." aria-describedby="tip-5be8fcba56">
+                                  Withdraw
+                                </button>
+                              </form>
+                            </>
+                          )}
+                          {/*
+                            Deploying opens a pull request. It does not merge: the
+                            adapter has never had merge authority, so the change
+                            reaches the live site only when a person merges it.
+                          */}
+                          {prop.status === "approved" && (
+                            <form action={deployProposalAction}>
+                              <input type="hidden" name="site_host" value={target.host} />
+                              <input type="hidden" name="proposal_id" value={prop.id} />
+                              {/* Keyed on the proposal, so a double click or a
+                                  retry is the same intent, not a second PR. */}
+                              <input type="hidden" name="idempotency_key" value={`deploy-${prop.id}`} />
+                              <button type="submit" className={smallButton.primary} data-tip="Open the pull request that carries this change on your repository. A human still merges it." aria-describedby="tip-8840e44e3f">
+                                Deploy
+                              </button>
+                            </form>
+                          )}
+                          {/* Rollback opens a revert pull request, and the
+                              reconciler watches whether anybody merges it. */}
+                          {prop.status === "deployed" && (
+                            <form action={rollbackProposalAction}>
+                              <input type="hidden" name="site_host" value={target.host} />
+                              <input type="hidden" name="proposal_id" value={prop.id} />
+                              <button type="submit" className={smallButton.caution} data-tip="Open a revert pull request. The change is only undone once someone merges it." aria-describedby="tip-638cd2f7c3">
+                                Request revert
+                              </button>
+                            </form>
                           )}
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2 text-xs tabular-nums">
-                        <span className="rounded bg-sunk px-2 py-1 text-ink-soft">Score {Math.round(opportunity.score)}</span>
-                        <span className="rounded bg-sunk px-2 py-1 text-ink-soft">Confidence {Math.round(opportunity.confidence * 100)}%</span>
-                        <span className="rounded border border-rule-strong px-2 py-1 uppercase text-ink-faint">{opportunity.risk} risk</span>
-                        <span className="rounded border border-warn-rule bg-warn-soft px-2 py-1 text-warn">Human review required</span>
-                      </div>
-                      {/*
-                        Drafting is not approving. This builds the change the
-                        opportunity implies and submits it for review; it writes
-                        nothing to the site. A repairable opportunity with no
-                        button was a finding that could never become a change.
-                      */}
-                      <form action={draftProposalAction} className="mt-3">
-                        <input type="hidden" name="site_host" value={target.host} />
-                        <input type="hidden" name="opportunity_id" value={opportunity.id} />
-                        <button
-                          type="submit"
-                          className="rounded border border-rule-strong px-3 py-1.5 text-xs font-medium text-ink hover:border-rule-strong hover:text-ink"
-                         data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing." aria-describedby="tip-6d09637632">
-                          Draft proposal
-                        </button>
-                      </form>
-                    </div>
-                    <div className="mt-3 grid gap-3 border-t border-rule pt-3 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Suggested correction</p>
-                        <p className="mt-1 text-xs leading-5 text-ink-soft">{advisoryFor(opportunity.title).correction}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Required validation</p>
-                        <p className="mt-1 text-xs leading-5 text-ink-soft">{advisoryFor(opportunity.title).validation}</p>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-
-            <div className="mt-4 flex flex-col gap-3 border-t border-rule pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-xs font-medium text-ink-soft">Human quality calibration</p>
-                <p className="text-xs text-ink-faint">
-                  {data.calibration
-                    ? `${data.calibration.summary.reviewed}/${data.calibration.target_size} reviewed${data.calibration.summary.precision === null ? "" : ` · ${Math.round(data.calibration.summary.precision * 100)}% precision`}`
-                    : "Freeze a reproducible 20-item review set before trusting advisory accuracy."}
-                </p>
-              </div>
-              {!data.calibration && data.opportunities.length > 0 && (
-                <form action={createCalibrationSet}>
-                  <input type="hidden" name="site_host" value={target.host} />
-                  <input type="hidden" name="idempotency_key" value={randomUUID()} />
-                  <button type="submit" className="rounded bg-surface px-3 py-2 text-xs font-semibold text-black hover:bg-sunk">
-                    Freeze 20-item human review set
-                  </button>
-                </form>
+                    </Panel>
+                  ))}
+                </div>
               )}
-            </div>
-          </section>
+            </section>
 
-          {/* Proposals & Review Studio */}
-          <section className="rounded-[4px] border border-rule bg-paper p-6">
-            <div className="flex items-center justify-between border-b border-rule pb-3">
-              <div>
-                <h2 className="text-base font-semibold text-ink">Proposals & Review Studio</h2>
-                <p className="text-xs text-ink-faint">Auditable diffs and policy evaluations. External deployment connectors are not yet certified.</p>
-              </div>
-              <span className="rounded bg-surface px-2 py-1 text-xs font-mono text-ink-faint">{data.proposals.length} Proposals</span>
-            </div>
-            {data.proposals.length === 0 ? (
-              <p className="py-6 text-center text-xs text-ink-faint">No active proposals generated yet. Run analysis to create proposals.</p>
-            ) : (
-              <div className="mt-4 flex flex-col gap-4">
-                {data.proposals.map((prop) => (
-                  <div key={prop.id} className="rounded border border-rule/80 bg-surface/50 p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className={`rounded px-2 py-0.5 text-xs font-semibold uppercase ${prop.risk === "low" ? "bg-good-soft text-good border border-good-rule" : prop.risk === "prohibited" ? "bg-stop-soft text-stop border border-stop-rule" : "bg-warn-soft text-warn border border-warn-rule"}`}>
-                          {prop.risk}
-                        </span>
-                        <h4 className="text-sm font-medium text-ink">{prop.title}</h4>
+            {/* 05 — Outcomes */}
+            <section aria-labelledby="outcomes-heading" className="flex flex-col gap-6">
+              <SectionHead
+                index="05"
+                id="outcomes-heading"
+                title="28-day outcomes"
+                description="Before-and-after association after independent deployment verification; this does not establish causation."
+                aside={<Badge tone="neutral">{data.measurements.length} series</Badge>}
+              />
+              {data.measurements.length === 0 ? (
+                <Panel className="px-6 py-12 text-center">
+                  <p className="text-[13px] text-ink-faint">No measurement series recorded yet. Deployed proposals will track here over 28-day windows.</p>
+                </Panel>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {data.measurements.map((m) => (
+                    <Panel key={m.id} className="p-6">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="eyebrow">Evidence completeness</p>
+                        <span className="font-mono text-[12px] text-ink tabular">{Math.round(m.confidence_score * 100)}%</span>
                       </div>
-                      <span className="rounded bg-sunk px-2 py-0.5 text-xs font-mono text-ink-soft">{prop.status}</span>
-                    </div>
-                    <p className="mt-1 text-xs text-ink-faint">{prop.rationale}</p>
-                    
-                    {/* Visual SERP Preview */}
-                    <div className="mt-3">
-                      <SerpPreview
-                        title={prop.title}
-                        url={`${target.origin}/${prop.target_path.replace(/^\//, "")}`}
-                        description={prop.rationale}
-                        isModified={true}
-                      />
-                    </div>
-
-                    {/* Unified Diff View */}
-                    {prop.diff_unified && (
-                      <div className="mt-3 rounded border border-rule bg-black/60 p-3 font-mono text-xs text-ink-soft overflow-x-auto">
-                        <pre className="text-ink-faint">{prop.diff_unified}</pre>
-                      </div>
-                    )}
-
-                    <div className="mt-3 flex items-center justify-between border-t border-rule/60 pt-3">
-                      <span className="text-xs text-ink-faint font-mono">Target: {prop.target_path}</span>
-                      <div className="flex gap-2">
-                        {/*
-                          `review_required` as well as `validated`. A proposal
-                          needing two approvers is created `review_required` and
-                          stays there until enough approvals arrive, so gating
-                          this button on `validated` alone meant a two-approver
-                          change could never be approved through the app at all.
-                          The API always accepted it; nothing offered it.
-                        */}
-                        {(prop.status === "validated" || prop.status === "review_required") && (
-                          <>
-                            <form action={approveProposalAction}>
-                              <input type="hidden" name="site_host" value={target.host} />
-                              <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded bg-good px-2.5 py-1 text-xs font-semibold text-good-ink hover:bg-good" data-tip="Record your approval. You cannot approve a change you authored yourself." aria-describedby="tip-ec0ccb8c77">
-                                Approve
-                              </button>
-                            </form>
-                            {/*
-                              An author cannot approve their own change and,
-                              until now, could not clear it either — a bad draft
-                              stayed in the queue for ever. Withdrawing ends the
-                              proposal and can never put anything on a site.
-                            */}
-                            <form action={withdrawProposalAction}>
-                              <input type="hidden" name="site_host" value={target.host} />
-                              <input type="hidden" name="proposal_id" value={prop.id} />
-                              <button type="submit" className="rounded border border-rule-strong px-2.5 py-1 text-xs font-medium text-ink-soft hover:border-rule-strong hover:text-ink" data-tip="Take this proposal off the table. It stops counting toward approvals and cannot deploy." aria-describedby="tip-5be8fcba56">
-                                Withdraw
-                              </button>
-                            </form>
-                          </>
-                        )}
-                        {/*
-                          An approved proposal used to render the words
-                          "Connector certification required" and nothing else.
-                          The endpoint existed, the action existed, and no
-                          button in the app called it -- so a change could be
-                          drafted, validated and approved here and then had to
-                          be deployed by hand with a bearer token. The sentence
-                          was also untrue: the repository connector is active
-                          and has carried 48 deployments for another site.
-
-                          Deploying opens a pull request. It does not merge:
-                          the adapter has never had merge authority, so the
-                          change reaches the live site only when a person
-                          merges it.
-                        */}
-                        {prop.status === "approved" && (
-                          <form action={deployProposalAction}>
-                            <input type="hidden" name="site_host" value={target.host} />
-                            <input type="hidden" name="proposal_id" value={prop.id} />
-                            {/*
-                              Keyed on the proposal, so a double click or a
-                              retry after a timeout is the same intent rather
-                              than a second pull request.
-                            */}
-                            <input type="hidden" name="idempotency_key" value={`deploy-${prop.id}`} />
-                            <button type="submit" className="rounded bg-sky-600 px-2.5 py-1 text-xs font-semibold text-ink hover:bg-sky-500" data-tip="Open the pull request that carries this change on your repository. A human still merges it." aria-describedby="tip-8840e44e3f">
-                              Deploy
-                            </button>
-                          </form>
-                        )}
-                        {/*
-                          Likewise: "External rollback not configured" stood
-                          where the control belonged. Rollback is configured --
-                          it opens a revert pull request, and the reconciler
-                          watches whether anybody merges it. Requesting one is
-                          not undoing anything, which is why the label says
-                          what it does.
-                        */}
-                        {prop.status === "deployed" && (
-                          <form action={rollbackProposalAction}>
-                            <input type="hidden" name="site_host" value={target.host} />
-                            <input type="hidden" name="proposal_id" value={prop.id} />
-                            <button type="submit" className="rounded border border-stop-rule px-2.5 py-1 text-xs font-medium text-stop hover:border-stop-rule hover:text-stop" data-tip="Open a revert pull request. The change is only undone once someone merges it." aria-describedby="tip-638cd2f7c3">
-                              Request revert
-                            </button>
-                          </form>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* 28-Day Outcome Tracking Dashboard */}
-          <section className="rounded-[4px] border border-rule bg-paper p-6">
-            <div className="flex items-center justify-between border-b border-rule pb-3">
-              <div>
-                <h2 className="text-base font-semibold text-ink">28-Day Outcome Tracking</h2>
-                <p className="text-xs text-ink-faint">Before-and-after association after independent deployment verification; this does not establish causation.</p>
-              </div>
-              <span className="rounded bg-surface px-2 py-1 text-xs font-mono text-ink-faint">{data.measurements.length} Series</span>
-            </div>
-            {data.measurements.length === 0 ? (
-              <p className="py-6 text-center text-xs text-ink-faint">No measurement series recorded yet. Deployed proposals will track here over 28-day windows.</p>
-            ) : (
-              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {data.measurements.map((m) => (
-                  <div key={m.id} className="rounded border border-rule bg-surface/40 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-ink-faint">Evidence Completeness</span>
-                      <span className="rounded bg-good-soft border border-good-rule px-2 py-0.5 text-xs font-mono text-good">
-                        {Math.round(m.confidence_score * 100)}%
-                      </span>
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded bg-surface p-2">
-                        <p className="text-ink-faint">Clicks Delta</p>
-                        <p className="text-base font-semibold font-mono text-ink">
-                          {typeof m.delta_metrics?.clicks_delta === "number"
-                            ? m.delta_metrics.clicks_delta >= 0
-                              ? `+${m.delta_metrics.clicks_delta}`
-                              : m.delta_metrics.clicks_delta
-                            : "N/A"}
-                        </p>
-                      </div>
-                      <div className="rounded bg-surface p-2">
-                        <p className="text-ink-faint">Position Delta</p>
-                        <p className="text-base font-semibold font-mono text-ink">
-                          {typeof m.delta_metrics?.position_delta === "number"
-                            ? m.delta_metrics.position_delta >= 0
-                              ? `+${m.delta_metrics.position_delta} ranks`
-                              : `${m.delta_metrics.position_delta} ranks`
-                            : "N/A"}
-                        </p>
-                      </div>
-                    </div>
-                    {m.annotations?.length > 0 && (
-                      <p className="mt-2 text-xs italic text-ink-faint">{m.annotations[0]}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+                      <Meter className="mt-2" label="Evidence completeness" value={m.confidence_score} tone="good" />
+                      <dl className="mt-6 grid grid-cols-2 gap-6">
+                        <Metric
+                          label="Clicks delta"
+                          value={
+                            typeof m.delta_metrics?.clicks_delta === "number"
+                              ? m.delta_metrics.clicks_delta >= 0
+                                ? `+${m.delta_metrics.clicks_delta}`
+                                : m.delta_metrics.clicks_delta
+                              : "N/A"
+                          }
+                        />
+                        <Metric
+                          label="Position delta"
+                          value={
+                            typeof m.delta_metrics?.position_delta === "number"
+                              ? m.delta_metrics.position_delta >= 0
+                                ? `+${m.delta_metrics.position_delta}`
+                                : m.delta_metrics.position_delta
+                              : "N/A"
+                          }
+                          unit={typeof m.delta_metrics?.position_delta === "number" ? "ranks" : undefined}
+                        />
+                      </dl>
+                      {m.annotations?.length > 0 && (
+                        <p className="mt-5 border-t border-rule pt-4 text-[12px] leading-5 text-pretty text-ink-faint">{m.annotations[0]}</p>
+                      )}
+                    </Panel>
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </div>
     </main>
   );

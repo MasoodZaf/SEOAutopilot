@@ -62,7 +62,7 @@ export function RepositoryPicker({
       ref={dialog}
       aria-labelledby="picker-heading"
       onClose={() => router.replace("/settings/connectors")}
-      className="m-auto w-[min(36rem,calc(100vw-2rem))] rounded-[4px] border border-rule bg-surface p-0 text-ink backdrop:bg-ink/40"
+      className="m-auto w-[min(36rem,calc(100vw-2rem))] rounded-xl border border-rule bg-surface p-0 text-ink backdrop:bg-ink/40"
     >
       <div className="border-b border-rule px-5 py-4">
         <h2 id="picker-heading" className="text-balance text-base font-semibold">
@@ -118,7 +118,7 @@ export function RepositoryPicker({
                 className={input}
               />
             ) : null}
-            <fieldset className="mt-3 max-h-72 overflow-y-auto rounded-[4px] border border-rule">
+            <fieldset className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-rule">
               <legend className="sr-only">Repository</legend>
               {shown.map((item) => (
                 <label

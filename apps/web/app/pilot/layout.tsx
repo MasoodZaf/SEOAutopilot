@@ -9,7 +9,10 @@ export default function PilotLayout({children}: {children: React.ReactNode}) {
   return (
     <div className="min-h-dvh bg-paper">
       <Masthead section="Control plane">
-        <nav aria-label="Main" className="flex items-center gap-3">
+        <nav aria-label="Main" className="flex items-center gap-4">
+          <Link href="/tutorial" className={button.quiet}>
+            Tutorial
+          </Link>
           <Link href="/settings" className={button.quiet}>
             Settings
           </Link>

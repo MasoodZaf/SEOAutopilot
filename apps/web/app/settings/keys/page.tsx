@@ -70,7 +70,7 @@ function find(credentials: Credential[], provider: string): Credential | undefin
 function Callback({label, value}: {label: string; value: string | undefined}) {
   if (!value) return null;
   return (
-    <div className="rounded-[4px] border border-rule bg-sunk px-3 py-2">
+    <div className="rounded-xl border border-rule bg-sunk px-3 py-2">
       <p className="text-xs font-medium text-ink-soft">{label}</p>
       <p className="mt-1 font-mono text-xs break-all text-ink">{value}</p>
     </div>
@@ -91,9 +91,9 @@ function SourceBadge({source}: {source: Credential["source"]}) {
 }
 
 const field =
-  "rounded-[4px] border border-rule-strong px-3 py-2 text-sm font-normal text-ink";
+  "rounded-xl border border-rule-strong bg-paper px-3.5 py-2 text-sm font-normal text-ink";
 const submit =
-  "self-start rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk";
+  "self-start rounded-full bg-signal px-5 py-2 text-sm font-semibold text-signal-ink transition-colors hover:bg-signal-hover";
 
 export default async function KeysPage({searchParams}: PageProps) {
   const query = await searchParams;
@@ -116,9 +116,9 @@ export default async function KeysPage({searchParams}: PageProps) {
   const github = find(credentials, "github_app");
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-8 px-6 py-10">
+    <main className="flex max-w-3xl flex-col gap-8 px-6 py-10">
       <header className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold tracking-tight text-ink">
+        <h1 className="font-display text-[32px] leading-tight font-light tracking-tight text-ink">
           Your provider keys
         </h1>
         <p className="text-pretty text-sm text-ink-soft">
@@ -138,17 +138,17 @@ export default async function KeysPage({searchParams}: PageProps) {
       </header>
 
       {query.created ? (
-        <p className="rounded-[4px] border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
+        <p className="rounded-xl border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
           Workspace created. Add your credentials below, then add your first site.
         </p>
       ) : null}
       {query.saved ? (
-        <p className="rounded-[4px] border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
+        <p className="rounded-xl border border-good-rule bg-good-soft px-3 py-2 text-sm text-good">
           Saved. Anything you connect from now on uses it.
         </p>
       ) : null}
       {query.revoked ? (
-        <p className="rounded-[4px] border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
+        <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
           Removed. This workspace is back on the deployment&rsquo;s shared client. A refresh
           token issued by your own client cannot be renewed by a different one, so each Google
           connection will ask to be reconnected once — after that it stays connected.
@@ -157,7 +157,7 @@ export default async function KeysPage({searchParams}: PageProps) {
       {query.error ? (
         <p
           role="alert"
-          className="rounded-[4px] border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
+          className="rounded-xl border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
         >
           {REASONS[query.error] ?? "That could not be saved."}
         </p>
@@ -168,7 +168,7 @@ export default async function KeysPage({searchParams}: PageProps) {
       {loadError ? (
         <p
           role="alert"
-          className="rounded-[4px] border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
+          className="rounded-xl border border-stop-rule bg-stop-soft px-3 py-2 text-sm text-stop"
         >
           {loadError}
         </p>
@@ -176,11 +176,11 @@ export default async function KeysPage({searchParams}: PageProps) {
 
       <section
         aria-labelledby="google-heading"
-        className="flex flex-col gap-4 rounded-[4px] border border-rule bg-surface p-5"
+        className="flex flex-col gap-4 rounded-xl border border-rule bg-surface p-5"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 id="google-heading" className="text-base font-semibold text-ink">
+            <h2 id="google-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
               Google OAuth client
             </h2>
             <p className="mt-1 text-sm text-ink-soft">
@@ -202,7 +202,7 @@ export default async function KeysPage({searchParams}: PageProps) {
         </div>
 
         {google ? (
-          <p className="rounded-[4px] border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
+          <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
             {SOURCE_NOTE[google.source]}
             {google.source === "tenant" && google.config.client_id ? (
               <>
@@ -259,11 +259,11 @@ export default async function KeysPage({searchParams}: PageProps) {
 
       <section
         aria-labelledby="github-heading"
-        className="flex flex-col gap-4 rounded-[4px] border border-rule bg-surface p-5"
+        className="flex flex-col gap-4 rounded-xl border border-rule bg-surface p-5"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 id="github-heading" className="text-base font-semibold text-ink">
+            <h2 id="github-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
               GitHub App
             </h2>
             <p className="mt-1 text-sm text-ink-soft">
@@ -280,7 +280,7 @@ export default async function KeysPage({searchParams}: PageProps) {
         </div>
 
         {github ? (
-          <p className="rounded-[4px] border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
+          <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
             {SOURCE_NOTE[github.source]}
             {github.source === "tenant" && github.config.app_slug ? (
               <>
@@ -369,7 +369,7 @@ export default async function KeysPage({searchParams}: PageProps) {
         ) : null}
       </section>
 
-      <section className="rounded-[4px] border border-rule bg-sunk p-5">
+      <section className="rounded-xl border border-rule bg-sunk p-5">
         <h2 className="text-sm font-semibold text-ink">What this deployment can still see</h2>
         <p className="mt-2 text-pretty text-sm text-ink-soft">
           Your credentials are encrypted with a key held by the server, because the server is

@@ -1,10 +1,12 @@
 import type {Metadata} from "next";
-import {IBM_Plex_Mono, IBM_Plex_Sans, IBM_Plex_Serif} from "next/font/google";
+import {IBM_Plex_Mono, IBM_Plex_Sans, Sora} from "next/font/google";
 import "./globals.css";
 
 /*
- * Three voices from one family, which is why the page reads as engineered
- * rather than as three fonts sharing a page.
+ * Sora for display -- headings and the large figures -- and Plex for reading
+ * and for data. Sora is geometric and wide at light weights, which is what
+ * makes a 64px site name or a position of 67.4 read as an instrument readout
+ * rather than a heading. Plex stays for body copy and every identifier.
  *
  * Plex was drawn for a technology company, and it suits an instrument better
  * than Inter -- which was here before, and is the single most recognisable
@@ -28,10 +30,10 @@ const mono = IBM_Plex_Mono({
   display: "swap",
 });
 
-const serif = IBM_Plex_Serif({
+const display = Sora({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-plex-serif",
+  weight: ["300", "400", "500", "600"],
+  variable: "--font-sora",
   display: "swap",
 });
 
@@ -92,7 +94,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({children}: Readonly<{children: React.ReactNode}>) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable} ${serif.variable}`}>
+    <html lang="en" className={`${sans.variable} ${mono.variable} ${display.variable}`}>
       <body>{children}</body>
     </html>
   );

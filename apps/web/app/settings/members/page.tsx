@@ -116,9 +116,9 @@ export default async function MembersPage({
 
   return (
     <main>
-      <div className="mx-auto max-w-3xl px-6 py-12">
+      <div className="max-w-3xl px-6 py-12">
         <p className="text-sm font-semibold text-good">SEO Autopilot</p>
-        <h1 className="mt-2 text-balance text-3xl font-semibold text-ink">Members</h1>
+        <h1 className="mt-2 font-display text-balance text-[32px] leading-tight font-light tracking-tight text-ink">Members</h1>
         <p className="mt-2 max-w-prose text-pretty text-sm text-ink-soft">
           A verified sign-in proves who somebody is. Membership is what decides whose data they
           may act on, and it only ever comes from an invitation.
@@ -127,7 +127,7 @@ export default async function MembersPage({
         {notice ? (
           <p
             role="status"
-            className="mt-6 rounded-[4px] border border-good-rule bg-good-soft px-4 py-3 text-sm text-good"
+            className="mt-6 rounded-xl border border-good-rule bg-good-soft px-4 py-3 text-sm text-good"
           >
             {notice}
           </p>
@@ -135,7 +135,7 @@ export default async function MembersPage({
         {problem ? (
           <p
             role="alert"
-            className="mt-6 rounded-[4px] border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop"
+            className="mt-6 rounded-xl border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop"
           >
             {problem}
           </p>
@@ -143,7 +143,7 @@ export default async function MembersPage({
 
         {loadError ? (
           <section className="mt-8 rounded-xl border border-rule bg-surface p-6 shadow-sm">
-            <h2 className="text-balance text-xl font-semibold text-ink">
+            <h2 className="font-display text-balance text-[20px] font-medium tracking-tight text-ink">
               Members are not available
             </h2>
             <p className="mt-2 text-pretty text-sm text-ink-soft">
@@ -158,7 +158,7 @@ export default async function MembersPage({
               aria-labelledby="members-heading"
               className="mt-8 rounded-xl border border-rule bg-surface p-6 shadow-sm"
             >
-              <h2 id="members-heading" className="text-balance text-xl font-semibold text-ink">
+              <h2 id="members-heading" className="font-display text-balance text-[20px] font-medium tracking-tight text-ink">
                 In this tenant
               </h2>
               {members.length === 0 ? (
@@ -196,7 +196,7 @@ export default async function MembersPage({
                             name="role"
                             defaultValue={member.role}
                             disabled={isSelf}
-                            className="rounded-[4px] border border-rule-strong bg-surface px-2 py-1 text-sm text-ink disabled:bg-sunk disabled:text-ink-faint"
+                            className="rounded-xl border border-rule-strong bg-surface px-2 py-1 text-sm text-ink disabled:bg-sunk disabled:text-ink-faint"
                           >
                             {ROLES.map((role) => (
                               <option key={role} value={role}>
@@ -207,7 +207,7 @@ export default async function MembersPage({
                           <button
                             type="submit"
                             disabled={isSelf}
-                            className="rounded-[4px] border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk disabled:cursor-not-allowed disabled:text-ink-faint"
+                            className="rounded-full border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk disabled:cursor-not-allowed disabled:text-ink-faint"
                           >
                             Save
                           </button>
@@ -219,7 +219,7 @@ export default async function MembersPage({
                               <input type="hidden" name="membership_id" value={member.id} />
                               <button
                                 type="submit"
-                                className="rounded-[4px] border border-stop-rule bg-stop px-2.5 py-1 text-sm font-medium text-stop-ink hover:bg-stop"
+                                className="rounded-full border border-stop-rule bg-stop px-2.5 py-1 text-sm font-medium text-stop-ink hover:bg-stop"
                                data-tip="Remove this person from the workspace. Their account survives; their access here does not." aria-describedby="tip-c6f0c10545">
                                 Confirm removal
                               </button>
@@ -235,7 +235,7 @@ export default async function MembersPage({
                           <a
                             href={`/settings/members?confirm_remove=${member.id}`}
                             className={cn(
-                              "rounded-[4px] border px-2.5 py-1 text-sm font-medium",
+                              "rounded-full border px-3 py-1 text-sm font-medium",
                               isSelf
                                 ? "pointer-events-none border-rule text-ink-faint"
                                 : "border-stop-rule bg-surface text-stop hover:bg-stop-soft",
@@ -258,7 +258,7 @@ export default async function MembersPage({
             >
               <h2
                 id="invitations-heading"
-                className="text-balance text-xl font-semibold text-ink"
+                className="font-display text-balance text-[20px] font-medium tracking-tight text-ink"
               >
                 Invite somebody
               </h2>
@@ -278,7 +278,7 @@ export default async function MembersPage({
                     required
                     autoComplete="off"
                     placeholder="colleague@example.com"
-                    className="mt-1 w-full rounded-[4px] border border-rule-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint"
+                    className="mt-1 w-full rounded-xl border border-rule-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint"
                   />
                 </div>
                 <div>
@@ -289,7 +289,7 @@ export default async function MembersPage({
                     id="invite-role"
                     name="role"
                     defaultValue="viewer"
-                    className="mt-1 rounded-[4px] border border-rule-strong bg-surface px-2 py-2 text-sm text-ink"
+                    className="mt-1 rounded-xl border border-rule-strong bg-surface px-2 py-2 text-sm text-ink"
                   >
                     {ROLES.map((role) => (
                       <option key={role} value={role}>
@@ -300,7 +300,7 @@ export default async function MembersPage({
                 </div>
                 <button
                   type="submit"
-                  className="rounded-[4px] bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-sunk"
+                  className="rounded-full bg-signal px-5 py-2 text-sm font-semibold text-signal-ink hover:bg-signal-hover"
                  data-tip="Invite this address into this workspace. They join on their next sign-in and can see everything in it." aria-describedby="tip-76c147b8df">
                   Send invitation
                 </button>
@@ -326,7 +326,7 @@ export default async function MembersPage({
                         <input type="hidden" name="invitation_id" value={invitation.id} />
                         <button
                           type="submit"
-                          className="rounded-[4px] border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk"
+                          className="rounded-full border border-rule-strong bg-surface px-2.5 py-1 text-sm font-medium text-ink hover:bg-sunk"
                          data-tip="Cancel this invitation. The address can no longer join with it." aria-describedby="tip-01116296eb">
                           Revoke
                         </button>

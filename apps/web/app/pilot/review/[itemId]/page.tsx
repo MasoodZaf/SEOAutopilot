@@ -49,14 +49,14 @@ export default async function CalibrationReviewPage({params, searchParams}: Page
       </header>
       <div className="mx-auto max-w-4xl px-6 py-10">
         <p className="text-sm font-semibold text-good">Review item <span className="tabular-nums">{item.ordinal}</span></p>
-        <h1 className="mt-2 text-balance text-3xl font-semibold text-ink">{opportunity.title}</h1>
+        <h1 className="mt-2 font-display text-balance text-[32px] leading-tight font-light tracking-tight text-ink">{opportunity.title}</h1>
         <p className="mt-3 text-pretty text-sm leading-6 text-ink-soft">Label the frozen observation below. This records calibration evidence only and cannot approve or modify the website.</p>
 
-        {error ? <p role="alert" className="mt-6 rounded-[4px] border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop">{error}</p> : null}
+        {error ? <p role="alert" className="mt-6 rounded-xl border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop">{error}</p> : null}
 
         <section className="mt-8 rounded-xl border border-rule bg-surface p-6 shadow-sm" aria-labelledby="evidence-heading">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div><h2 id="evidence-heading" className="text-balance text-xl font-semibold text-ink">Frozen crawl evidence</h2><a href={page.url} target="_blank" rel="noreferrer" className="mt-2 block break-all text-sm font-medium text-good underline-offset-4 hover:underline">{page.url}</a></div>
+            <div><h2 id="evidence-heading" className="font-display text-balance text-[20px] font-medium tracking-tight text-ink">Frozen crawl evidence</h2><a href={page.url} target="_blank" rel="noreferrer" className="mt-2 block break-all text-sm font-medium text-good underline-offset-4 hover:underline">{page.url}</a></div>
             <span className="rounded-full border border-rule-strong px-3 py-1 text-sm font-medium capitalize text-ink-soft">{finding.severity} severity</span>
           </div>
           <dl className="mt-6 grid gap-5 border-t border-rule pt-5 text-sm sm:grid-cols-2">
@@ -72,30 +72,30 @@ export default async function CalibrationReviewPage({params, searchParams}: Page
         </section>
 
         <section className="mt-8 rounded-xl border border-rule bg-surface p-6 shadow-sm" aria-labelledby="review-heading">
-          <h2 id="review-heading" className="text-balance text-xl font-semibold text-ink">Your assessment</h2>
+          <h2 id="review-heading" className="font-display text-balance text-[20px] font-medium tracking-tight text-ink">Your assessment</h2>
           {item.current_review ? <p className="mt-2 text-pretty text-sm text-ink-soft">Submitting again creates a new append-only review; the latest one becomes your current assessment.</p> : null}
           <form action={submitCalibrationReview} className="mt-6 grid gap-5">
             <input type="hidden" name="item_id" value={item.id} />
             <input type="hidden" name="idempotency_key" value={`review-${randomUUID()}`} />
             <label className="grid gap-2 text-sm font-medium text-ink">Accuracy
-              <select name="accuracy_label" required defaultValue={item.current_review?.accuracy_label ?? ""} className="rounded-[4px] border border-rule-strong bg-surface px-3 py-2.5 text-ink">
+              <select name="accuracy_label" required defaultValue={item.current_review?.accuracy_label ?? ""} className="rounded-xl border border-rule-strong bg-surface px-3 py-2.5 text-ink">
                 <option value="" disabled>Select accuracy</option><option value="true_positive">True positive</option><option value="false_positive">False positive</option><option value="uncertain">Uncertain</option>
               </select>
             </label>
             <label className="grid gap-2 text-sm font-medium text-ink">Actionability
-              <select name="actionability" required defaultValue={item.current_review?.actionability ?? ""} className="rounded-[4px] border border-rule-strong bg-surface px-3 py-2.5 text-ink">
+              <select name="actionability" required defaultValue={item.current_review?.actionability ?? ""} className="rounded-xl border border-rule-strong bg-surface px-3 py-2.5 text-ink">
                 <option value="" disabled>Select actionability</option><option value="accept">Accept as useful</option><option value="edit">Useful after editing</option><option value="dismiss">Dismiss</option><option value="defer">Defer</option>
               </select>
             </label>
             <label className="grid gap-2 text-sm font-medium text-ink">Severity fit
-              <select name="severity_fit" required defaultValue={item.current_review?.severity_fit ?? ""} className="rounded-[4px] border border-rule-strong bg-surface px-3 py-2.5 text-ink">
+              <select name="severity_fit" required defaultValue={item.current_review?.severity_fit ?? ""} className="rounded-xl border border-rule-strong bg-surface px-3 py-2.5 text-ink">
                 <option value="" disabled>Select severity fit</option><option value="appropriate">Appropriate</option><option value="overstated">Overstated</option><option value="understated">Understated</option><option value="uncertain">Uncertain</option>
               </select>
             </label>
             <label className="grid gap-2 text-sm font-medium text-ink">Notes <span className="font-normal text-ink-faint">Optional, maximum 1,000 characters</span>
-              <textarea name="notes" maxLength={1000} rows={4} defaultValue={item.current_review?.notes ?? ""} className="resize-y rounded-[4px] border border-rule-strong bg-surface px-3 py-2.5 text-ink" />
+              <textarea name="notes" maxLength={1000} rows={4} defaultValue={item.current_review?.notes ?? ""} className="resize-y rounded-xl border border-rule-strong bg-surface px-3 py-2.5 text-ink" />
             </label>
-            <div className="flex flex-wrap gap-3"><button className="rounded-[4px] bg-good px-4 py-2.5 text-sm font-semibold text-good-ink shadow-sm">Record review</button><Link href="/pilot" className="rounded-[4px] border border-rule-strong bg-surface px-4 py-2.5 text-sm font-semibold text-ink">Back to pilot</Link></div>
+            <div className="flex flex-wrap gap-3"><button className="rounded-xl bg-good px-4 py-2.5 text-sm font-semibold text-good-ink shadow-sm">Record review</button><Link href="/pilot" className="rounded-xl border border-rule-strong bg-surface px-4 py-2.5 text-sm font-semibold text-ink">Back to pilot</Link></div>
           </form>
         </section>
       </div>

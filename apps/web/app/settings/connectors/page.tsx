@@ -180,9 +180,9 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
   const pickingFor = choices ? sites.find((site) => site.id === query.site) : undefined;
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
+    <main className="flex max-w-3xl flex-col gap-6 px-6 py-10">
       <header className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold tracking-tight text-ink">Connections</h1>
+        <h1 className="font-display text-[32px] leading-tight font-light tracking-tight text-ink">Connections</h1>
         <p className="max-w-prose text-pretty text-sm text-ink-soft">
           Search Console says what a page ranks for. Analytics says what visitors did once they
           arrived. The repository is where approved changes are written. Each is bound to the
@@ -306,7 +306,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
 
       {loadError ? (
         <Panel className="p-6">
-          <h2 className="text-balance text-base font-semibold text-ink">
+          <h2 className="font-display text-balance text-[17px] font-medium tracking-tight text-ink">
             Connections are not available
           </h2>
           <p className="mt-2 text-pretty text-sm text-ink-soft">
@@ -315,7 +315,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
         </Panel>
       ) : sites.length === 0 ? (
         <Panel className="p-6">
-          <h2 className="text-balance text-base font-semibold text-ink">No sites yet</h2>
+          <h2 className="font-display text-balance text-[17px] font-medium tracking-tight text-ink">No sites yet</h2>
           <p className="mt-2 text-pretty text-sm text-ink-soft">
             Add and verify a site before connecting anything to it.
           </p>

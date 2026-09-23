@@ -31,7 +31,7 @@ export default async function OnboardingPage({searchParams}: PageProps) {
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-8 px-6 py-20">
       <header className="flex flex-col gap-3">
         <Eyebrow>Step 1 of 3</Eyebrow>
-        <h1 className="font-display text-[30px] leading-[1.15] font-semibold tracking-tight text-balance text-ink">
+        <h1 className="font-display text-[36px] leading-[1.1] font-light tracking-tight text-balance text-ink">
           Name your workspace
         </h1>
         <p className="text-pretty text-[13px] leading-6 text-ink-soft">

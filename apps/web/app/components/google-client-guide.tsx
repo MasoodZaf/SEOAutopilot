@@ -69,7 +69,7 @@ export function GoogleClientGuide({
           <strong className="font-medium">Add URI</strong> and paste exactly this — not the
           Authorised JavaScript origins box above it, which is a different list and the usual
           mistake:
-          <span className="mt-1.5 block rounded-[4px] border border-rule bg-surface px-2 py-1.5 font-mono text-xs break-all">
+          <span className="mt-1.5 block rounded-xl border border-rule bg-surface px-2 py-1.5 font-mono text-xs break-all">
             {redirectUri}
           </span>
         </li>

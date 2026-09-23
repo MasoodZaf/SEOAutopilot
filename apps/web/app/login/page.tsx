@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import {Note, button} from "@/app/components/ui";
+import {Glyph, Note, button} from "@/app/components/ui";
 import {TipDescriptions} from "@/app/components/tips";
 import {isConfigured} from "@/lib/oidc";
 import {safeNext} from "@/lib/safe-next.mjs";
@@ -26,8 +26,11 @@ export default async function LoginPage({
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-8 px-6 py-20">
       <div className="flex flex-col gap-3">
-        <p className="eyebrow">SEO Autopilot</p>
-        <h1 className="font-display text-[32px] leading-[1.15] font-semibold tracking-tight text-balance text-ink">
+        <p className="flex items-center gap-2.5 text-ink">
+          <Glyph />
+          <span className="font-display text-[15px] font-medium tracking-tight">SEO Autopilot</span>
+        </p>
+        <h1 className="font-display text-[40px] leading-[1.05] font-light tracking-tight text-balance text-ink">
           Sign in
         </h1>
         {/* This used to say access was "limited to people who have been invited

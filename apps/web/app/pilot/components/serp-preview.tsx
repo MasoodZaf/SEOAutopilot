@@ -7,28 +7,24 @@ type SerpPreviewProps = {
   isModified?: boolean;
 };
 
+/**
+ * How the change would read on a results page. Drawn in the product's own
+ * palette -- a copy of Google's blue would be the one borrowed colour on the
+ * page and would claim a fidelity this preview does not have.
+ */
 export function SerpPreview({title, url, description, isModified = false}: SerpPreviewProps) {
   return (
-    <div className={`rounded-lg border p-4 font-sans ${isModified ? "border-good-rule/80 bg-good-soft" : "border-rule bg-paper"}`}>
-      <div className="flex items-center gap-2">
-        <div className="flex h-5 w-5 items-center justify-center rounded-full bg-sunk text-[10px] text-ink-soft">
-          <span aria-hidden="true">URL</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-xs text-ink-faint font-mono leading-tight">{url}</span>
-        </div>
+    <div className="rounded-xl border border-rule bg-paper p-4 font-sans">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0 truncate font-mono text-[11px] text-ink-faint">{url}</span>
+        {isModified && (
+          <span className="shrink-0 rounded-full border border-accent-rule bg-accent-soft px-2 py-0.5 font-mono text-[10px] tracking-wider text-accent uppercase">
+            Proposed
+          </span>
+        )}
       </div>
-      <h3 className="mt-1 line-clamp-1 text-base font-medium text-sky-400">
-        {title}
-      </h3>
-      <p className="mt-1 text-xs text-ink-soft line-clamp-2 leading-relaxed">
-        {description}
-      </p>
-      {isModified && (
-        <span className="mt-2 inline-block rounded bg-good-soft border border-good-rule px-1.5 py-0.5 text-[10px] font-medium text-good">
-          Proposed preview
-        </span>
-      )}
+      <h3 className="mt-2 line-clamp-1 text-[15px] font-medium text-accent">{title}</h3>
+      <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-soft">{description}</p>
     </div>
   );
 }
