@@ -135,7 +135,10 @@ export async function waitForSettledText(
     let snapshot: {text: string; loading: boolean};
     try {
       snapshot = await page.evaluate(() => {
-        const text = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
+        // Digits are masked: a ticking clock or a live counter changes the
+        // text every second and would otherwise hold every page to the cap
+        // (codearc.net's challenge timer cost 15s a page).
+        const text = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim().replace(/\d/g, "0");
         const busy = document.querySelector('[aria-busy="true"]') !== null;
         return {text, loading: busy || /\bloading\b[^.!?]{0,40}(\.\.\.|…)/i.test(text)};
       });

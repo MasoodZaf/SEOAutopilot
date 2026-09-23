@@ -183,3 +183,28 @@ test("off-host sub-resources are answered locally, never fetched and never faile
   assert.equal(routeDecision(true, "script", false), "continue");
   assert.equal(routeDecision(true, "document", true), "continue");
 });
+
+test("a ticking clock does not hold a settled page to the deadline", async () => {
+  const {createServer} = await import("node:http");
+  const server = createServer((_req, res) => {
+    res.writeHead(200, {"content-type": "text/html"});
+    res.end(`<!doctype html><html><body><div>${CHROME}</div><p>${CONTENT}</p>
+      <span id="t">00:00</span>
+      <script>let s=0;setInterval(()=>{s++;document.getElementById("t").textContent="00:"+String(s).padStart(2,"0")},300)</script>
+      </body></html>`);
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const {port} = server.address() as {port: number};
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${port}/`, {waitUntil: "load"});
+    const started = Date.now();
+    await waitForRenderedContent(page);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 6_000, `waited ${elapsed}ms on a page whose only change is a clock`);
+  } finally {
+    await browser.close();
+    await new Promise<void>(resolve => { server.close(() => resolve()); });
+  }
+});
