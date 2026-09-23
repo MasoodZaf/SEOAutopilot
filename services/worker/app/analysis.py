@@ -215,23 +215,32 @@ async def analyze_crawl(
             page_id = row["page_id"]
             normalized_url = str(row["normalized_url"])
 
+            # This page has just been re-read, so everything open against it is
+            # superseded by what the rules say now: an issue still present is
+            # reopened by the upsert below, and one that was fixed stays closed.
+            # Not filtered by scoring version. It used to be, and an opportunity
+            # raised under an earlier version was never closed by any later
+            # crawl -- the fingerprint includes the version, so the new version
+            # opened a second copy beside it and both stayed in the queue.
+            # Pages this crawl did not read are deliberately left alone: not
+            # seeing a page is not evidence that its issue was fixed. The API
+            # keeps those out of the default queue instead (see
+            # OpportunityService.list_top).
             await connection.execute(
                 """
                 UPDATE finding SET status='resolved',last_seen_at=now()
-                WHERE tenant_id=$1 AND page_id=$2 AND scoring_version_id=$3 AND status='open'
+                WHERE tenant_id=$1 AND page_id=$2 AND status='open'
                 """,
                 tenant_id,
                 page_id,
-                version["id"],
             )
             await connection.execute(
                 """
                 UPDATE opportunity SET status='expired',updated_at=now()
-                WHERE tenant_id=$1 AND page_id=$2 AND scoring_version_id=$3 AND status='open'
+                WHERE tenant_id=$1 AND page_id=$2 AND status='open'
                 """,
                 tenant_id,
                 page_id,
-                version["id"],
             )
 
             page_evidence = PageEvidence(

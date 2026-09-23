@@ -132,6 +132,11 @@ class CalibrationService:
                     site_id=site_id,
                     opportunity_status="open",
                     limit=target_size,
+                    # Drawn from the newest crawl only. Without this, one open
+                    # opportunity left over from an older crawl -- a page the
+                    # newest crawl did not reach -- in the top N made the check
+                    # below refuse the whole set, permanently.
+                    evidence_crawl_id=latest_crawl.id,
                 )
             )
         )

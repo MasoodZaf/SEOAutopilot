@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import OpportunitySuppress
 from app.core.context import Role, TenantContext
-from app.db.models import AuditEvent, Opportunity, OutboxEvent, Page, Site
+from app.db.models import AnalysisRun, AuditEvent, Opportunity, OutboxEvent, Page, Site
 
 ALLOWED_SUPPRESSION_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
 
@@ -29,12 +29,16 @@ def build_diverse_top_query(
     limit: int,
     opportunity_type: str | None = None,
     min_score: float | None = None,
+    evidence_crawl_id: UUID | None = None,
 ) -> Select[tuple[Opportunity]]:
     """Rank repeated rule/page opportunities in deterministic rounds.
 
     A high-volume rule must not monopolize the decision list. The public API
     remains page-level, while the ranking returns the best page for each
     distinct opportunity type/title before the second page for each, and so on.
+
+    `evidence_crawl_id` limits the ranking to opportunities whose evidence came
+    from that crawl -- see `OpportunityService.list_top` for why.
     """
     filters = [
         Opportunity.tenant_id == tenant_id,
@@ -48,6 +52,8 @@ def build_diverse_top_query(
         filters.append(Opportunity.type == opportunity_type)
     if min_score is not None:
         filters.append(Opportunity.score >= min_score)
+    if evidence_crawl_id is not None:
+        filters.append(Opportunity.evidence_refs["crawl_id"].astext == str(evidence_crawl_id))
 
     ranked = (
         select(
@@ -83,6 +89,34 @@ def build_diverse_top_query(
     )
 
 
+def build_latest_analyzed_crawl_query(*, tenant_id: UUID, site_id: UUID) -> Select[tuple[UUID]]:
+    """The crawl behind the site's most recent completed analysis."""
+    return (
+        select(AnalysisRun.crawl_job_id)
+        .where(
+            AnalysisRun.tenant_id == tenant_id,
+            AnalysisRun.site_id == site_id,
+            AnalysisRun.status == "completed",
+        )
+        .order_by(AnalysisRun.created_at.desc(), AnalysisRun.id.desc())
+        .limit(1)
+    )
+
+
+def build_not_rechecked_count_query(
+    *, tenant_id: UUID, site_id: UUID, evidence_crawl_id: UUID
+) -> Select[tuple[int]]:
+    """Open opportunities whose evidence predates the given crawl."""
+    return select(func.count(Opportunity.id)).where(
+        Opportunity.tenant_id == tenant_id,
+        Opportunity.site_id == site_id,
+        Opportunity.status == "open",
+        Opportunity.risk != "prohibited",
+        Opportunity.suppressed_reason.is_(None),
+        func.coalesce(Opportunity.evidence_refs["crawl_id"].astext, "") != str(evidence_crawl_id),
+    )
+
+
 def build_page_url_query(
     *, tenant_id: UUID, site_id: UUID, page_ids: list[UUID]
 ) -> Select[tuple[UUID, str]]:
@@ -105,7 +139,23 @@ class OpportunityService:
         opportunity_status: str,
         opportunity_type: str | None = None,
         min_score: float | None = None,
+        scope: str = "current",
     ) -> list[Opportunity] | None:
+        """The ranked queue.
+
+        `scope="current"` (the default) ranks only open opportunities that the
+        site's latest analyzed crawl confirmed. A crawl closes what it re-reads
+        and finds fixed, but it cannot say anything about a page it did not
+        reach -- a page-limited crawl of a large site, or a page no longer
+        linked -- so those opportunities stay open with evidence from an older
+        crawl. Ranking them beside fresh ones put fixed issues at the top of
+        the queue and blocked calibration, which refuses stale evidence.
+        They are still counted (`not_rechecked`) and still listed under
+        `scope="all"`; nothing is closed on an absence of evidence.
+
+        The scope applies to `open` only. Shortlisted and proposed items are a
+        person's work in progress and must not vanish because of a crawl.
+        """
         site = await self.session.scalar(
             select(Site.id).where(
                 Site.id == site_id,
@@ -114,6 +164,9 @@ class OpportunityService:
         )
         if site is None:
             return None
+        evidence_crawl_id = None
+        if scope == "current" and opportunity_status == "open":
+            evidence_crawl_id = await self.latest_analyzed_crawl(site_id)
         result = await self.session.scalars(
             build_diverse_top_query(
                 tenant_id=self.context.tenant_id,
@@ -122,9 +175,25 @@ class OpportunityService:
                 limit=limit,
                 opportunity_type=opportunity_type,
                 min_score=min_score,
+                evidence_crawl_id=evidence_crawl_id,
             )
         )
         return list(result)
+
+    async def latest_analyzed_crawl(self, site_id: UUID) -> UUID | None:
+        return await self.session.scalar(
+            build_latest_analyzed_crawl_query(tenant_id=self.context.tenant_id, site_id=site_id)
+        )
+
+    async def not_rechecked_count(self, site_id: UUID, evidence_crawl_id: UUID) -> int:
+        count = await self.session.scalar(
+            build_not_rechecked_count_query(
+                tenant_id=self.context.tenant_id,
+                site_id=site_id,
+                evidence_crawl_id=evidence_crawl_id,
+            )
+        )
+        return int(count or 0)
 
     async def page_urls(self, site_id: UUID, opportunities: list[Opportunity]) -> dict[UUID, str]:
         page_ids = list({item.page_id for item in opportunities})

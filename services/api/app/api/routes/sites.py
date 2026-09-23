@@ -135,11 +135,14 @@ async def list_opportunities(
     opportunity_status: str = Query(default="open", alias="status"),
     opportunity_type: str | None = Query(default=None, alias="type"),
     min_score: float | None = Query(default=None, alias="min_score"),
+    scope: str = Query(default="current"),
 ) -> OpportunityCollection:
     if limit < 1 or limit > 100:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_limit")
     if opportunity_status not in {"open", "shortlisted", "proposing", "proposed", "suppressed"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_status")
+    if scope not in {"current", "all"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_scope")
     opportunity_service = OpportunityService(session, context)
     opportunities = await opportunity_service.list_top(
         site_id,
@@ -147,10 +150,25 @@ async def list_opportunities(
         opportunity_status,
         opportunity_type=opportunity_type,
         min_score=min_score,
+        scope=scope,
     )
     if opportunities is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
     page_urls = await opportunity_service.page_urls(site_id, opportunities)
+    meta: dict[str, str | int] = {
+        "trace_id": context.trace_id,
+        "count": len(opportunities),
+        "scope": scope,
+    }
+    # Which crawl the queue is measured against, and how many open issues from
+    # earlier crawls it did not re-check -- so a reader can tell "fixed" from
+    # "not looked at again". Additive: existing clients ignore unknown keys.
+    evidence_crawl_id = await opportunity_service.latest_analyzed_crawl(site_id)
+    if evidence_crawl_id is not None:
+        meta["evidence_crawl_id"] = str(evidence_crawl_id)
+        meta["not_rechecked"] = await opportunity_service.not_rechecked_count(
+            site_id, evidence_crawl_id
+        )
     return OpportunityCollection(
         data=[
             OpportunityRead.model_validate(item).model_copy(
@@ -158,7 +176,7 @@ async def list_opportunities(
             )
             for item in opportunities
         ],
-        meta={"trace_id": context.trace_id, "count": len(opportunities)},
+        meta=meta,
     )
 
 

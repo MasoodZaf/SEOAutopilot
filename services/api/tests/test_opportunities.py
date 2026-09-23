@@ -11,6 +11,8 @@ from app.db.models import Opportunity
 from app.services.opportunities import (
     OpportunityService,
     build_diverse_top_query,
+    build_latest_analyzed_crawl_query,
+    build_not_rechecked_count_query,
     build_page_url_query,
 )
 
@@ -35,6 +37,58 @@ def test_diverse_top_query_is_deterministic_and_tenant_scoped() -> None:
     assert "opportunity.type =" in sql
     assert "opportunity.score >=" in sql
     assert "ORDER BY anon_1.diversity_rank" in sql
+
+
+def test_diverse_top_query_can_be_limited_to_one_crawls_evidence() -> None:
+    crawl_id = uuid4()
+    statement = build_diverse_top_query(
+        tenant_id=uuid4(),
+        site_id=uuid4(),
+        opportunity_status="open",
+        limit=20,
+        evidence_crawl_id=crawl_id,
+    )
+
+    compiled = statement.compile(dialect=postgresql.dialect())
+
+    assert "opportunity.evidence_refs ->> " in str(compiled)
+    assert str(crawl_id) in compiled.params.values()
+
+
+def test_diverse_top_query_has_no_crawl_filter_by_default() -> None:
+    statement = build_diverse_top_query(
+        tenant_id=uuid4(), site_id=uuid4(), opportunity_status="open", limit=20
+    )
+
+    assert "evidence_refs ->>" not in str(statement.compile(dialect=postgresql.dialect()))
+
+
+def test_latest_analyzed_crawl_query_reads_completed_runs_of_one_site() -> None:
+    sql = str(
+        build_latest_analyzed_crawl_query(tenant_id=uuid4(), site_id=uuid4()).compile(
+            dialect=postgresql.dialect()
+        )
+    )
+
+    assert "analysis_run.tenant_id =" in sql
+    assert "analysis_run.site_id =" in sql
+    assert "analysis_run.status =" in sql
+    assert "ORDER BY analysis_run.created_at DESC" in sql
+
+
+def test_not_rechecked_count_counts_open_items_from_other_crawls() -> None:
+    sql = str(
+        build_not_rechecked_count_query(
+            tenant_id=uuid4(), site_id=uuid4(), evidence_crawl_id=uuid4()
+        ).compile(dialect=postgresql.dialect())
+    )
+
+    assert "count(opportunity.id)" in sql
+    assert "opportunity.tenant_id =" in sql
+    assert "opportunity.status =" in sql
+    assert "opportunity.suppressed_reason IS NULL" in sql
+    # A row with no crawl in its evidence counts as not re-checked, not as current.
+    assert "coalesce((opportunity.evidence_refs ->> " in sql
 
 
 def test_page_url_query_is_tenant_and_site_scoped() -> None:

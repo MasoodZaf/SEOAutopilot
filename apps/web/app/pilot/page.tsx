@@ -176,6 +176,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   searchConsoleConnector?: Connector;
   dnsProviderConnector?: Connector;
   opportunities: Opportunity[];
+  notRechecked?: number;
   proposals: Proposal[];
   governance?: GovernanceStatus;
   measurements: Measurement[];
@@ -202,8 +203,11 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       origin: site.canonical_origin,
     };
     const connectors = await apiJson<{data: Connector[]}>(`/v1/sites/${site.id}/connectors`);
-    const oppResult = site.status === "active"
-      ? await apiJson<{data: Opportunity[]}>(`/v1/sites/${site.id}/opportunities?limit=20&status=open`)
+    // The API ranks only what the latest analyzed crawl confirmed, and counts
+    // the open issues it did not re-check (pages a page-limited crawl did not
+    // reach). Those are left out of the queue, not closed.
+    const oppResult: {data: Opportunity[]; meta?: {not_rechecked?: number}} = site.status === "active"
+      ? await apiJson<{data: Opportunity[]; meta?: {not_rechecked?: number}}>(`/v1/sites/${site.id}/opportunities?limit=20&status=open`)
       : {data: []};
     
     let proposals: Proposal[] = [];
@@ -274,6 +278,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       searchConsoleConnector: connectors.data.find((connector) => connector.type === "google_search_console"),
       dnsProviderConnector: connectors.data.find((connector) => connector.type === "dns_provider"),
       opportunities: oppResult.data,
+      notRechecked: oppResult.meta?.not_rechecked,
       proposals,
       governance,
       measurements,
@@ -863,6 +868,15 @@ export default async function PilotPage({searchParams}: PageProps) {
                 description="Ranked candidates only. Every correction must pass evidence review, validation, and explicit human approval before a certified connector may act."
                 aside={<Badge tone="warn">0 automatic changes</Badge>}
               />
+              {data.notRechecked ? (
+                <Note tone="neutral">
+                  <span className="tabular">{data.notRechecked}</span>{" "}
+                  {data.notRechecked === 1 ? "issue" : "issues"} found by an earlier crawl{" "}
+                  {data.notRechecked === 1 ? "was" : "were"} not re-checked by the latest one, usually
+                  because it did not reach {data.notRechecked === 1 ? "that page" : "those pages"}.{" "}
+                  {data.notRechecked === 1 ? "It is" : "They are"} left out of this queue, not marked as fixed.
+                </Note>
+              ) : null}
               <Panel className="overflow-hidden">
                 {data.opportunities.length === 0 ? (
                   <div className="px-6 py-14 text-center">
