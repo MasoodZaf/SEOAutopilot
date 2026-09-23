@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from app.services.github_app import (
     GitHubAppClient,
     GitHubAppError,
+    GitHubUserClient,
     app_jwt,
     load_private_key,
 )
@@ -157,3 +158,51 @@ async def test_the_repository_list_is_read_to_the_end() -> None:
 async def test_an_unreadable_installation_is_an_error_not_an_empty_grant() -> None:
     with pytest.raises(GitHubAppError, match="github_installation_repositories_failed:401"):
         await client(lambda _: httpx.Response(401, json={})).installation_repositories("t")
+
+
+def user_client(handler) -> GitHubUserClient:
+    return GitHubUserClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)), "Iv1.id", "secret", "http://cb"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_persons_repositories_are_read_to_the_end_and_filtered_to_push() -> None:
+    def repo(number: int, **extra) -> dict:
+        return {
+            "id": number,
+            "full_name": f"o/r{number}",
+            "default_branch": "main",
+            "permissions": {"push": True},
+            **extra,
+        }
+
+    pages = {
+        "1": [repo(n) for n in range(100)],
+        "2": [
+            repo(100, permissions={"admin": True, "push": False}),
+            repo(101, permissions={"pull": True}),
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer ghu_person"
+        assert request.url.path == "/user/installations/7/repositories"
+        return httpx.Response(200, json={"repositories": pages[request.url.params["page"]]})
+
+    found = await user_client(handler).pushable_repositories("ghu_person", 7, "o")
+
+    # An admin can push; a reader cannot, and is not offered.
+    assert len(found) == 101
+    assert found[-1].id == 100
+    assert {item.installation_id for item in found} == {7}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_code_names_githubs_reason_and_nothing_else() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "github.com"
+        return httpx.Response(200, json={"error": "bad_verification_code", "error_uri": "x"})
+
+    with pytest.raises(GitHubAppError, match="^github_authorization_failed:bad_verification_code$"):
+        await user_client(handler).exchange_code("stale")

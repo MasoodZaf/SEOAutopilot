@@ -55,9 +55,9 @@ from app.db.models import (
 )
 from app.domain.github_adapter import GitHubTarget
 from app.services.connector_secrets import ConnectorSecretReader, ConnectorSecretStore
-from app.services.github_app import GitHubAppClient, GitHubAppError
+from app.services.github_app import GitHubAppClient, GitHubAppError, GitHubUserClient
 from app.services.sites import SiteService, stable_hash
-from app.services.tenant_credentials import github_app_credential
+from app.services.tenant_credentials import GitHubAppCredential, github_app_credential
 
 GITHUB_CONNECTOR = "github_repository"
 PROVIDER_APP = "github_app"
@@ -70,7 +70,21 @@ PROVIDER_PAT = "github_pat"
 REQUIRED_PERMISSIONS = {"contents": "write", "pull_requests": "write"}
 GITHUB_SCOPES = ["contents:write", "pull_requests:write"]
 
-INSTALLATION_STATE_TTL = timedelta(minutes=10)
+# The connect flow's two steps, told apart by what the state row asks for. A
+# state issued for one cannot be redeemed as the other, nor as a Google one.
+GITHUB_SIGN_IN = ["github:sign_in"]
+GITHUB_CHOICE = ["github:choose_repository"]
+
+# Long enough to install the app on GitHub's page in between; the state is
+# single-use and bound to the person who started it either way.
+SIGN_IN_STATE_TTL = timedelta(minutes=30)
+# How long the repositories GitHub offered stay choosable. Push access is read
+# at sign-in, so this bounds how stale that answer can be when it is acted on.
+CHOICE_TTL = timedelta(minutes=15)
+# Installing the app sends the person back through sign-in. More round trips
+# than this is a loop, not a person.
+MAX_SIGN_IN_BOUNCES = 3
+MAX_CHOICES = 1000
 
 
 class GitHubConnectorError(Exception):
@@ -318,53 +332,48 @@ class GitHubConnectorService:
         )
         return connector
 
-    async def begin_app_installation(
-        self,
-        site_id: UUID,
-        repository: str,
-        base_branch: str,
-        path_template: str,
-        settings: Settings,
-    ) -> tuple[Connector, str, datetime]:
-        """Start the install, and remember what was asked for while GitHub asks."""
-        self.context.require(Role.OWNER, Role.ADMIN)
-        site = await self._site(site_id)
+    async def _signing_app(self, settings: Settings) -> GitHubAppCredential:
         app = await github_app_credential(self.session, settings, self.context.tenant_id)
         if app is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="github_app_not_configured",
             )
-        parsed = parse_repository(repository)
-        if parsed is None:
+        if not app.can_sign_in:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="github_repository_invalid",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="github_app_sign_in_not_configured",
             )
-        slug = f"{parsed[0]}/{parsed[1]}"
+        return app
 
+    async def begin_sign_in(
+        self, site_id: UUID, settings: Settings, *, install: bool = False
+    ) -> tuple[str, datetime]:
+        """Send the person to GitHub, as Claude or ChatGPT would.
+
+        GitHub asks them to authorize the app (a single click after the first
+        time) and, when `install` is set or they have no installation yet, to
+        choose which repositories the app may reach. What comes back is a
+        person GitHub vouches for, not a claim typed into a form.
+
+        Nothing about the site's connector changes here, so a site deploying
+        today keeps deploying if the person abandons GitHub's page.
+        """
+        self.context.require(Role.OWNER, Role.ADMIN)
+        site = await self._site(site_id)
+        app = await self._signing_app(settings)
         connector = await self._upsert(site, PROVIDER_APP)
-        # Nothing on the connector changes until GitHub sends the tenant back:
-        # not its status, not its provider, not where it writes. A site moving
-        # from a stored token to an installation keeps deploying exactly as it
-        # did right up to the moment the installation is real, so an install
-        # abandoned on GitHub's page costs nothing. What was asked for waits on
-        # the state row and is applied by the callback.
 
         state = secrets.token_urlsafe(32)
-        expires_at = datetime.now(UTC) + INSTALLATION_STATE_TTL
+        expires_at = datetime.now(UTC) + SIGN_IN_STATE_TTL
         self.session.add(
             ConnectorOauthState(
                 tenant_id=self.context.tenant_id,
                 site_id=site.id,
                 connector_id=connector.id,
                 state_hash=hashlib.sha256(state.encode()).hexdigest(),
-                requested_scopes=list(GITHUB_SCOPES),
-                requested_property_ref=slug,
-                requested_config={
-                    "base_branch": base_branch or "main",
-                    "path_template": path_template,
-                },
+                requested_scopes=list(GITHUB_SIGN_IN),
+                requested_config={"bounces": 0},
                 expires_at=expires_at,
                 created_by=self.context.actor_id,
             )
@@ -377,12 +386,173 @@ class GitHubConnectorService:
                 "site_id": str(site.id),
                 "connector_type": GITHUB_CONNECTOR,
                 "provider_key": PROVIDER_APP,
-                "repository": slug,
+                "step": "install" if install else "sign_in",
             },
         )
-        query = urlencode({"state": state})
-        url = f"https://github.com/apps/{app.app_slug}/installations/new?{query}"
-        return connector, url, expires_at
+        url = install_url(app.app_slug, state) if install else sign_in_url(app, settings, state)
+        return url, expires_at
+
+    async def _choice(self, site_id: UUID, *, lock: bool = False) -> ConnectorOauthState | None:
+        """What GitHub offered this person for this site, while it is fresh.
+
+        Bound to the actor as well as the tenant: another admin in the same
+        workspace has their own GitHub access, and must not choose from a list
+        drawn up against somebody else's.
+        """
+        query = (
+            select(ConnectorOauthState)
+            .where(
+                ConnectorOauthState.tenant_id == self.context.tenant_id,
+                ConnectorOauthState.site_id == site_id,
+                ConnectorOauthState.created_by == self.context.actor_id,
+                ConnectorOauthState.requested_scopes == list(GITHUB_CHOICE),
+                ConnectorOauthState.consumed_at.is_(None),
+                ConnectorOauthState.expires_at > datetime.now(UTC),
+            )
+            .order_by(ConnectorOauthState.created_at.desc())
+            .limit(1)
+        )
+        if lock:
+            query = query.with_for_update()
+        return await self.session.scalar(query)
+
+    async def repository_choices(
+        self, site_id: UUID
+    ) -> tuple[list[dict[str, object]], datetime | None]:
+        self.context.require(Role.OWNER, Role.ADMIN)
+        if await self.site_service.get_site(site_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
+        choice = await self._choice(site_id)
+        if choice is None:
+            return [], None
+        listed = (choice.requested_config or {}).get("repositories")
+        return (list(listed) if isinstance(listed, list) else []), choice.expires_at
+
+    async def choose_repository(
+        self,
+        site_id: UUID,
+        repository_id: int,
+        base_branch: str,
+        path_template: str,
+        settings: Settings,
+        client: httpx.AsyncClient,
+    ) -> Connector:
+        """Bind the repository the person picked, after asking GitHub again.
+
+        The pick is looked up by GitHub's numeric id in the list GitHub itself
+        produced at sign-in, never by a name from the browser. The installation
+        is then asked, as the app, whether it still reaches that repository
+        with the permissions a deployment needs -- the grant may have been
+        narrowed in the minutes since.
+        """
+        self.context.require(Role.OWNER, Role.ADMIN)
+        site = await self._site(site_id)
+        choice = await self._choice(site.id, lock=True)
+        if choice is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="github_choice_expired"
+            )
+        listed = (choice.requested_config or {}).get("repositories")
+        picked = next(
+            (
+                item
+                for item in (listed if isinstance(listed, list) else [])
+                if isinstance(item, dict) and item.get("id") == repository_id
+            ),
+            None,
+        )
+        if picked is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="github_repository_not_offered"
+            )
+        slug = str(picked["full_name"])
+        installation_id = int(picked["installation_id"])
+        template = normalize_path_template(path_template)
+
+        app = await github_app_credential(self.session, settings, self.context.tenant_id)
+        if app is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="github_app_not_configured",
+            )
+        app_client = GitHubAppClient(client, app.app_id, app.private_key)
+        try:
+            installation = await app_client.installation(installation_id)
+            minted = await app_client.mint_installation_token(installation_id)
+            granted = (
+                minted.repositories
+                if minted.repositories is not None
+                else await app_client.installation_repositories(minted.token)
+            )
+        except GitHubAppError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+        permissions = installation.get("permissions")
+        if not isinstance(permissions, dict) or any(
+            permissions.get(name) != level for name, level in REQUIRED_PERMISSIONS.items()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="github_installation_permissions_insufficient",
+            )
+        if slug not in granted:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="github_repository_not_installed",
+            )
+
+        now = datetime.now(UTC)
+        choice.consumed_at = now
+        connector = await self._upsert(site, PROVIDER_APP)
+        if connector.secret_ref is not None:
+            # Moving from a stored token to an installation. The old credential
+            # stops being referenced here, so it is revoked here too rather than
+            # left decryptable in a table nothing points at any more.
+            await self.session.execute(
+                update(ConnectorSecret)
+                .where(
+                    ConnectorSecret.tenant_id == self.context.tenant_id,
+                    ConnectorSecret.connector_id == connector.id,
+                    ConnectorSecret.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+        connector.status = "active"
+        connector.provider_key = PROVIDER_APP
+        connector.external_account_ref = slug
+        connector.secret_ref = None
+        connector.config_json = {
+            "base_branch": base_branch or str(picked.get("default_branch") or "main"),
+            "path_template": template,
+            "installation_id": installation_id,
+            "repository_id": repository_id,
+            "account": str(picked.get("account") or ""),
+        }
+        connector.granted_scopes = list(GITHUB_SCOPES)
+        connector.consented_by = self.context.actor_id
+        connector.consented_at = now
+        # Deliberately null. The token this installation mints is never stored,
+        # so there is no expiry for anything to track.
+        connector.token_expires_at = None
+        connector.last_error_code = None
+        connector.version = (connector.version or 0) + 1
+        self.site_service._stage_event(
+            "connector.authorized",
+            "connector",
+            connector.id,
+            {
+                "site_id": str(site.id),
+                "connector_type": GITHUB_CONNECTOR,
+                "provider_key": PROVIDER_APP,
+                "repository": slug,
+                "repository_id": repository_id,
+                "installation_id": installation_id,
+                "base_branch": connector.config_json["base_branch"],
+                "credential_is_long_lived": False,
+            },
+        )
+        return connector
 
     async def resolve(
         self,
@@ -528,32 +698,59 @@ class GitHubConnectorService:
         return token
 
 
-class GitHubInstallationCallbackService:
-    """Completes an installation, on the request GitHub sends back.
+def sign_in_url(app: GitHubAppCredential, settings: Settings, state: str) -> str:
+    query = urlencode(
+        {
+            "client_id": app.client_id,
+            "redirect_uri": settings.github_app_callback_url,
+            "state": state,
+        }
+    )
+    return f"https://github.com/login/oauth/authorize?{query}"
 
-    The same shape as the Search Console callback and for the same reason: the
-    request arrives with no session, so the tenant is derived from the state row
-    and set as the scope before anything else is read or written.
+
+def install_url(app_slug: str, state: str) -> str:
+    return f"https://github.com/apps/{app_slug}/installations/new?{urlencode({'state': state})}"
+
+
+@dataclass(frozen=True, slots=True)
+class SignInOutcome:
+    """Where the person goes next: back to GitHub, or to the picker for a site."""
+
+    redirect_url: str | None = None
+    site_id: UUID | None = None
+    offered: int = 0
+
+
+class GitHubSignInCallbackService:
+    """Finishes a GitHub sign-in, on the request GitHub sends back.
+
+    The request arrives with no session, so the tenant is derived from the
+    state row and set as the scope before anything else is read or written --
+    the same shape as the Google callback.
+
+    It is reached two ways. After authorizing, with a `code`: the code is
+    exchanged for the person's token, GitHub is asked which repositories they
+    can push to, and that list -- not the token -- is what is kept. After
+    installing or reconfiguring the app, with no code: the person is sent
+    straight back through sign-in on the same state, because an installation
+    id in a query string is not evidence of anything.
     """
 
     def __init__(
         self,
         session: AsyncSession,
-        app_client: GitHubAppClient | None = None,
         *,
-        app_client_factory: Callable[[UUID], Awaitable[GitHubAppClient]] | None = None,
+        app_factory: Callable[[UUID], Awaitable[GitHubAppCredential]],
+        user_client_factory: Callable[[GitHubAppCredential], GitHubUserClient],
+        settings: Settings,
     ) -> None:
-        # An installation belongs to the app it was created under, so the token
-        # that confirms it must be minted by that same app -- and which app
-        # that is depends on the tenant, which only the state row names. Hence
-        # a factory, resolved once the tenant is known. A caller that already
-        # knows the app (the tests, and a single-app deployment) still passes
-        # the client directly.
-        self.app_client_factory = app_client_factory
         self.session = session
-        self.app_client = app_client
+        self.app_factory = app_factory
+        self.user_client_factory = user_client_factory
+        self.settings = settings
 
-    async def complete(self, state: str, installation_id: int, trace_id: str) -> Connector:
+    async def complete(self, state: str, code: str | None, trace_id: str) -> SignInOutcome:
         state_hash = hashlib.sha256(state.encode()).hexdigest()
         unscoped = await self.session.scalar(
             select(ConnectorOauthState).where(ConnectorOauthState.state_hash == state_hash)
@@ -566,8 +763,6 @@ class GitHubInstallationCallbackService:
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(unscoped.tenant_id)},
         )
-        if self.app_client_factory is not None:
-            self.app_client = await self.app_client_factory(unscoped.tenant_id)
         self.session.expunge(unscoped)
         oauth_state = await self.session.scalar(
             select(ConnectorOauthState)
@@ -582,126 +777,108 @@ class GitHubInstallationCallbackService:
             oauth_state is None
             or oauth_state.consumed_at is not None
             or oauth_state.expires_at <= now
-            or oauth_state.requested_scopes != GITHUB_SCOPES
-            or not oauth_state.requested_property_ref
+            or oauth_state.requested_scopes != GITHUB_SIGN_IN
         ):
-            # A state issued for Search Console carries different scopes and
-            # cannot be redeemed here, and vice versa.
+            # A state issued for Search Console, or for the retired
+            # typed-repository install, cannot be redeemed here.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="installation_state_invalid"
             )
-        connector = await self.session.scalar(
-            select(Connector).where(
-                Connector.id == oauth_state.connector_id,
-                Connector.tenant_id == oauth_state.tenant_id,
-                Connector.type == GITHUB_CONNECTOR,
-            )
-        )
-        site = await self.session.scalar(
-            select(Site).where(
-                Site.id == oauth_state.site_id, Site.tenant_id == oauth_state.tenant_id
-            )
-        )
-        if connector is None or site is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="installation_binding_invalid"
-            )
-
-        slug = oauth_state.requested_property_ref
-        if self.app_client is None:
-            # Neither a client nor a factory that produced one. Refusing here
-            # keeps the failure at "this tenant has no GitHub App configured"
-            # rather than an attribute error halfway through the exchange.
+        app = await self.app_factory(oauth_state.tenant_id)
+        if not app.can_sign_in:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="github_app_not_configured",
+                detail="github_app_sign_in_not_configured",
             )
+
+        config = dict(oauth_state.requested_config or {})
+        bounces = int(config.get("bounces") or 0)
+        if code is None:
+            # Back from GitHub's install page. Sign in again on the same state;
+            # GitHub does not ask twice, so to the person this is one redirect.
+            if bounces >= MAX_SIGN_IN_BOUNCES:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="github_installation_not_found",
+                )
+            oauth_state.requested_config = {**config, "bounces": bounces + 1}
+            return SignInOutcome(redirect_url=sign_in_url(app, self.settings, state))
+
+        user = self.user_client_factory(app)
         try:
-            installation = await self.app_client.installation(installation_id)
-            minted = await self.app_client.mint_installation_token(installation_id)
-            granted = (
-                minted.repositories
-                if minted.repositories is not None
-                else await self.app_client.installation_repositories(minted.token)
-            )
+            token = await user.exchange_code(code)
+            installations = await user.installations(token)
+            if not installations:
+                if bounces >= MAX_SIGN_IN_BOUNCES:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="github_installation_not_found",
+                    )
+                # Signed in, but the app is on none of their accounts yet.
+                # This is the step where GitHub asks which repositories.
+                oauth_state.requested_config = {**config, "bounces": bounces + 1}
+                return SignInOutcome(
+                    redirect_url=install_url(app.app_slug, state)
+                )
+            offered: list[dict[str, object]] = []
+            for installation_id, account in installations:
+                for repository in await user.pushable_repositories(
+                    token, installation_id, account
+                ):
+                    offered.append(
+                        {
+                            "id": repository.id,
+                            "full_name": repository.full_name,
+                            "default_branch": repository.default_branch,
+                            "private": repository.private,
+                            "installation_id": repository.installation_id,
+                            "account": repository.account,
+                        }
+                    )
+                    if len(offered) >= MAX_CHOICES:
+                        break
         except GitHubAppError as error:
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error).split(":")[0]
             ) from error
 
-        permissions = installation.get("permissions")
-        if not isinstance(permissions, dict) or any(
-            permissions.get(name) != level for name, level in REQUIRED_PERMISSIONS.items()
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="github_installation_permissions_insufficient",
-            )
-        if slug not in granted:
-            # The tenant installed the app but did not grant the repository they
-            # named. Storing the installation anyway would mean the connector
-            # reports connected and fails on the first deployment.
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="github_repository_not_installed",
-            )
-
         oauth_state.consumed_at = now
-        if connector.secret_ref is not None:
-            # Moving from a stored token to an installation. The old credential
-            # stops being referenced here, so it is revoked here too rather than
-            # left decryptable in a table nothing points at any more.
-            await self.session.execute(
-                update(ConnectorSecret)
-                .where(
-                    ConnectorSecret.tenant_id == oauth_state.tenant_id,
-                    ConnectorSecret.connector_id == connector.id,
-                    ConnectorSecret.revoked_at.is_(None),
-                )
-                .values(revoked_at=now)
+        offered.sort(key=lambda item: str(item["full_name"]).lower())
+        self.session.add(
+            ConnectorOauthState(
+                tenant_id=oauth_state.tenant_id,
+                site_id=oauth_state.site_id,
+                connector_id=oauth_state.connector_id,
+                # Never handed out: the picker finds this row by site and actor.
+                state_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+                requested_scopes=list(GITHUB_CHOICE),
+                requested_config={"repositories": offered},
+                expires_at=now + CHOICE_TTL,
+                created_by=oauth_state.created_by,
             )
-        connector.status = "active"
-        connector.provider_key = PROVIDER_APP
-        connector.external_account_ref = slug
-        connector.secret_ref = None
-        account = installation.get("account")
-        connector.config_json = {
-            **(connector.config_json or {}),
-            **(oauth_state.requested_config or {}),
-            "installation_id": installation_id,
-            "account": str(account.get("login") or "") if isinstance(account, dict) else "",
-        }
-        connector.granted_scopes = list(GITHUB_SCOPES)
-        connector.consented_by = oauth_state.created_by
-        connector.consented_at = now
-        # Deliberately null. The token this installation mints is never stored,
-        # so there is no expiry for anything to track.
-        connector.token_expires_at = None
-        connector.version += 1
-
+        )
         payload = {
-            "connector_id": str(connector.id),
-            "site_id": str(site.id),
+            "connector_id": str(oauth_state.connector_id),
+            "site_id": str(oauth_state.site_id),
             "connector_type": GITHUB_CONNECTOR,
             "provider_key": PROVIDER_APP,
-            "repository": slug,
-            "installation_id": installation_id,
-            "credential_is_long_lived": False,
+            "installations": len(installations),
+            "repositories_offered": len(offered),
         }
         self.session.add(
             AuditEvent(
                 tenant_id=oauth_state.tenant_id,
                 actor_type="user",
                 actor_id=str(oauth_state.created_by),
-                action="connector.authorized",
+                action="connector.github_signed_in",
                 resource_type="connector",
-                resource_id=str(connector.id),
+                resource_id=str(oauth_state.connector_id),
                 trace_id=trace_id,
                 metadata_json=payload,
                 event_hash=stable_hash(payload),
             )
         )
-        return connector
+        return SignInOutcome(site_id=oauth_state.site_id, offered=len(offered))
 
 
 def envelope_reader(settings: Settings, session: AsyncSession) -> ConnectorSecretReader | None:

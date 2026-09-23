@@ -175,36 +175,62 @@ export async function connectGoogleAction(): Promise<never> {
 }
 
 /**
- * Send the tenant to GitHub to install the workspace's GitHub App on one repository.
+ * Connect a repository the way Claude or ChatGPT does: sign in with GitHub.
  *
- * The one-step path: no token is copied or stored. Nothing about a working
- * connection changes until GitHub sends the tenant back with the install
- * finished, so a site already deploying with a token keeps deploying if the
- * install is abandoned.
+ * GitHub asks the person to authorize the app (one click after the first
+ * time) and, if the app is on none of their accounts yet, which repositories
+ * it may reach. They come back to a list of the repositories they can push to
+ * and pick one. Nothing is typed and no token is copied or stored.
+ *
+ * `install` goes to GitHub's install page first, which is how a repository
+ * missing from the list is added.
  */
-export async function connectGitHubAppAction(formData: FormData): Promise<never> {
+export async function connectGitHubAction(formData: FormData): Promise<never> {
   const siteId = String(formData.get("site_id") ?? "").trim();
-  const repository = String(formData.get("repository") ?? "").trim();
-  const baseBranch = String(formData.get("base_branch") ?? "").trim() || "main";
-  const pathTemplate = String(formData.get("path_template") ?? "").trim() || "{path}.html";
-  if (!siteId || !repository) redirectFresh(`${PAGE}?error=github_repository_invalid`);
+  const install = formData.get("install") === "1";
+  if (!siteId) redirectFresh(`${PAGE}?error=site_not_found`);
 
-  let installationUrl: string;
+  let authorizationUrl: string;
   try {
-    const result = await apiJson<{data: {installation_url: string}}>(
-      `/v1/sites/${siteId}/connectors/github/installation`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          repository,
-          base_branch: baseBranch,
-          path_template: pathTemplate,
-        }),
-      },
+    const result = await apiJson<AuthorizationEnvelope>(
+      `/v1/sites/${siteId}/connectors/github/authorize`,
+      {method: "POST", body: JSON.stringify({install})},
     );
-    installationUrl = result.data.installation_url;
+    authorizationUrl = result.data.authorization_url;
   } catch (error) {
     failure(error);
   }
-  redirectFresh(installationUrl);
+  redirectFresh(authorizationUrl);
+}
+
+/**
+ * Bind the repository picked from the list GitHub produced at sign-in.
+ *
+ * Sent by GitHub's numeric id, never by name: the API looks it up in that
+ * list and asks the installation again before anything is connected.
+ */
+export async function chooseRepositoryAction(formData: FormData): Promise<never> {
+  const siteId = String(formData.get("site_id") ?? "").trim();
+  const repositoryId = Number(formData.get("repository_id") ?? "");
+  const baseBranch = String(formData.get("base_branch") ?? "").trim();
+  const pathTemplate = String(formData.get("path_template") ?? "").trim() || "{path}.html";
+  if (!siteId || !Number.isInteger(repositoryId) || repositoryId <= 0) {
+    redirectFresh(
+      `${PAGE}?github=choose&site=${encodeURIComponent(siteId)}&error=github_repository_required`,
+    );
+  }
+
+  try {
+    await apiJson(`/v1/sites/${siteId}/connectors/github/repository`, {
+      method: "POST",
+      body: JSON.stringify({
+        repository_id: repositoryId,
+        base_branch: baseBranch,
+        path_template: pathTemplate,
+      }),
+    });
+  } catch (error) {
+    failure(error);
+  }
+  redirectFresh(`${PAGE}?github=connected`);
 }

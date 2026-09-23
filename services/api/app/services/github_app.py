@@ -191,3 +191,158 @@ class GitHubAppClient:
             if len(listed) < 100:
                 return tuple(names)
         raise GitHubAppError("github_installation_repositories_too_many")
+
+
+@dataclass(frozen=True, slots=True)
+class PushableRepository:
+    """A repository the signed-in person can write to, through one installation."""
+
+    id: int
+    full_name: str
+    default_branch: str
+    private: bool
+    installation_id: int
+    account: str
+
+
+class GitHubUserClient:
+    """Acts as the person who signed in with GitHub, for one request only.
+
+    This is what makes the connect flow the same one Claude or ChatGPT uses:
+    the person authorizes the app, and GitHub answers "which installations of
+    this app can you reach, and which repositories in them can you push to?"
+    That answer is the only evidence accepted that a repository is theirs to
+    connect. An installation id arriving in a query string proves nothing --
+    once the app is public, anybody can name anybody's installation -- and a
+    person with read access to an organisation's repository must not be able
+    to make the app write to it.
+
+    The user token is used and dropped. Nothing about it is stored: the
+    deployment never acts as the person, only as the installation.
+    """
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+    ) -> None:
+        self._client = client
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._redirect_uri = redirect_uri
+
+    async def exchange_code(self, code: str) -> str:
+        try:
+            response = await self._client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                    "code": code,
+                    "redirect_uri": self._redirect_uri,
+                },
+                headers={"Accept": "application/json"},
+            )
+        except httpx.TimeoutException as error:
+            raise GitHubAppError("github_timeout") from error
+        except httpx.HTTPError as error:
+            raise GitHubAppError("github_unavailable") from error
+        body = response.json() if response.status_code == 200 else None
+        token = body.get("access_token") if isinstance(body, dict) else None
+        if not isinstance(token, str) or not token:
+            # GitHub answers 200 with {"error": ...} for a spent or foreign
+            # code. The error name is safe to surface; the body is not logged.
+            reason = body.get("error") if isinstance(body, dict) else None
+            raise GitHubAppError(
+                "github_authorization_failed"
+                + (f":{reason}" if isinstance(reason, str) and reason.isidentifier() else "")
+            )
+        return token
+
+    async def _get(self, path: str, token: str) -> dict[str, object]:
+        try:
+            response = await self._client.get(
+                f"{GITHUB_API}{path}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": API_VERSION,
+                },
+            )
+        except httpx.TimeoutException as error:
+            raise GitHubAppError("github_timeout") from error
+        except httpx.HTTPError as error:
+            raise GitHubAppError("github_unavailable") from error
+        if response.status_code != 200:
+            raise GitHubAppError(f"github_user_lookup_failed:{response.status_code}")
+        body = response.json()
+        if not isinstance(body, dict):
+            raise GitHubAppError("github_user_lookup_malformed")
+        return body
+
+    async def installations(self, token: str) -> list[tuple[int, str]]:
+        """This app's installations the person can reach, as (id, account login)."""
+        found: list[tuple[int, str]] = []
+        for page in range(1, MAX_REPOSITORY_PAGES + 1):
+            body = await self._get(f"/user/installations?per_page=100&page={page}", token)
+            listed = body.get("installations")
+            if not isinstance(listed, list):
+                raise GitHubAppError("github_user_installations_malformed")
+            for item in listed:
+                if not isinstance(item, dict) or not isinstance(item.get("id"), int):
+                    continue
+                account = item.get("account")
+                login = account.get("login") if isinstance(account, dict) else None
+                found.append((item["id"], str(login or "")))
+            if len(listed) < 100:
+                return found
+        raise GitHubAppError("github_user_installations_too_many")
+
+    async def pushable_repositories(
+        self, token: str, installation_id: int, account: str
+    ) -> list[PushableRepository]:
+        """Repositories in one installation that this person can push to.
+
+        GitHub intersects the installation's grant with the person's own
+        access, and `permissions` on each repository is the person's. Read
+        access, or an archived repository, is not offered: the connector would
+        report healthy and fail on the first approved change.
+        """
+        found: list[PushableRepository] = []
+        for page in range(1, MAX_REPOSITORY_PAGES + 1):
+            body = await self._get(
+                f"/user/installations/{installation_id}/repositories?per_page=100&page={page}",
+                token,
+            )
+            listed = body.get("repositories")
+            if not isinstance(listed, list):
+                raise GitHubAppError("github_installation_repositories_malformed")
+            for item in listed:
+                if not isinstance(item, dict):
+                    continue
+                permissions = item.get("permissions")
+                can_push = isinstance(permissions, dict) and bool(
+                    permissions.get("push") or permissions.get("admin")
+                )
+                if (
+                    not can_push
+                    or item.get("archived")
+                    or not isinstance(item.get("id"), int)
+                    or not isinstance(item.get("full_name"), str)
+                ):
+                    continue
+                found.append(
+                    PushableRepository(
+                        id=item["id"],
+                        full_name=item["full_name"],
+                        default_branch=str(item.get("default_branch") or "main"),
+                        private=bool(item.get("private")),
+                        installation_id=installation_id,
+                        account=account,
+                    )
+                )
+            if len(listed) < 100:
+                return found
+        raise GitHubAppError("github_installation_repositories_too_many")

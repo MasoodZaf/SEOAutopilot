@@ -13,6 +13,7 @@ two connectors, two different tokens, and neither one reachable from the other.
 """
 
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -59,13 +60,16 @@ def settings(**overrides: object) -> Settings:
 
 
 def app_settings(**overrides: object) -> Settings:
-    return settings(
-        github_connectors_enabled=True,
-        github_app_id="123456",
-        github_app_slug="seo-autopilot",
-        github_app_private_key=APP_PEM,
-        **overrides,
-    )
+    values: dict[str, object] = {
+        "github_connectors_enabled": True,
+        "github_app_id": "123456",
+        "github_app_slug": "seo-autopilot",
+        "github_app_private_key": APP_PEM,
+        "github_app_client_id": "Iv1.testclient",
+        "github_app_client_secret": "s" * 40,
+    }
+    values.update(overrides)
+    return settings(**values)
 
 
 class FakeProbe:
@@ -520,33 +524,55 @@ async def test_an_installation_is_useless_without_the_apps_own_key(app_engine, a
     assert raised.value.detail == "github_app_not_configured"
 
 
-async def test_an_installation_url_is_issued_with_a_single_use_state(app_engine, acme) -> None:
+async def test_a_sign_in_is_issued_with_a_single_use_state(app_engine, acme) -> None:
     async with scoped(app_engine, acme["tenant_id"]) as session:
-        connector, url, expires_at = await service(session, acme).begin_app_installation(
-            acme["site_id"], "MasoodZaf/mindTools", "main", "CalcHive/{path}.html", app_settings()
+        url, expires_at = await service(session, acme).begin_sign_in(
+            acme["site_id"], app_settings()
         )
         await session.flush()
-
         states = (
             await session.execute(
                 text(
-                    "SELECT requested_scopes, requested_property_ref, requested_config"
-                    " FROM connector_oauth_state"
-                    " WHERE tenant_id=:t"
+                    "SELECT requested_scopes, requested_property_ref, created_by"
+                    " FROM connector_oauth_state WHERE tenant_id=:t"
                 ),
                 {"t": acme["tenant_id"]},
             )
         ).all()
+        connector = (
+            await session.execute(
+                text("SELECT status, config_json FROM connector WHERE tenant_id=:t"),
+                {"t": acme["tenant_id"]},
+            )
+        ).one()
 
-    assert url.startswith("https://github.com/apps/seo-autopilot/installations/new?state=")
+    query = parse_qs(urlsplit(url).query)
+    assert url.startswith("https://github.com/login/oauth/authorize?")
+    assert query["client_id"] == ["Iv1.testclient"]
+    assert query["redirect_uri"] == ["http://localhost:8000/v1/connectors/github/callback"]
+    assert len(query["state"][0]) >= 32
+    # Nothing is typed, so nothing is waiting on the state but who asked.
+    assert states[0].requested_scopes == ["github:sign_in"]
+    assert states[0].requested_property_ref is None
+    assert states[0].created_by == acme["actor_id"]
     assert connector.status == "pending_authorization"
-    # Nothing changes on the connector until GitHub sends the tenant back. The
-    # layout they asked for waits on the single-use state row.
-    assert "path_template" not in (connector.config_json or {})
-    assert states[0].requested_config == {
-        "base_branch": "main",
-        "path_template": "CalcHive/{path}.html",
-    }
     assert expires_at > datetime.now(UTC)
-    assert states[0].requested_scopes == ["contents:write", "pull_requests:write"]
-    assert states[0].requested_property_ref == "MasoodZaf/mindTools"
+
+
+async def test_add_a_repository_goes_to_the_install_page(app_engine, acme) -> None:
+    async with scoped(app_engine, acme["tenant_id"]) as session:
+        url, _ = await service(session, acme).begin_sign_in(
+            acme["site_id"], app_settings(), install=True
+        )
+    assert url.startswith("https://github.com/apps/seo-autopilot/installations/new?state=")
+
+
+async def test_an_app_without_its_sign_in_half_is_refused(app_engine, acme) -> None:
+    """Without sign-in the only evidence left is an installation id in a URL."""
+    async with scoped(app_engine, acme["tenant_id"]) as session:
+        with pytest.raises(HTTPException) as raised:
+            await service(session, acme).begin_sign_in(
+                acme["site_id"],
+                app_settings(github_app_client_id=None, github_app_client_secret=None),
+            )
+    assert raised.value.detail == "github_app_sign_in_not_configured"

@@ -9,18 +9,20 @@ import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {
   connectAnalyticsAction,
-  connectGitHubAppAction,
+  connectGitHubAction,
   connectGoogleAction,
   connectRepositoryAction,
   connectSearchConsoleAction,
   disconnectAction,
 } from "./actions";
 import {describeDate, describeError, describeExpiry, describeStatus} from "./connection-state.mjs";
+import {RepositoryPicker, type RepositoryChoice} from "./repository-picker";
 
 type PageProps = {
   searchParams: Promise<{
     google?: string;
     github?: string;
+    site?: string;
     disconnected?: string;
     error?: string;
     linked?: string;
@@ -88,16 +90,28 @@ const REASONS: Record<string, string> = {
     "That Google account cannot see a Search Console or GA4 property for any of your sites that is not already connected. Sign in with the account that owns the properties, or check they are verified in Search Console.",
   oauth_state_invalid:
     "That sign-in link had expired or was already used. Start again from this page.",
-  installation_not_completed: "The GitHub install was cancelled, so nothing was connected.",
   installation_state_invalid:
-    "That GitHub install link had expired or was already used. Start again from this page.",
+    "That GitHub sign-in had expired or was already used. Use Connect GitHub again.",
   github_app_not_configured:
-    "This workspace has no GitHub App yet. Add one under Keys, or use an access token for now.",
-  github_repository_invalid: "Enter the repository as owner/name.",
+    "GitHub is not set up on this deployment yet. An access token works in the meantime.",
+  github_app_sign_in_not_configured:
+    "GitHub sign-in is not set up on this deployment yet. An access token works in the meantime.",
+  github_sign_in_cancelled: "GitHub sign-in was cancelled, so nothing was connected.",
+  github_installation_requested:
+    "Your request to install SEO Autopilot was sent to the organisation's owners. Once one approves it, use Connect GitHub again.",
+  github_installation_not_found:
+    "SEO Autopilot is not installed on any GitHub account you can reach. Use Connect GitHub and choose where to install it.",
+  github_authorization_failed:
+    "GitHub did not accept that sign-in. Use Connect GitHub again.",
+  github_choice_expired:
+    "That list of repositories is more than 15 minutes old. Use Connect GitHub again to refresh it.",
+  github_repository_not_offered:
+    "That repository was not in the list GitHub gave for your account. Pick one from the list.",
+  github_repository_required: "Pick a repository from the list.",
   github_repository_not_installed:
-    "The GitHub App was installed, but not on that repository. Install it again and include the repository.",
+    "SEO Autopilot no longer has access to that repository. Add it on GitHub, then pick it again.",
   github_installation_permissions_insufficient:
-    "The GitHub App does not have write access to contents and pull requests. Update the App's permissions, then install again.",
+    "The GitHub App does not have write access to contents and pull requests. Accept its updated permissions on GitHub, then try again.",
   forbidden: "Only an owner or an admin of this workspace can change its connections.",
 };
 
@@ -109,6 +123,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
   let abandoned = 0;
   let clientCheck: ClientCheck | null = null;
   let githubAppReady = false;
+  let choices: RepositoryChoice[] | null = null;
   let loadError: string | null = null;
   try {
     const [siteBody, connectionBody] = await Promise.all([
@@ -138,6 +153,14 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
         body.data.some((item) => item.provider === "github_app" && item.source !== "none"),
       )
       .catch(() => false);
+    // Back from GitHub: the repositories it said this person can push to.
+    if (query.github === "choose" && query.site) {
+      choices = await apiJson<{data: RepositoryChoice[]}>(
+        `/v1/sites/${encodeURIComponent(query.site)}/connectors/github/repositories`,
+      )
+        .then((body) => body.data)
+        .catch(() => null);
+    }
   } catch (error) {
     // A brand-new account is in no workspace yet. Rendering that as a load
     // failure shows a first-time visitor the string `no_tenant_membership`,
@@ -150,6 +173,7 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
   const broken = connections.filter((item) => describeStatus(item.status).broken);
   const find = (siteId: string, type: string) =>
     connections.find((item) => item.site_id === siteId && item.type === type);
+  const pickingFor = choices ? sites.find((site) => site.id === query.site) : undefined;
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
@@ -171,8 +195,27 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
       ) : null}
       {query.github === "connected" ? (
         <Note tone="good" role="status">
-          Repository connected.
+          Repository connected. Approved changes for this site will arrive there as pull
+          requests.
         </Note>
+      ) : null}
+      {query.github === "updated" ? (
+        <Note role="status">
+          GitHub saved your changes. Use Connect GitHub to pick the repository.
+        </Note>
+      ) : null}
+      {query.github === "choose" && !pickingFor && !loadError ? (
+        <Note tone="warn" role="alert">
+          That list of repositories has expired. Use Connect GitHub again to refresh it.
+        </Note>
+      ) : null}
+      {pickingFor && choices ? (
+        <RepositoryPicker
+          siteId={pickingFor.id}
+          siteName={pickingFor.name}
+          repositories={choices}
+          previousTemplate={find(pickingFor.id, "github_repository")?.config_json?.path_template}
+        />
       ) : null}
       {query.disconnected ? (
         <Note role="status">
@@ -318,23 +361,26 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
               connection={find(site.id, "github_repository")}
               connect={<RepositoryConnect siteId={site.id} appReady={githubAppReady} />}
               extra={
-                githubAppReady &&
-                find(site.id, "github_repository")?.provider_key === "github_pat" ? (
-                  <details className="mt-3">
-                    <summary className={`${button.quiet} cursor-pointer list-none`}>
-                      Switch to the GitHub App
-                    </summary>
-                    <p className="mt-2 text-pretty text-[13px] text-ink-soft">
-                      Deploys keep using the stored token until the install finishes, and the
-                      token is destroyed once it does.
-                    </p>
-                    <div className="mt-3">
-                      <GitHubAppForm
-                        siteId={site.id}
-                        previous={find(site.id, "github_repository")}
-                      />
-                    </div>
-                  </details>
+                githubAppReady ? (
+                  <form action={connectGitHubAction} className="mt-3">
+                    <input type="hidden" name="site_id" value={site.id} />
+                    {find(site.id, "github_repository")?.provider_key === "github_pat" ? (
+                      <p className="mb-2 text-pretty text-[13px] text-ink-soft">
+                        This site deploys with a stored token. Sign in with GitHub instead and
+                        the token is destroyed once you pick the repository.
+                      </p>
+                    ) : null}
+                    <button
+                      type="submit"
+                      className={button.quiet}
+                      data-tip="Sign in with GitHub and pick a different repository. The current one keeps working until you do."
+                      aria-describedby="tip-ecc80da013"
+                    >
+                      {find(site.id, "github_repository")?.provider_key === "github_pat"
+                        ? "Switch to GitHub sign-in"
+                        : "Change repository"}
+                    </button>
+                  </form>
                 ) : null
               }
             />
@@ -357,12 +403,12 @@ export default async function ConnectorsPage({searchParams}: PageProps) {
         </a>{" "}
         or{" "}
         <a
-          href="https://github.com/settings/personal-access-tokens"
+          href="https://github.com/settings/installations"
           className={button.quiet}
           target="_blank"
           rel="noreferrer"
         >
-          your GitHub tokens
+          your GitHub installed apps
         </a>
         .
       </Note>
@@ -701,12 +747,8 @@ function RepositoryConnect({siteId, appReady}: {siteId: string; appReady: boolea
     return (
       <>
         <p className="mb-3 text-pretty text-[13px] text-ink-soft">
-          Add a GitHub App under{" "}
-          <Link href="/settings/keys" className={button.quiet}>
-            Keys
-          </Link>{" "}
-          to connect a repository in one step, with no token to copy. Until then, an access
-          token works.
+          GitHub sign-in is not set up on this deployment yet. Until it is, an access token
+          works.
         </p>
         <RepositoryForm siteId={siteId} />
       </>
@@ -714,7 +756,21 @@ function RepositoryConnect({siteId, appReady}: {siteId: string; appReady: boolea
   }
   return (
     <>
-      <GitHubAppForm siteId={siteId} />
+      <form action={connectGitHubAction} className="flex flex-wrap items-center gap-3">
+        <input type="hidden" name="site_id" value={siteId} />
+        <button
+          type="submit"
+          className={button.primary}
+          data-tip="Sign in with GitHub, then pick this site's repository from a list. No token to copy."
+          aria-describedby="tip-6b68f954a1"
+        >
+          Connect GitHub
+        </button>
+        <p className="text-pretty text-xs text-ink-faint">
+          Sign in with GitHub and pick the repository this site is built from. Your repositories
+          stay private; approved changes arrive as pull requests.
+        </p>
+      </form>
       <details className="mt-4">
         <summary className={`${button.quiet} cursor-pointer list-none`}>
           Use an access token instead
@@ -724,62 +780,5 @@ function RepositoryConnect({siteId, appReady}: {siteId: string; appReady: boolea
         </div>
       </details>
     </>
-  );
-}
-
-function GitHubAppForm({siteId, previous}: {siteId: string; previous?: Connection}) {
-  return (
-    <form action={connectGitHubAppAction}>
-      <input type="hidden" name="site_id" value={siteId} />
-      <p className="text-xs text-ink-faint">
-        Where approved changes are written. Name the repository, then approve the GitHub App
-        on it on GitHub&rsquo;s page. No token is copied or stored.
-      </p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="text-[13px] text-ink">
-          Repository
-          <input
-            name="repository"
-            required
-            autoComplete="off"
-            placeholder="owner/name"
-            defaultValue={previous?.external_account_ref ?? undefined}
-            className={`${inputMono} mt-1`}
-          />
-        </label>
-        <label className="text-[13px] text-ink">
-          Base branch
-          <input
-            name="base_branch"
-            defaultValue={previous?.config_json?.base_branch ?? "main"}
-            autoComplete="off"
-            className={`${inputMono} mt-1`}
-          />
-        </label>
-        <label className="text-[13px] text-ink sm:col-span-2">
-          Path template
-          <input
-            name="path_template"
-            defaultValue={previous?.config_json?.path_template ?? "{path}.html"}
-            autoComplete="off"
-            className={`${inputMono} mt-1`}
-          />
-          <span className="mt-1 block text-xs font-normal text-ink-faint">
-            How a URL path becomes a file path. For{" "}
-            <span className="font-mono">/unscramble-tool</span> stored at{" "}
-            <span className="font-mono">WordKit/unscramble-tool.html</span>, use{" "}
-            <span className="font-mono">{"WordKit/{path}.html"}</span>.
-          </span>
-        </label>
-      </div>
-      <button
-        type="submit"
-        className={`${button.primary} mt-3`}
-        data-tip="Install your GitHub App on the repository this site deploys from."
-        aria-describedby="tip-fdd41a3bf5"
-      >
-        Connect GitHub
-      </button>
-    </form>
   );
 }

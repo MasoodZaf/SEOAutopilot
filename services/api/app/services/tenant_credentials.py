@@ -233,15 +233,52 @@ async def google_oauth_client(
 
 
 class GitHubAppCredential:
-    """The three values a GitHub App install and token exchange need."""
+    """What a GitHub App install, token exchange and sign-in need.
 
-    __slots__ = ("app_id", "app_slug", "private_key", "source")
+    The client pair is the app's OAuth half. It is optional because an app
+    saved before sign-in existed has none; the connect flow refuses with a
+    reason rather than falling back to trusting an installation id.
+    """
 
-    def __init__(self, app_id: str, app_slug: str, private_key: str, source: str) -> None:
+    __slots__ = ("app_id", "app_slug", "client_id", "client_secret", "private_key", "source")
+
+    def __init__(
+        self,
+        app_id: str,
+        app_slug: str,
+        private_key: str,
+        source: str,
+        client_id: str = "",
+        client_secret: str = "",
+    ) -> None:
         self.app_id = app_id
         self.app_slug = app_slug
         self.private_key = private_key
         self.source = source
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+    @property
+    def can_sign_in(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+
+def _platform_github_app(settings: Settings) -> GitHubAppCredential | None:
+    if not settings.github_app_configured:
+        return None
+    assert settings.github_app_id is not None
+    assert settings.github_app_slug is not None
+    assert settings.github_app_private_key is not None
+    return GitHubAppCredential(
+        settings.github_app_id,
+        settings.github_app_slug,
+        settings.github_app_private_key.get_secret_value(),
+        "platform",
+        settings.github_app_client_id or "",
+        settings.github_app_client_secret.get_secret_value()
+        if settings.github_app_client_secret
+        else "",
+    )
 
 
 async def github_app_credential(
@@ -253,6 +290,7 @@ async def github_app_credential(
     predates this was installed against the platform app, and pulling it out
     from under those tenants would break every deployment they have.
     """
+    platform = _platform_github_app(settings)
     if settings.connector_secret_backend == "database_envelope" and (
         settings.connector_secret_encryption_key is not None
     ):
@@ -267,19 +305,24 @@ async def github_app_credential(
             app_id = str(config.get("app_id", ""))
             app_slug = str(config.get("app_slug", ""))
             private_key = str(secret.get("private_key", ""))
+            client_id = str(config.get("client_id", ""))
+            client_secret = str(secret.get("client_secret", ""))
+            if (
+                not client_id
+                and platform is not None
+                and platform.app_id == app_id
+                and platform.can_sign_in
+            ):
+                # The workspace saved the deployment's own app under Keys
+                # before sign-in existed. It is the same app, so its OAuth
+                # half is the same too -- borrowing it is not borrowing
+                # anybody else's credential.
+                client_id, client_secret = platform.client_id, platform.client_secret
             if app_id and app_slug and private_key:
-                return GitHubAppCredential(app_id, app_slug, private_key, "tenant")
-    if settings.github_app_configured:
-        assert settings.github_app_id is not None
-        assert settings.github_app_slug is not None
-        assert settings.github_app_private_key is not None
-        return GitHubAppCredential(
-            settings.github_app_id,
-            settings.github_app_slug,
-            settings.github_app_private_key.get_secret_value(),
-            "platform",
-        )
-    return None
+                return GitHubAppCredential(
+                    app_id, app_slug, private_key, "tenant", client_id, client_secret
+                )
+    return platform
 
 
 class TenantCredentialService:
@@ -361,11 +404,22 @@ class TenantCredentialService:
         app_id: str,
         app_slug: str,
         private_key: str,
+        client_id: str = "",
+        client_secret: str = "",
     ) -> TenantCredential:
         self.context.require(Role.OWNER, Role.ADMIN)
         app_id = app_id.strip()
         app_slug = app_slug.strip()
         private_key = private_key.strip()
+        client_id = client_id.strip()
+        client_secret = client_secret.strip()
+        if bool(client_id) != bool(client_secret):
+            # Half an OAuth client cannot sign anybody in, and would be found
+            # out only when a person is already on GitHub's page.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="github_app_client_incomplete",
+            )
         if not app_id.isdigit():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="github_app_id_invalid"
@@ -388,8 +442,15 @@ class TenantCredentialService:
         credential = await store.put(
             self.context.tenant_id,
             GITHUB_APP,
-            config={"app_id": app_id, "app_slug": app_slug},
-            secret={"private_key": private_key},
+            config={
+                "app_id": app_id,
+                "app_slug": app_slug,
+                **({"client_id": client_id} if client_id else {}),
+            },
+            secret={
+                "private_key": private_key,
+                **({"client_secret": client_secret} if client_secret else {}),
+            },
             created_by=await self._creator(),
         )
         self._audit("tenant_credential.stored", credential.id, {"provider": GITHUB_APP})

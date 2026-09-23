@@ -53,12 +53,20 @@ export async function saveGithubAppAction(formData: FormData): Promise<never> {
   const appId = String(formData.get("app_id") ?? "").trim();
   const appSlug = String(formData.get("app_slug") ?? "").trim();
   const privateKey = String(formData.get("private_key") ?? "").trim();
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const clientSecret = String(formData.get("client_secret") ?? "").trim();
   if (!appId || !appSlug || !privateKey) redirectFresh(`${PAGE}?error=github_app_incomplete`);
 
   try {
     await apiJson("/v1/tenant/credentials/github_app", {
       method: "PUT",
-      body: JSON.stringify({app_id: appId, app_slug: appSlug, private_key: privateKey}),
+      body: JSON.stringify({
+        app_id: appId,
+        app_slug: appSlug,
+        private_key: privateKey,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
     });
   } catch (error) {
     failure(error);

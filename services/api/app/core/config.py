@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     github_app_id: str | None = None
     github_app_slug: str | None = None
     github_app_private_key: SecretStr | None = None
+    # The same app's OAuth half. It identifies the person connecting, so the
+    # repositories offered to them are the ones GitHub says they can push to,
+    # rather than whatever an installation id in a query string reaches.
+    github_app_client_id: str | None = None
+    github_app_client_secret: SecretStr | None = None
     github_app_callback_url: str = "http://localhost:8000/v1/connectors/github/callback"
     # The install-wide deployment target that predates per-site connectors. One
     # repository and one token for every tenant, which is why using it now takes
@@ -147,6 +152,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "GITHUB_APP_ID, GITHUB_APP_SLUG and GITHUB_APP_PRIVATE_KEY must be "
                 "configured together or not at all"
+            )
+        if bool(self.github_app_client_id) != bool(self.github_app_client_secret):
+            raise ValueError(
+                "GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET must be configured together"
+            )
+        if self.github_app_client_id and not self.github_app_configured:
+            raise ValueError(
+                "GITHUB_APP_CLIENT_ID needs GITHUB_APP_ID, GITHUB_APP_SLUG and "
+                "GITHUB_APP_PRIVATE_KEY: the person signs in to the app it identifies"
             )
         if self.github_app_private_key is not None:
             from app.services.github_app import load_private_key

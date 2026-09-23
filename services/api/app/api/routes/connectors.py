@@ -24,10 +24,13 @@ from app.api.schemas import (
     DnsProviderVerificationCreate,
     DnsProviderVerificationEnvelope,
     DnsProviderVerificationRead,
+    GitHubAuthorizationEnvelope,
+    GitHubAuthorizationRead,
     GitHubConnectorCreate,
-    GitHubInstallationEnvelope,
-    GitHubInstallationRead,
-    GitHubRepositoryTarget,
+    GitHubRepositoryChoice,
+    GitHubRepositoryChoices,
+    GitHubRepositorySelect,
+    GitHubSignInCreate,
     GoogleAuthorizationEnvelope,
     GoogleAuthorizationRead,
 )
@@ -37,11 +40,11 @@ from app.db.session import SystemSession, TenantSession
 from app.services.cloudflare_dns import CloudflareDnsHttpClient
 from app.services.connector_secrets import DatabaseEnvelopeSecretStore, decode_encryption_key
 from app.services.connectors import ConnectorOAuthCallbackService, ConnectorService
-from app.services.github_app import GitHubAppClient
+from app.services.github_app import GitHubUserClient
 from app.services.github_connector import (
     GitHubConnectorService,
-    GitHubInstallationCallbackService,
     GitHubRepositoryHttpProbe,
+    GitHubSignInCallbackService,
 )
 from app.services.google_analytics import AnalyticsAdminHttpClient
 from app.services.google_client_check import (
@@ -50,7 +53,11 @@ from app.services.google_client_check import (
     check_google_client,
 )
 from app.services.google_oauth import GoogleOAuthHttpClient
-from app.services.tenant_credentials import github_app_credential, google_oauth_client
+from app.services.tenant_credentials import (
+    GitHubAppCredential,
+    github_app_credential,
+    google_oauth_client,
+)
 
 router = APIRouter(prefix="/v1", tags=["connectors"])
 
@@ -438,48 +445,96 @@ async def create_connector_sync(
 
 
 @router.post(
-    "/sites/{site_id}/connectors/github/installation",
-    response_model=GitHubInstallationEnvelope,
+    "/sites/{site_id}/connectors/github/authorize",
+    response_model=GitHubAuthorizationEnvelope,
     status_code=status.HTTP_201_CREATED,
 )
-async def begin_github_installation(
+async def begin_github_sign_in(
     site_id: UUID,
-    command: GitHubRepositoryTarget,
+    command: GitHubSignInCreate,
     context: TenantContextDependency,
     session: TenantSession,
-) -> GitHubInstallationEnvelope:
-    """Send the tenant to GitHub to install the app on their repository.
+) -> GitHubAuthorizationEnvelope:
+    """Send the person to GitHub to sign in, and to install the app if needed.
 
     Nothing is stored until GitHub sends them back, and no credential passes
-    through this service at any point: the tenant grants the app, and the token
+    through this service at any point: the person grants the app, and the token
     is minted per deployment and never written down.
     """
-    connector, installation_url, expires_at = await GitHubConnectorService(
-        session, context
-    ).begin_app_installation(
-        site_id,
-        command.repository,
-        command.base_branch,
-        command.path_template,
-        get_settings(),
+    settings = get_settings()
+    if not settings.github_connectors_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="github_connector_not_configured",
+        )
+    url, expires_at = await GitHubConnectorService(session, context).begin_sign_in(
+        site_id, settings, install=command.install
     )
-    return GitHubInstallationEnvelope(
-        data=GitHubInstallationRead(
-            connector=ConnectorRead.model_validate(connector),
-            installation_url=installation_url,
-            expires_at=expires_at,
-        ),
+    return GitHubAuthorizationEnvelope(
+        data=GitHubAuthorizationRead(authorization_url=url, expires_at=expires_at),
         meta={"trace_id": context.trace_id},
     )
 
 
+@router.get(
+    "/sites/{site_id}/connectors/github/repositories",
+    response_model=GitHubRepositoryChoices,
+)
+async def list_github_repository_choices(
+    site_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> GitHubRepositoryChoices:
+    """The repositories GitHub said this person can push to, at their last sign-in."""
+    listed, expires_at = await GitHubConnectorService(session, context).repository_choices(
+        site_id
+    )
+    data = [GitHubRepositoryChoice.model_validate(item) for item in listed]
+    return GitHubRepositoryChoices(
+        data=data,
+        expires_at=expires_at,
+        meta={"trace_id": context.trace_id, "count": len(data)},
+    )
+
+
+@router.post(
+    "/sites/{site_id}/connectors/github/repository",
+    response_model=ConnectorRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def choose_github_repository(
+    site_id: UUID,
+    command: GitHubRepositorySelect,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> ConnectorRead:
+    settings = get_settings()
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(30.0)
+    ) as http_client:
+        connector = await GitHubConnectorService(session, context).choose_repository(
+            site_id,
+            command.repository_id,
+            command.base_branch,
+            command.path_template,
+            settings,
+            http_client,
+        )
+    return ConnectorRead.model_validate(connector)
+
+
 @router.get("/connectors/github/callback", include_in_schema=True)
-async def github_installation_callback(
+async def github_callback(
     session: SystemSession,
-    state: str = Query(min_length=32, max_length=256),
-    installation_id: int = Query(gt=0),
-    setup_action: str = Query(default="install", max_length=32),
+    state: str | None = Query(default=None, min_length=32, max_length=256),
+    code: str | None = Query(default=None, min_length=1, max_length=512),
+    setup_action: str | None = Query(default=None, max_length=32),
+    error: str | None = Query(default=None, max_length=64),
 ) -> RedirectResponse:
+    """Where GitHub returns the person, after sign-in or after installing.
+
+    `installation_id` is deliberately not read. Once the app is public anybody
+    can put anybody's installation id in this URL; only the signed-in person's
+    own view of their installations decides what they may connect.
+    """
     settings = get_settings()
     if not settings.github_connectors_enabled:
         raise HTTPException(
@@ -487,40 +542,56 @@ async def github_installation_callback(
             detail="github_connector_callback_not_configured",
         )
     page = f"{settings.app_base_url.rstrip('/')}/settings/connectors"
-    if setup_action not in {"install", "update"}:
-        # A cancelled install returns here too. There is nothing to record,
-        # and the person belongs back on the page they started from.
-        return RedirectResponse(
-            url=f"{page}?error=installation_not_completed",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
+
+    def back(query: str) -> RedirectResponse:
+        return RedirectResponse(url=f"{page}?{query}", status_code=status.HTTP_303_SEE_OTHER)
+
+    if error is not None:
+        # The person pressed Cancel on GitHub's authorize page.
+        return back("error=github_sign_in_cancelled")
+    if setup_action == "request":
+        # An organisation member asked an owner to approve the install.
+        return back("error=github_installation_requested")
+    if state is None:
+        # GitHub returns here without our state after some changes made on its
+        # own settings pages. Nothing can be bound to that; a fresh sign-in
+        # picks up whatever was changed.
+        return back("github=updated")
+
     async with httpx.AsyncClient(
         follow_redirects=False, timeout=httpx.Timeout(30.0)
     ) as http_client:
 
-        async def app_client_for(tenant_id: UUID) -> GitHubAppClient:
+        async def app_for(tenant_id: UUID) -> GitHubAppCredential:
             app = await github_app_credential(session, settings, tenant_id)
             if app is None:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="github_app_not_configured",
                 )
-            return GitHubAppClient(http_client, app.app_id, app.private_key)
+            return app
+
+        def user_client(app: GitHubAppCredential) -> GitHubUserClient:
+            return GitHubUserClient(
+                http_client, app.client_id, app.client_secret, settings.github_app_callback_url
+            )
 
         try:
-            await GitHubInstallationCallbackService(
-                session, app_client_factory=app_client_for
-            ).complete(state, installation_id, secrets.token_hex(16))
+            outcome = await GitHubSignInCallbackService(
+                session,
+                app_factory=app_for,
+                user_client_factory=user_client,
+                settings=settings,
+            ).complete(state, code, secrets.token_hex(16))
         except HTTPException as refusal:
             # Same reasoning as the Google callback: a person is at the end of
             # this redirect, and a JSON body at an API URL gives them no way
             # back. Only refusals are redirected; a 500 still raises.
             detail = refusal.detail if isinstance(refusal.detail, str) else "connector_refused"
-            return RedirectResponse(
-                url=f"{page}?error={quote(detail, safe='')}",
-                status_code=status.HTTP_303_SEE_OTHER,
-            )
-    return RedirectResponse(url=f"{page}?github=connected", status_code=status.HTTP_303_SEE_OTHER)
+            return back(f"error={quote(detail, safe='')}")
+    if outcome.redirect_url is not None:
+        return RedirectResponse(url=outcome.redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+    return back(f"github=choose&site={outcome.site_id}")
 
 
 @router.post(

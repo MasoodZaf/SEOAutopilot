@@ -530,15 +530,63 @@ class GitHubConnectorCreate(GitHubRepositoryTarget):
     access_token: SecretStr = Field(min_length=20, max_length=4096)
 
 
-class GitHubInstallationRead(BaseModel):
-    connector: ConnectorRead
-    installation_url: str
+class GitHubSignInCreate(BaseModel):
+    # True sends the person to GitHub's install page first, to add a
+    # repository the app cannot reach yet; false is a plain sign-in.
+    install: bool = False
+
+
+class GitHubAuthorizationRead(BaseModel):
+    authorization_url: str
     expires_at: datetime
 
 
-class GitHubInstallationEnvelope(BaseModel):
-    data: GitHubInstallationRead
+class GitHubAuthorizationEnvelope(BaseModel):
+    data: GitHubAuthorizationRead
     meta: dict[str, str]
+
+
+class GitHubRepositoryChoice(BaseModel):
+    """A repository the signed-in person can push to, offered in the picker."""
+
+    id: int
+    full_name: str
+    default_branch: str
+    private: bool
+    account: str
+
+
+class GitHubRepositoryChoices(BaseModel):
+    data: list[GitHubRepositoryChoice]
+    expires_at: datetime | None
+    meta: dict[str, str | int]
+
+
+class GitHubRepositorySelect(BaseModel):
+    """The picked repository, by GitHub's numeric id -- a name can be reused."""
+
+    repository_id: int = Field(gt=0)
+    base_branch: str = Field(default="", max_length=200)
+    path_template: str = Field(default="{path}.html", min_length=1, max_length=200)
+
+    @field_validator("base_branch")
+    @classmethod
+    def branch_or_default(cls, value: str) -> str:
+        # Blank means "the repository's own default branch", resolved from
+        # what GitHub reported when the person signed in.
+        branch = value.strip()
+        if branch and (
+            branch.startswith("-") or any(character in branch for character in " ~^:?*[\\")
+        ):
+            raise ValueError("base_branch is not a valid git ref")
+        return branch
+
+    @field_validator("path_template")
+    @classmethod
+    def safe_template(cls, value: str) -> str:
+        from app.services.github_connector import normalize_path_template
+
+        return normalize_path_template(value)
 
 
 class DnsProviderConnectorCreate(BaseModel):
@@ -1496,6 +1544,11 @@ class GitHubAppCreate(BaseModel):
     app_id: str = Field(min_length=1, max_length=32)
     app_slug: str = Field(min_length=1, max_length=100)
     private_key: SecretStr
+    # The app's OAuth half, which signs the connecting person in so only the
+    # repositories they can push to are offered. Optional for an app saved
+    # before sign-in existed; the connect flow refuses without it.
+    client_id: str = Field(default="", max_length=100)
+    client_secret: SecretStr = Field(default=SecretStr(""), max_length=200)
 
 
 class TenantCredentialRead(BaseModel):

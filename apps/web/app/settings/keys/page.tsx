@@ -32,6 +32,7 @@ const REASONS: Record<string, string> = {
   google_client_unknown:
     "Google does not recognise that client ID. Check it was copied whole from the OAuth client you mean to use, and that the client has not been deleted.",
   github_app_incomplete: "Enter the app ID, the app slug and the private key.",
+  github_app_client_incomplete: "Enter both the client ID and the client secret, or neither.",
   github_app_id_invalid: "The GitHub app ID is a number, shown on the app's settings page.",
   github_app_slug_invalid: "Enter the app slug — the last part of the app's public URL.",
   github_app_private_key_invalid:
@@ -266,11 +267,13 @@ export default async function KeysPage({searchParams}: PageProps) {
               GitHub App
             </h2>
             <p className="mt-1 text-sm text-ink-soft">
-              Used to open the pull requests that carry an approved change. Register a GitHub
-              App under your own account or organisation with{" "}
+              Optional. <strong className="font-medium">Connect GitHub</strong> under
+              Connections uses this deployment&rsquo;s app, and you only sign in and pick a
+              repository. Register your own app only if your organisation will not install a
+              third-party one. It needs{" "}
               <strong className="font-medium">Contents: read &amp; write</strong> and{" "}
-              <strong className="font-medium">Pull requests: read &amp; write</strong>. No token
-              is ever stored — an installation token is minted per deployment and discarded.
+              <strong className="font-medium">Pull requests: read &amp; write</strong>, and the
+              URL below as both its Callback URL and its Setup URL. No token is ever stored.
             </p>
           </div>
           {github ? <SourceBadge source={github.source} /> : null}
@@ -289,7 +292,7 @@ export default async function KeysPage({searchParams}: PageProps) {
         ) : null}
 
         <Callback
-          label="Callback URL — paste this into the GitHub App exactly"
+          label="Callback URL and Setup URL — paste this into the GitHub App exactly"
           value={callbacks.github_app}
         />
 
@@ -328,6 +331,26 @@ export default async function KeysPage({searchParams}: PageProps) {
               className={`${field} font-mono text-xs`}
             aria-describedby="tip-2fee17e010"/>
           </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="Shown on your GitHub App's settings page, under About.">
+              Client ID
+              <input
+                name="client_id"
+                autoComplete="off"
+                placeholder="Iv23li..."
+                className={field}
+              aria-describedby="tip-c43e3ddcbe"/>
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium text-ink" data-tip="Generate one under Client secrets on the same page. It lets people sign in so only repositories they can push to are offered.">
+              Client secret
+              <input
+                name="client_secret"
+                type="password"
+                autoComplete="off"
+                className={field}
+              aria-describedby="tip-315c078734"/>
+            </label>
+          </div>
           <button type="submit" className={submit}>
             {github?.source === "tenant" ? "Replace GitHub App" : "Save GitHub App"}
           </button>

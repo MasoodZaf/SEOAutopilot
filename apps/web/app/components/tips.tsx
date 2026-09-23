@@ -23,6 +23,10 @@
 export function TipDescriptions() {
   return (
     <div className="sr-only" aria-hidden={false}>
+      <span id="tip-ecc80da013">{"Sign in with GitHub and pick a different repository. The current one keeps working until you do."}</span>
+      <span id="tip-6b68f954a1">{"Sign in with GitHub, then pick this site's repository from a list. No token to copy."}</span>
+      <span id="tip-c43e3ddcbe">{"Shown on your GitHub App's settings page, under About."}</span>
+      <span id="tip-315c078734">{"Generate one under Client secrets on the same page. It lets people sign in so only repositories they can push to are offered."}</span>
       <span id="tip-26b5b277ea">{"Add a domain you control and prove it with a DNS record."}</span>
       <span id="tip-6f07753cce">{"Apply the selected mode. Recorded with your reason; nothing publishes without approval unless you chose autopilot."}</span>
       <span id="tip-e68345520a">{"Authorise Google Analytics 4 for this site through your own Google OAuth client."}</span>
@@ -36,7 +40,6 @@ export function TipDescriptions() {
       <span id="tip-ebe4f0342d">{"From your own Google Cloud OAuth client. Ends in .apps.googleusercontent.com — not the project number and not an API key."}</span>
       <span id="tip-8dcda9ad6f">{"How far this site may go on its own. Observe measures only; recommend drafts proposals for approval; autopilot deploys unattended."}</span>
       <span id="tip-a909e65d70">{"How many different people must approve a change before it can deploy. An author can never approve their own."}</span>
-      <span id="tip-fdd41a3bf5">{"Install your GitHub App on the repository this site deploys from."}</span>
       <span id="tip-76c147b8df">{"Invite this address into this workspace. They join on their next sign-in and can see everything in it."}</span>
       <span id="tip-ad2bc41307">{"Issue a fresh verification token. The previous record stops working immediately."}</span>
       <span id="tip-e2ae7396fa">{"Issue a verification token for this domain and show the TXT record to publish."}</span>

@@ -220,7 +220,12 @@ async def put_github_app(
     settings = get_settings()
     store = store_for(session, settings)
     credential = await TenantCredentialService(session, context).upsert_github_app(
-        store, command.app_id, command.app_slug, command.private_key.get_secret_value()
+        store,
+        command.app_id,
+        command.app_slug,
+        command.private_key.get_secret_value(),
+        command.client_id,
+        command.client_secret.get_secret_value(),
     )
     return TenantCredentialRead(
         provider=GITHUB_APP,
