@@ -166,3 +166,95 @@ export async function updateBriefStatus(formData: FormData): Promise<never> {
   }
   redirectFresh(`${back}?updated=${status}`);
 }
+
+const PROVIDERS = new Set(["anthropic", "openai"]);
+const UUID = /^[0-9a-f-]{36}$/i;
+
+/** Ask for an AI draft of a new-post brief. Returns to the draft's page. */
+export async function requestDraft(formData: FormData): Promise<never> {
+  const briefId = String(formData.get("brief_id") ?? "");
+  const provider = String(formData.get("provider") ?? "");
+  const authorName = String(formData.get("author_name") ?? "").trim().slice(0, 120);
+  const idempotencyKey = String(formData.get("idempotency_key") ?? "");
+  if (!UUID.test(briefId) || !PROVIDERS.has(provider) || idempotencyKey.length < 8) {
+    redirectFresh("/pilot/workspace?error=invalid_draft_request");
+  }
+  const back = `/pilot/workspace/briefs/${briefId}`;
+  let draftId = "";
+  try {
+    const created = await apiJson<{data: {id: string}}>(`/v1/content-briefs/${briefId}/drafts`, {
+      method: "POST",
+      body: JSON.stringify({provider, author_name: authorName, idempotency_key: idempotencyKey}),
+    });
+    draftId = created.data.id;
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code)}`);
+    throw error;
+  }
+  redirectFresh(`/pilot/workspace/drafts/${draftId}`);
+}
+
+/**
+ * Save a reviewer's edits and flag resolutions.
+ *
+ * A flag is resolved by ticking it and saying how: verified, corrected or
+ * removed. The note is kept with the draft, so an approver can see what was
+ * checked rather than only that something was.
+ */
+export async function saveDraft(formData: FormData): Promise<never> {
+  const draftId = String(formData.get("draft_id") ?? "");
+  const version = Number(formData.get("version") ?? 0);
+  if (!UUID.test(draftId) || !Number.isInteger(version) || version < 1) {
+    redirectFresh("/pilot/workspace?error=invalid_draft_update");
+  }
+  const back = `/pilot/workspace/drafts/${draftId}`;
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith("resolve:") && value === "on") {
+      const id = key.slice("resolve:".length);
+      const note = String(formData.get(`note:${id}`) ?? "").trim().slice(0, 300);
+      resolved[id] = note || "Checked";
+    }
+  }
+  // Browsers submit textarea text with CRLF line endings. Stored as-is, every
+  // line of an edited post differs from the model's LF original by a
+  // trailing \r, and the diff reports the whole post as rewritten.
+  const text = (name: string, max: number) => {
+    const value = formData.get(name);
+    return typeof value === "string" ? value.replace(/\r\n?/g, "\n").slice(0, max) : undefined;
+  };
+  try {
+    await apiJson(`/v1/content-drafts/${draftId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        version,
+        title: text("title", 200),
+        slug: text("slug", 80),
+        meta_description: text("meta_description", 320),
+        body_markdown: text("body_markdown", 60000),
+        author_name: text("author_name", 120),
+        resolved_flags: resolved,
+      }),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code)}`);
+    throw error;
+  }
+  redirectFresh(`${back}?saved=1`);
+}
+
+export async function withdrawDraft(formData: FormData): Promise<never> {
+  const draftId = String(formData.get("draft_id") ?? "");
+  if (!UUID.test(draftId)) redirectFresh("/pilot/workspace?error=invalid_draft_update");
+  const back = `/pilot/workspace/drafts/${draftId}`;
+  try {
+    await apiJson(`/v1/content-drafts/${draftId}/withdraw`, {method: "POST"});
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code)}`);
+    throw error;
+  }
+  redirectFresh(`${back}?withdrawn=1`);
+}

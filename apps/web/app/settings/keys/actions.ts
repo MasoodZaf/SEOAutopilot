@@ -84,3 +84,27 @@ export async function revokeCredentialAction(formData: FormData): Promise<never>
   }
   redirectFresh(`${PAGE}?revoked=${encodeURIComponent(provider)}`);
 }
+
+const AI_PROVIDERS = new Set(["anthropic_api_key", "openai_api_key"]);
+
+/**
+ * Store a key this workspace's AI blog drafts are written with.
+ *
+ * Bring-your-own-key: drafting never falls back to a deployment key, so a
+ * workspace without one simply cannot request drafts from that provider.
+ */
+export async function saveAiKeyAction(formData: FormData): Promise<never> {
+  const provider = String(formData.get("provider") ?? "");
+  const apiKey = String(formData.get("api_key") ?? "").trim();
+  if (!AI_PROVIDERS.has(provider)) redirectFresh(`${PAGE}?error=unexpected-error`);
+  if (!apiKey) redirectFresh(`${PAGE}?error=${provider}_invalid`);
+  try {
+    await apiJson(`/v1/tenant/credentials/${provider}`, {
+      method: "PUT",
+      body: JSON.stringify({api_key: apiKey}),
+    });
+  } catch (error) {
+    failure(error);
+  }
+  redirectFresh(`${PAGE}?saved=${provider}`);
+}

@@ -1,12 +1,13 @@
 import type {Metadata} from "next";
+import {randomUUID} from "node:crypto";
 import Link from "next/link";
 import {notFound, redirect} from "next/navigation";
 
 import {Badge, button, Field, input, Note, Panel, type Tone} from "@/app/components/ui";
 import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
-import {updateBriefStatus} from "../../actions";
-import type {BriefSection, ContentBriefDetail, KeywordMember} from "../../model";
+import {requestDraft, updateBriefStatus} from "../../actions";
+import type {BriefSection, ContentBriefDetail, ContentDraftSummary, KeywordMember} from "../../model";
 import {workspacePath} from "../../paths";
 
 export const metadata: Metadata = {
@@ -46,7 +47,18 @@ const ERRORS: Record<string, string> = {
   content_brief_transition_not_allowed: "That change is not allowed from the brief's current state. Reload and try again.",
   insufficient_permissions_for_brief: "Your role cannot change briefs. An owner, admin, SEO manager or editor can.",
   content_brief_not_found: "This brief no longer exists. The briefs may have been regenerated.",
+  anthropic_key_not_configured: "This workspace has no Anthropic key. Add one under Settings → Keys.",
+  openai_key_not_configured: "This workspace has no OpenAI key. Add one under Settings → Keys.",
+  content_draft_budget_exhausted: "This month's drafting budget is spent. It resets on the 1st.",
+  content_draft_already_live: "A draft of this brief is already being written or reviewed.",
+  content_brief_dismissed: "Restore the brief before drafting it.",
+  insufficient_permissions_for_content_draft: "Your role cannot request drafts. An owner, admin, SEO manager or editor can.",
 };
+
+const AI_PROVIDERS = [
+  {id: "anthropic", credential: "anthropic_api_key", label: "Claude (Anthropic)"},
+  {id: "openai", credential: "openai_api_key", label: "OpenAI"},
+] as const;
 
 /** The moves a person can make from each state, in the order they are offered. */
 const MOVES: Record<string, {status: string; label: string; primary?: boolean}[]> = {
@@ -83,7 +95,30 @@ async function load(briefId: string) {
       // rebuilt since still has a readable plan.
       members = [];
     }
-    return {brief, host, members};
+    // Drafting is bring-your-own-key: offer only the providers this
+    // workspace has stored a key for.
+    let aiProviders: string[] = [];
+    let drafts: ContentDraftSummary[] = [];
+    if (brief.kind === "new_page") {
+      try {
+        const credentials = (
+          await apiJson<{data: {provider: string; source: string}[]}>("/v1/tenant/credentials")
+        ).data;
+        aiProviders = AI_PROVIDERS.filter((item) =>
+          credentials.some((row) => row.provider === item.credential && row.source === "tenant"),
+        ).map((item) => item.id);
+      } catch {
+        aiProviders = [];
+      }
+      try {
+        drafts = (
+          await apiJson<{data: ContentDraftSummary[]}>(`/v1/sites/${brief.site_id}/content-drafts?limit=50`)
+        ).data.filter((draft) => draft.content_brief_id === brief.id);
+      } catch {
+        drafts = [];
+      }
+    }
+    return {brief, host, members, aiProviders, drafts};
   } catch (error) {
     if (isMissingTenant(error)) redirect("/onboarding");
     if (error instanceof ApiError && error.status === 404) notFound();
@@ -131,7 +166,8 @@ function Section({section}: {section: BriefSection}) {
 export default async function BriefPage({params, searchParams}: PageProps) {
   const {briefId} = await params;
   const {error, updated} = await searchParams;
-  const {brief, host, members} = await load(briefId);
+  const {brief, host, members, aiProviders, drafts} = await load(briefId);
+  const liveDraft = drafts.find((draft) => ["queued", "running", "ready"].includes(draft.status));
 
   const isNewPost = brief.kind === "new_page";
   const questions = members.filter((member) => member.is_question);
@@ -280,7 +316,70 @@ export default async function BriefPage({params, searchParams}: PageProps) {
           </section>
         </div>
 
-        <aside aria-labelledby="decide-heading" className="lg:sticky lg:top-24 lg:self-start">
+        <aside aria-labelledby="decide-heading" className="flex flex-col gap-4 lg:sticky lg:top-24 lg:self-start">
+          {isNewPost && brief.status !== "dismissed" ? (
+            <Panel className="p-6">
+              <h2 className="font-display text-[17px] font-medium tracking-tight text-ink">Write a draft</h2>
+              {liveDraft ? (
+                <>
+                  <p className="mt-2 text-[13px] leading-6 text-pretty text-ink-soft">
+                    A draft of this brief is {liveDraft.status === "ready" ? "waiting for review" : "being written"}.
+                  </p>
+                  <Link href={`/pilot/workspace/drafts/${liveDraft.id}`} className={`${button.primary} mt-4 w-full`}>
+                    Open the draft
+                  </Link>
+                </>
+              ) : aiProviders.length ? (
+                <form action={requestDraft} className="mt-3 flex flex-col gap-3">
+                  <p className="text-[13px] leading-6 text-pretty text-ink-soft">
+                    An AI writes a first draft from this plan, using your workspace&rsquo;s own key. You review
+                    and fact-check it before anything goes further.
+                  </p>
+                  <input type="hidden" name="brief_id" value={brief.id} />
+                  <input type="hidden" name="idempotency_key" value={randomUUID()} />
+                  <fieldset className="flex flex-col gap-2">
+                    <legend className="mb-1 text-[13px] font-medium text-ink">Write it with</legend>
+                    {AI_PROVIDERS.filter((item) => aiProviders.includes(item.id)).map((item, index) => (
+                      <label key={item.id} className="flex items-center gap-2 text-[13px] text-ink">
+                        <input
+                          type="radio"
+                          name="provider"
+                          value={item.id}
+                          defaultChecked={index === 0}
+                          className="accent-[var(--accent)]"
+                        />
+                        {item.label}
+                      </label>
+                    ))}
+                  </fieldset>
+                  <Field label="Author" hint="The person the post will be published under.">
+                    <input id="draft-author-name" name="author_name" maxLength={120} placeholder="Your name" className={input} />
+                  </Field>
+                  <button type="submit" className={`${button.primary} w-full`}>Write a draft</button>
+                </form>
+              ) : (
+                <p className="mt-2 text-[13px] leading-6 text-pretty text-ink-soft">
+                  Drafting uses your workspace&rsquo;s own AI key. Add an Anthropic or OpenAI key under{" "}
+                  <Link href="/settings/keys" className="text-accent underline underline-offset-4">Settings → Keys</Link>{" "}
+                  to turn it on.
+                </p>
+              )}
+              {drafts.filter((draft) => draft.id !== liveDraft?.id).length ? (
+                <ul className="mt-4 flex flex-col gap-1 border-t border-rule pt-3 text-[12px]">
+                  {drafts
+                    .filter((draft) => draft.id !== liveDraft?.id)
+                    .map((draft) => (
+                      <li key={draft.id} className="flex justify-between gap-2">
+                        <Link href={`/pilot/workspace/drafts/${draft.id}`} className="truncate text-ink-soft underline-offset-4 hover:underline">
+                          {draft.title ?? "Untitled draft"}
+                        </Link>
+                        <span className="shrink-0 font-mono text-ink-faint">{draft.status}</span>
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
+            </Panel>
+          ) : null}
           <Panel className="p-6">
             <h2 id="decide-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
               Your decision

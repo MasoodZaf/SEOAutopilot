@@ -134,3 +134,39 @@ export type AiVisibility = {
   citation_source: string;
   factors_json: Record<string, unknown>;
 };
+
+export type DraftFlag = {
+  id: string;
+  kind: "claim" | "figure" | "link" | "overlap" | string;
+  text: string;
+  detail?: string;
+  resolved: boolean;
+  resolution?: string | null;
+};
+
+export type ContentDraftSummary = {
+  id: string;
+  site_id: string;
+  content_brief_id: string;
+  status: "queued" | "running" | "ready" | "failed" | "submitted" | "withdrawn";
+  title: string | null;
+  slug: string | null;
+  error_code: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ContentDraftDetail = ContentDraftSummary & {
+  meta_description: string | null;
+  body_markdown: string | null;
+  author_name: string | null;
+  flags_json: DraftFlag[];
+  generated_json: {title?: string; meta_description?: string; body_markdown?: string} | null;
+  provider: "anthropic" | "openai";
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cost_micros: number;
+  proposal_id: string | null;
+};

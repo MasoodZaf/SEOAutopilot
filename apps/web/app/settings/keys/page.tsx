@@ -4,7 +4,7 @@ import type {Metadata} from "next";
 import {GoogleClientGuide} from "@/app/components/google-client-guide";
 import {apiJson, isMissingTenant} from "@/lib/server-api";
 
-import {revokeCredentialAction, saveGithubAppAction, saveGoogleClientAction} from "./actions";
+import {revokeCredentialAction, saveAiKeyAction, saveGithubAppAction, saveGoogleClientAction} from "./actions";
 
 type PageProps = {
   searchParams: Promise<{saved?: string; revoked?: string; error?: string; created?: string}>;
@@ -23,6 +23,10 @@ type Credential = {
 };
 
 const REASONS: Record<string, string> = {
+  anthropic_api_key_invalid:
+    "That is not an Anthropic API key. It starts with sk-ant- and comes from console.anthropic.com.",
+  openai_api_key_invalid:
+    "That is not an OpenAI API key. It starts with sk- (not sk-ant-) and comes from platform.openai.com.",
   google_client_incomplete: "Enter both the client ID and the client secret.",
   google_client_id_invalid:
     "That does not look like an OAuth client ID. It ends in .apps.googleusercontent.com — the project number and the API key are different values.",
@@ -147,7 +151,11 @@ export default async function KeysPage({searchParams}: PageProps) {
           Saved. Anything you connect from now on uses it.
         </p>
       ) : null}
-      {query.revoked ? (
+      {query.revoked === "anthropic_api_key" || query.revoked === "openai_api_key" ? (
+        <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
+          Removed. Drafts can no longer be written with that provider until a key is stored again.
+        </p>
+      ) : query.revoked ? (
         <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
           Removed. This workspace is back on the deployment&rsquo;s shared client. A refresh
           token issued by your own client cannot be renewed by a different one, so each Google
@@ -367,6 +375,78 @@ export default async function KeysPage({searchParams}: PageProps) {
             </button>
           </form>
         ) : null}
+      </section>
+
+      <section
+        aria-labelledby="ai-heading"
+        className="flex flex-col gap-4 rounded-xl border border-rule bg-surface p-5"
+      >
+        <div>
+          <h2 id="ai-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
+            AI keys for blog drafts
+          </h2>
+          <p className="mt-1 text-sm text-pretty text-ink-soft">
+            Used for one thing only: writing first drafts of blog posts from your content briefs.
+            Drafts are written with, and billed to, the key you store here &mdash; there is no
+            shared key, so without one of these drafting is simply off. Store either or both; you
+            choose which writes each draft. Every draft is reviewed and approved by a person before
+            anything is published.
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {(
+            [
+              {provider: "anthropic_api_key", name: "Anthropic (Claude)", where: "console.anthropic.com", placeholder: "sk-ant-..."},
+              {provider: "openai_api_key", name: "OpenAI", where: "platform.openai.com", placeholder: "sk-..."},
+            ] as const
+          ).map((item) => {
+            const stored = find(credentials, item.provider);
+            const mine = stored?.source === "tenant";
+            const suffix = typeof stored?.config.key_suffix === "string" ? stored.config.key_suffix : null;
+            return (
+              <div key={item.provider} className="flex flex-col gap-3 rounded-xl border border-rule bg-paper p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-ink">{item.name}</h3>
+                  <SourceBadge source={mine ? "tenant" : "none"} />
+                </div>
+                {mine && suffix ? (
+                  <p className="font-mono text-xs text-ink-soft">Key ending &hellip;{suffix}</p>
+                ) : (
+                  <p className="text-xs text-ink-faint">Create a key at {item.where}.</p>
+                )}
+                <form action={saveAiKeyAction} className="flex flex-col gap-2">
+                  <input type="hidden" name="provider" value={item.provider} />
+                  <label className="flex flex-col gap-1 text-sm font-medium text-ink">
+                    API key
+                    <input
+                      id={`${item.provider}-input`}
+                      name="api_key"
+                      type="password"
+                      required
+                      autoComplete="off"
+                      placeholder={item.placeholder}
+                      className={`${field} font-mono`}
+                    />
+                  </label>
+                  <button type="submit" className={submit}>
+                    {mine ? "Replace key" : "Save key"}
+                  </button>
+                </form>
+                {mine ? (
+                  <form action={revokeCredentialAction}>
+                    <input type="hidden" name="provider" value={item.provider} />
+                    <button
+                      type="submit"
+                      className="text-sm font-medium text-stop underline underline-offset-2 hover:text-stop"
+                    >
+                      Remove this key
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <section className="rounded-xl border border-rule bg-sunk p-5">
