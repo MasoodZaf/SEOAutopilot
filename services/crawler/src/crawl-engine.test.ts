@@ -118,3 +118,20 @@ test("progress counts pages as they are fetched and names no URL",async()=>{
   assert.ok(seenMidway.includes(1));
   assert.ok(!JSON.stringify(progress).includes("progress.example"));
 });
+
+test("a rendered page records what the server sent before scripts ran",async()=>{
+  const shell="<html><head><title>3Sum</title></head><body><noscript>Please enable JavaScript to use CodeArc.</noscript><div id='root'></div><script src='/app.js'></script></body></html>";
+  const rendered:FetchedResource={...resource("https://shell.example/","<html><head><title>3Sum</title></head><body><h1>3Sum</h1><p>Given an integer array nums, return all the triplets that sum to zero.</p></body></html>","text/html"),rendered:true,serverBody:shell};
+  const plain=resource("https://shell.example/plain","<html><body><p>Served whole</p></body></html>","text/html");
+  const responses=new Map<string,FetchedResource>([
+    ["https://shell.example/robots.txt",resource("https://shell.example/robots.txt","","text/plain")],
+    ["https://shell.example/",{...rendered,body:rendered.body.replace("</p>","</p><a href='/plain'>Plain</a>")}],
+    ["https://shell.example/plain",plain],
+  ]);
+  const fetcher:FetchResource=async url=>{const found=responses.get(url.toString());if(!found)throw new Error(`unexpected:${url}`);return found};
+  const result=await crawlSite("https://shell.example",10,fetcher);
+  const [home,served]=result.observations;
+  assert.equal(home?.serverWordCount,0);
+  assert.ok((home?.wordCount ?? 0)>10);
+  assert.equal(served?.serverWordCount,null);
+});

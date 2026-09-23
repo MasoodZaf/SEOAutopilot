@@ -31,6 +31,7 @@ function readVisibleText(fragment: Fragment): string {
   return copy.text().replace(/\s+/g, " ").trim();
 }
 
+const countWords = (text: string): number => (text ? text.split(" ").length : 0);
 
 const MAX_LINKS_PER_PAGE = 5_000;
 type RobotsPolicy = {isAllowed(url: string, userAgent?: string): boolean | undefined};
@@ -258,7 +259,10 @@ export async function crawlSite(
       title: $("title").first().text().trim() || null,
       metaDescription: $('meta[name="description"]').attr("content")?.trim() || null,
       h1: $("h1").toArray().map(element => readVisibleText($(element))).filter(Boolean),
-      wordCount: text ? text.split(" ").length : 0,
+      wordCount: countWords(text),
+      serverWordCount: resource.rendered && resource.serverBody !== undefined
+        ? countWords(readVisibleText(load(resource.serverBody)("body")))
+        : null,
       contentHash: createHash("sha256").update(text).digest("hex"),
       rendered: resource.rendered,
       canonicalUrl: resolveCanonical($('link[rel~="canonical"]').first().attr("href"), finalBase),

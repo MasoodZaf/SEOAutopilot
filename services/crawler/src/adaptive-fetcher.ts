@@ -217,6 +217,7 @@ export function createAdaptiveFetcher(
         contentType: response?.headers()["content-type"] ?? resource.contentType,
         body,
         rendered: true,
+        serverBody: resource.body,
       };
     } finally {
       await context.close();

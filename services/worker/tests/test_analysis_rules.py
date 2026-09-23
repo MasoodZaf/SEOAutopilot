@@ -282,3 +282,37 @@ def test_the_finding_names_the_word_the_author_wrote_not_its_stem() -> None:
     raised = next(f for f in findings if f.code == "content.title_omits_url_topic")
     assert "'calculator'" in raised.summary
     assert "calculat'" not in raised.summary.replace("calculator'", "")
+
+
+def rendering_codes(**page: object) -> list[str]:
+    _, findings = evaluate_multiagent_page(multiagent_evidence(page=page_evidence(**page)))
+    return [finding.code for finding in findings if finding.code.startswith("rendering.")]
+
+
+def test_a_page_that_only_exists_after_javascript_is_reported_with_both_counts() -> None:
+    # codearc.net's shape: the HTML says "Please enable JavaScript", the
+    # browser produces a full challenge.
+    _, findings = evaluate_multiagent_page(
+        multiagent_evidence(page=page_evidence(word_count=261, server_word_count=6))
+    )
+    [finding] = [f for f in findings if f.code == "rendering.content_requires_javascript"]
+    assert finding.severity == "high"
+    assert finding.risk == "high"
+    assert "6 of its 261 words" in finding.summary
+
+
+def test_a_page_that_was_not_rendered_is_never_reported() -> None:
+    assert rendering_codes(word_count=500, server_word_count=None) == []
+
+
+def test_server_html_carrying_the_substance_is_not_reported() -> None:
+    # Scripts adding a widget to a page that is already there.
+    assert rendering_codes(word_count=500, server_word_count=400) == []
+    assert rendering_codes(word_count=500, server_word_count=100) == []
+    assert rendering_codes(word_count=500, server_word_count=99) == [
+        "rendering.content_requires_javascript"
+    ]
+
+
+def test_a_page_short_in_both_forms_is_thin_not_client_rendered() -> None:
+    assert rendering_codes(word_count=60, server_word_count=0) == []

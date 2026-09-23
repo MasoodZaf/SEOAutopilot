@@ -20,6 +20,9 @@ class PageEvidence:
     # An H1 is only meaningful relative to the rest of the site, so the count
     # has to be measured across the crawl and handed in.
     pages_sharing_h1: int = 1
+    # Words in the server's HTML before any script ran, when the crawler had to
+    # render the page to see it. None means it was not rendered.
+    server_word_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +139,21 @@ URL_TOPIC_STOPWORDS = frozenset(
 )
 MIN_URL_TOPIC_LENGTH = 4
 
+# A page whose content only appears once JavaScript runs. Google renders such
+# pages, but in a later pass and only if every script succeeds for its
+# renderer; crawlers that do not run scripts -- the ones behind AI answer
+# engines among them -- see only the shell. The floor keeps a page that is
+# short in both forms out of it, and the share keeps out a page whose server
+# HTML carries the substance and whose scripts only add to it.
+JS_ONLY_MIN_RENDERED_WORDS = 100
+JS_ONLY_MAX_SERVER_SHARE = 0.2
+
+
+def content_requires_javascript(page: PageEvidence) -> bool:
+    if page.server_word_count is None or page.word_count < JS_ONLY_MIN_RENDERED_WORDS:
+        return False
+    return page.server_word_count < page.word_count * JS_ONLY_MAX_SERVER_SHARE
+
 
 def tokenize_text(text: str) -> set[str]:
     return set(re.findall(r"\b[a-zA-Z0-9]{3,}\b", text.lower()))
@@ -234,6 +252,18 @@ def evaluate_multiagent_page(evidence: MultiAgentPageEvidence) -> tuple[int, lis
         add("canonical.missing", "low", "The page has no valid canonical URL.", (0.50, 0.95, 0.65, 0.35, "medium"), "technical")
     if "noindex" in page.robots_directives:
         add("robots.noindex", "medium", "The page asks search engines not to index it; confirm intent.", (0.80, 0.95, 0.85, 0.35, "medium"), "technical")
+    if content_requires_javascript(page):
+        # High risk because the fix is how the whole site is built -- server
+        # rendering or prerendering -- which is never a change to deploy
+        # without a person deciding it.
+        add(
+            "rendering.content_requires_javascript",
+            "high",
+            f"Before JavaScript runs this page shows {page.server_word_count} of its {page.word_count} words. "
+            "Google must render it to see the rest; crawlers that do not run scripts, including AI search, see an empty page.",
+            (0.80, 0.90, 0.70, 0.80, "high"),
+            "technical",
+        )
 
     # 2. Content SEO Agent
     if not page.h1:

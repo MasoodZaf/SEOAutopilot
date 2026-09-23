@@ -12,6 +12,7 @@ const observation = (contentHash: string, status = 200): PageObservation => ({
   metaDescription: null,
   h1: [],
   wordCount: 30,
+  serverWordCount: null,
   contentHash,
   rendered: false,
   canonicalUrl: null,
