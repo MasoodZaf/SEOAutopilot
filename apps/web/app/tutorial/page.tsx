@@ -7,7 +7,7 @@ import {SiteFooter, SiteHeader} from "@/app/components/site-header";
 export const metadata: Metadata = {
   title: "Tutorial — from sign-in to a measured change",
   description:
-    "A step-by-step guide to SEO Autopilot: create a workspace, verify a site, connect Google and GitHub, crawl, review ranked opportunities, approve a change and measure it.",
+    "A step-by-step guide to SEO Autopilot: create a workspace, verify a site, connect Google and GitHub, crawl, review ranked opportunities, approve a change and measure it — and write a new blog post that a person checks and approves.",
   alternates: {canonical: "/tutorial"},
 };
 
@@ -135,6 +135,44 @@ const steps: Step[] = [
   },
 ];
 
+/*
+ * The blog-post path. A separate route from the eight steps: it starts from a
+ * content brief rather than a crawl finding, and it is the only place the
+ * product calls an AI model -- with the workspace's own key, never ours.
+ */
+const blogSteps: {title: string; where: {label: string; href?: string}; body: string}[] = [
+  {
+    title: "Add your own AI key",
+    where: {label: "Settings → Keys", href: "/settings/keys"},
+    body:
+      "Under AI keys for blog drafts, add an Anthropic (Claude) key, an OpenAI key, or both. The provider bills you directly. We show only the last four characters, and there is no shared key: without one, drafting stays off.",
+  },
+  {
+    title: "Open a content brief",
+    where: {label: "Agent workspace → Content briefs", href: "/pilot/workspace"},
+    body:
+      "Briefs come from the search terms people already use to find you. A new-post brief names the topic, the terms it targets and the sections it should cover. Dismiss one you do not want, with a reason.",
+  },
+  {
+    title: "Write a draft",
+    where: {label: "Brief → Write a draft"},
+    body:
+      "Pick Claude or OpenAI and name the author. The draft is written in the background from the brief, your real search terms and your existing pages, in a minute or two. Each draft shows its cost; a workspace spends at most $25 a month.",
+  },
+  {
+    title: "Check every flag",
+    where: {label: "Draft → Review"},
+    body:
+      "The draft lists what a person must check: each fact the AI relied on, any number it did not declare, links to pages that do not exist and overlap with a page you already have. Tick each one and note how you checked it. Edit freely; a diff shows what you changed from the AI's version.",
+  },
+  {
+    title: "Send for approval",
+    where: {label: "Draft → Send for approval"},
+    body:
+      "Once every flag is resolved, the post becomes a proposal like any other. A new page is always high risk, so it needs two approvers, neither of them the author. Deploy opens a pull request adding the post to your repository; it goes live when a person merges it.",
+  },
+];
+
 const modes = [
   {name: "Observe", body: "Measures only. The default. Every deployment is refused."},
   {name: "Recommend", body: "Drafts proposals and deploys each one only after approval."},
@@ -192,6 +230,15 @@ export default function TutorialPage() {
                   </a>
                 </li>
               ))}
+              <li className="mt-3">
+                <a
+                  href="#blog-posts"
+                  className="-ml-px flex gap-3 border-l border-transparent py-1.5 pl-4 text-[13px] text-ink-faint transition-colors hover:border-accent hover:text-ink"
+                >
+                  <span className="font-mono text-[11px] leading-5">+</span>
+                  <span className="leading-5">Write a new blog post</span>
+                </a>
+              </li>
             </ol>
           </nav>
 
@@ -242,6 +289,52 @@ export default function TutorialPage() {
               </article>
             ))}
 
+            <section id="blog-posts" aria-labelledby="blog-heading" className="mt-10 scroll-mt-24">
+              <p className="eyebrow">A second path</p>
+              <h2 id="blog-heading" className="mt-4 font-display text-[30px] leading-tight font-light tracking-tight text-balance text-ink">
+                Write a new blog post
+              </h2>
+              <p className="mt-3 max-w-2xl text-[14px] leading-6 text-pretty text-ink-soft">
+                Fixing pages you have is one job; filling a gap with a page you do not have is another. An AI writes
+                the first draft, and a person checks it, edits it and sends it through the same approval as every other
+                change.
+              </p>
+              <ol className="mt-8 flex flex-col overflow-hidden rounded-2xl border border-rule bg-surface">
+                {blogSteps.map((step, index) => (
+                  <li
+                    key={step.title}
+                    className="grid gap-3 border-b border-rule p-6 last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)] sm:p-8"
+                  >
+                    <span className="font-mono text-[13px] text-accent">{String.fromCharCode(97 + index)}.</span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h3 className="font-display text-[18px] font-medium tracking-tight text-ink">{step.title}</h3>
+                        {step.where.href ? (
+                          <Link
+                            href={step.where.href}
+                            className="inline-flex items-center rounded-full border border-accent-rule bg-accent-soft px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-wider text-accent uppercase transition-colors hover:border-accent"
+                          >
+                            {step.where.label}
+                          </Link>
+                        ) : (
+                          <Badge tone="accent">{step.where.label}</Badge>
+                        )}
+                      </div>
+                      <p className="mt-2 max-w-2xl text-[14px] leading-6 text-pretty text-ink-soft">{step.body}</p>
+                    </div>
+                  </li>
+                ))}
+                <li className="flex gap-3 bg-sunk/60 px-6 py-4 sm:px-8">
+                  <span className="eyebrow shrink-0 pt-0.5 text-good">Boundary</span>
+                  <p className="text-[13px] leading-6 text-pretty text-ink-soft">
+                    The AI never publishes. Its draft cannot be sent until a person has resolved every flag, and it
+                    reaches your site only after two approvals and a merged pull request. A published post can be
+                    undone: the revert removes the file.
+                  </p>
+                </li>
+              </ol>
+            </section>
+
             <section aria-labelledby="modes-heading" className="mt-10">
               <p className="eyebrow">Good to know</p>
               <h2 id="modes-heading" className="mt-4 font-display text-[30px] leading-tight font-light tracking-tight text-ink">
@@ -268,7 +361,8 @@ export default function TutorialPage() {
               <p className="mt-3 max-w-2xl text-[14px] leading-6 text-pretty text-ink-soft">
                 From the dashboard, Agent workspace opens a chat about the selected site. The agent answers from stored
                 evidence and can queue analysis, keyword clusters, content briefs and reports. It cannot publish a
-                change: everything it suggests still goes through a reviewed proposal.
+                change: everything it suggests still goes through a reviewed proposal. The workspace itself uses no AI
+                key; only blog drafts do, and only with yours.
               </p>
             </section>
 
