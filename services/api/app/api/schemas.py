@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -1568,6 +1568,78 @@ class GitHubAppCreate(BaseModel):
     # before sign-in existed; the connect flow refuses without it.
     client_id: str = Field(default="", max_length=100)
     client_secret: SecretStr = Field(default=SecretStr(""), max_length=200)
+
+
+class ContentDraftCreate(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    # Which of the workspace's own keys writes the draft.
+    provider: Literal["anthropic", "openai"] = "anthropic"
+    # The named author the post will carry. Search engines reward a real
+    # person behind content; the draft is never published without one.
+    author_name: str = Field(default="", max_length=120)
+
+
+class ContentDraftUpdate(BaseModel):
+    version: int = Field(ge=1)
+    title: str | None = Field(default=None, max_length=200)
+    slug: str | None = Field(default=None, max_length=80)
+    meta_description: str | None = Field(default=None, max_length=320)
+    body_markdown: str | None = Field(default=None, max_length=60000)
+    author_name: str | None = Field(default=None, max_length=120)
+    # Flag id -> the reviewer's note on how it was resolved.
+    resolved_flags: dict[str, str] = Field(default_factory=dict)
+
+
+class ContentDraftSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    content_brief_id: UUID
+    status: str
+    title: str | None
+    slug: str | None
+    error_code: str | None
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContentDraftRead(ContentDraftSummary):
+    meta_description: str | None
+    body_markdown: str | None
+    author_name: str | None
+    flags_json: list[dict[str, Any]]
+    generated_json: dict[str, Any] | None
+    model: str | None
+    prompt_version: str | None
+    input_tokens: int
+    output_tokens: int
+    cost_micros: int
+    provider: str
+    requested_by: UUID
+    proposal_id: UUID | None = None
+
+
+class ContentDraftEnvelope(BaseModel):
+    data: ContentDraftRead
+    meta: dict[str, str | int]
+
+
+class ContentDraftCollection(BaseModel):
+    data: list[ContentDraftSummary]
+    meta: dict[str, str | int]
+
+
+class AnthropicKeyCreate(BaseModel):
+    """The workspace's own Anthropic API key, which pays for its AI drafts."""
+
+    api_key: SecretStr = Field(min_length=20, max_length=300)
+
+
+class OpenAIKeyCreate(BaseModel):
+    """The workspace's own OpenAI API key, which pays for its AI drafts."""
+
+    api_key: SecretStr = Field(min_length=20, max_length=300)
 
 
 class TenantCredentialRead(BaseModel):

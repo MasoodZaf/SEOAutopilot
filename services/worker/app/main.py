@@ -17,6 +17,9 @@ from app.connectors.runtime import (
     require_secret_bytes,
 )
 from app.connectors.tenant_clients import TenantTokenRefresherFactory
+from app.content_drafts.consumer import Stream as DraftStream
+from app.content_drafts.consumer import run_content_draft_consumer
+from app.content_drafts.model import AnthropicDraftModel, OpenAIDraftModel
 from app.gsc.consumer import run_gsc_consumer
 from app.notifications.deliver import run_notification_dispatcher
 from app.outbox import DatabaseConnection, StreamClient, dispatch_batch
@@ -178,6 +181,27 @@ async def run() -> None:
             cast(PageSpeedStream, streams),
             f"pagespeed-worker-{os.getpid()}",
             pagespeed,
+        ),
+        # AI blog drafts, the only model calls in the product. Each workspace
+        # brings its own Anthropic or OpenAI key; the worker holds none.
+        run_content_draft_consumer(
+            pool,
+            cast(DraftStream, streams),
+            f"draft-worker-{os.getpid()}",
+            models={
+                "anthropic": (
+                    AnthropicDraftModel(),
+                    os.environ.get("CONTENT_DRAFT_ANTHROPIC_MODEL", "claude-opus-5"),
+                ),
+                "openai": (
+                    OpenAIDraftModel(),
+                    os.environ.get("CONTENT_DRAFT_OPENAI_MODEL", "gpt-5"),
+                ),
+            },
+            encryption_key=connector_key,
+            monthly_budget_micros=int(
+                os.environ.get("CONTENT_DRAFT_MONTHLY_BUDGET_MICROS", "25000000")
+            ),
         ),
     ]
     if routines_enabled:

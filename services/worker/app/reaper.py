@@ -65,6 +65,7 @@ LEASED_WORK: tuple[LeasedWork, ...] = (
     LeasedWork("crawl_job", "crawl.requested", "crawl_job", "attempts", 3),
     LeasedWork("performance_run", "performance.requested", "performance_run", "attempts", 3),
     LeasedWork("routine_run", "routine.run.queued.v1", "routine_run", "attempts", 3),
+    LeasedWork("content_draft", "content_draft.requested.v1", "content_draft", "attempts", 3),
     # connector_sync tracks no attempt count, so there is no safe bound on
     # requeueing it. An abandoned sync is failed instead; its cursor is
     # preserved, so a fresh sync resumes rather than restarting.

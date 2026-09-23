@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -574,8 +575,11 @@ class Proposal(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
     site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
-    opportunity_id: Mapped[UUID] = mapped_column(ForeignKey("opportunity.id"), nullable=False)
+    # Null for a new post: it starts from a content draft, not a finding.
+    # The database requires one or the other (proposal_origin_check).
+    opportunity_id: Mapped[UUID | None] = mapped_column(ForeignKey("opportunity.id"))
     page_id: Mapped[UUID] = mapped_column(ForeignKey("page.id"), nullable=False)
+    content_draft_id: Mapped[UUID | None] = mapped_column()
     author_id: Mapped[UUID]
     title: Mapped[str] = mapped_column(String(240))
     rationale: Mapped[str] = mapped_column(Text)
@@ -953,6 +957,48 @@ class ContentBrief(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+
+
+class ContentDraft(Base):
+    """An AI-written blog post awaiting a person's review. See migration 0044."""
+
+    __tablename__ = "content_draft"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        UniqueConstraint("tenant_id", "idempotency_key"),
+        Index("content_draft_tenant_site_idx", "tenant_id", "site_id", "created_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    content_brief_id: Mapped[UUID] = mapped_column(nullable=False)
+    requested_by: Mapped[UUID] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    provider: Mapped[str] = mapped_column(String(16))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    model: Mapped[str | None] = mapped_column(String(80))
+    prompt_version: Mapped[str | None] = mapped_column(String(40))
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_micros: Mapped[int] = mapped_column(BigInteger, default=0)
+    generated_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    title: Mapped[str | None] = mapped_column(String(200))
+    slug: Mapped[str | None] = mapped_column(String(80))
+    meta_description: Mapped[str | None] = mapped_column(String(320))
+    body_markdown: Mapped[str | None] = mapped_column(Text)
+    author_name: Mapped[str | None] = mapped_column(String(120))
+    flags_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 class Competitor(Base):
     __tablename__ = "competitor"

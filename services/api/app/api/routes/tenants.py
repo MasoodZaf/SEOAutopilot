@@ -14,9 +14,11 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.api.schemas import (
+    AnthropicKeyCreate,
     GitHubAppCreate,
     GoogleClientCheckRead,
     GoogleOAuthClientCreate,
+    OpenAIKeyCreate,
     TenantCreate,
     TenantCredentialCollection,
     TenantCredentialRead,
@@ -31,8 +33,10 @@ from app.db.models import Tenant, TenantMembership
 from app.db.session import TenantSession, authenticating_session
 from app.services.google_client_check import ClientCheckResult, check_google_client
 from app.services.tenant_credentials import (
+    ANTHROPIC_API_KEY,
     GITHUB_APP,
     GOOGLE_OAUTH_CLIENT,
+    OPENAI_API_KEY,
     SUPPORTED_PROVIDERS,
     TenantCredentialService,
     google_oauth_client,
@@ -111,6 +115,9 @@ async def list_credentials(
     for provider, platform_configured in (
         (GOOGLE_OAUTH_CLIENT, bool(settings.google_client_id and settings.google_client_secret)),
         (GITHUB_APP, settings.github_app_configured),
+        # AI keys have no platform fallback: drafting is bring-your-own-key.
+        (ANTHROPIC_API_KEY, False),
+        (OPENAI_API_KEY, False),
     ):
         credential = await store.describe(context.tenant_id, provider)
         if credential is not None:
@@ -229,6 +236,52 @@ async def put_github_app(
     )
     return TenantCredentialRead(
         provider=GITHUB_APP,
+        source="tenant",
+        config=dict(credential.config_json),
+        configured_at=credential.created_at,
+    )
+
+
+@credentials_router.put(
+    "/anthropic_api_key",
+    response_model=TenantCredentialRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def put_anthropic_key(
+    command: AnthropicKeyCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> TenantCredentialRead:
+    settings = get_settings()
+    store = store_for(session, settings)
+    credential = await TenantCredentialService(session, context).upsert_ai_key(
+        store, ANTHROPIC_API_KEY, command.api_key.get_secret_value()
+    )
+    return TenantCredentialRead(
+        provider=ANTHROPIC_API_KEY,
+        source="tenant",
+        config=dict(credential.config_json),
+        configured_at=credential.created_at,
+    )
+
+
+@credentials_router.put(
+    "/openai_api_key",
+    response_model=TenantCredentialRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def put_openai_key(
+    command: OpenAIKeyCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> TenantCredentialRead:
+    settings = get_settings()
+    store = store_for(session, settings)
+    credential = await TenantCredentialService(session, context).upsert_ai_key(
+        store, OPENAI_API_KEY, command.api_key.get_secret_value()
+    )
+    return TenantCredentialRead(
+        provider=OPENAI_API_KEY,
         source="tenant",
         config=dict(credential.config_json),
         configured_at=credential.created_at,

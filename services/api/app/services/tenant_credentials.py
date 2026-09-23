@@ -46,7 +46,11 @@ from app.services.sites import stable_hash
 
 GOOGLE_OAUTH_CLIENT = "google_oauth_client"
 GITHUB_APP = "github_app"
-SUPPORTED_PROVIDERS = frozenset({GOOGLE_OAUTH_CLIENT, GITHUB_APP})
+ANTHROPIC_API_KEY = "anthropic_api_key"
+OPENAI_API_KEY = "openai_api_key"
+SUPPORTED_PROVIDERS = frozenset({GOOGLE_OAUTH_CLIENT, GITHUB_APP, ANTHROPIC_API_KEY, OPENAI_API_KEY})
+# The AI keys a workspace can bring, by the prefix a real key starts with.
+AI_KEY_PREFIXES = {ANTHROPIC_API_KEY: "sk-ant-", OPENAI_API_KEY: "sk-"}
 
 
 def credential_aad(tenant_id: UUID, provider: str, key_version: str) -> bytes:
@@ -454,6 +458,42 @@ class TenantCredentialService:
             created_by=await self._creator(),
         )
         self._audit("tenant_credential.stored", credential.id, {"provider": GITHUB_APP})
+        return credential
+
+    async def upsert_ai_key(
+        self, store: TenantCredentialStore, provider: str, api_key: str
+    ) -> TenantCredential:
+        """A key the workspace's AI blog drafts are written with and billed to.
+
+        Drafting is bring-your-own-key: there is no deployment key behind it,
+        so a workspace only ever spends its own money. Owner or admin only.
+        Only the last four characters are kept in the clear, so the settings
+        page can say which key is in use without being able to show it.
+        """
+        self.context.require(Role.OWNER, Role.ADMIN)
+        prefix = AI_KEY_PREFIXES.get(provider)
+        if prefix is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant_credential_not_found")
+        api_key = api_key.strip()
+        mismatched = provider == OPENAI_API_KEY and api_key.startswith("sk-ant-")
+        if (
+            not api_key.startswith(prefix)
+            or mismatched
+            or len(api_key) < 20
+            or any(c.isspace() for c in api_key)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"{provider}_invalid",
+            )
+        credential = await store.put(
+            self.context.tenant_id,
+            provider,
+            config={"key_suffix": api_key[-4:]},
+            secret={"api_key": api_key},
+            created_by=await self._creator(),
+        )
+        self._audit("tenant_credential.stored", credential.id, {"provider": provider})
         return credential
 
     async def revoke(self, store: TenantCredentialStore, provider: str) -> bool:

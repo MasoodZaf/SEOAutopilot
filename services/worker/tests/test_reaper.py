@@ -4,6 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from app.content_drafts.consumer import EVENT as CONTENT_DRAFT_EVENT
 from app.reaper import LEASED_WORK, fail_sql, requeue_sql, sweep_once
 
 
@@ -36,6 +37,7 @@ def test_every_leased_table_has_a_delivery_event() -> None:
         "performance.requested",
         "routine.run.queued.v1",
         "connector.sync_requested",
+        CONTENT_DRAFT_EVENT,
     }
     for work in LEASED_WORK:
         assert work.event_type in listened_for, work.table

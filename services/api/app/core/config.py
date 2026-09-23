@@ -115,6 +115,19 @@ class Settings(BaseSettings):
     # Repository path for a crawled URL path, e.g. "CalcHive/{path}.html".
     # The site's URL layout is not derivable from the repository layout.
     github_path_template: str = "{path}.html"
+    # Where a new blog post lands in the repository, and in what form.
+    # `{slug}` is the post's URL slug. Markdown with front matter suits most
+    # static-site generators; a connector can override it per site.
+    github_blog_path_template: str = "content/blog/{slug}.md"
+    # Public URL path of a published post, used to name the page it creates.
+    blog_url_template: str = "/blog/{slug}"
+    # AI drafting, for blog posts only. Bring-your-own-key: a workspace's
+    # drafts use the Anthropic or OpenAI key it stored under Settings -> Keys,
+    # never a deployment key. These name the model each provider uses.
+    content_draft_anthropic_model: str = "claude-opus-5"
+    content_draft_openai_model: str = "gpt-5"
+    # Monthly spend ceiling per workspace, in integer micro-dollars ($25).
+    content_draft_monthly_budget_micros: int = 25_000_000
     # The mock adapter fabricates a successful deployment. It must be opted
     # into explicitly and never inferred from app_env, because a deployment
     # that reports success without touching a provider is the exact failure
