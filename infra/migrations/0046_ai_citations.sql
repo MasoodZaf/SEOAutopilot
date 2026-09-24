@@ -11,10 +11,12 @@
 -- N of M answers", never a rank. Answer text is third-party model output:
 -- only a bounded excerpt is kept, and it is never passed to a model or tool.
 --
--- Additive: three tenant-scoped tables under RLS, and routine.kind widened
--- to accept 'ai_citation_scan'.
+-- Additive: three tenant-scoped tables under RLS; routine.kind widened to
+-- accept 'ai_citation_scan'; tenant_credential.provider widened to accept
+-- 'perplexity_api_key', a third engine (bring-your-own-key, like the others).
 -- Rollback: drop the three tables; delete ai_citation_scan routines and
--- restore the previous routine_kind_check.
+-- perplexity_api_key credentials, and restore the previous
+-- routine_kind_check and tenant_credential_provider_check.
 BEGIN;
 
 CREATE TABLE ai_citation_prompt (
@@ -57,7 +59,7 @@ CREATE TABLE ai_citation_observation (
   run_id uuid NOT NULL,
   prompt_id uuid NOT NULL,
   prompt text NOT NULL,
-  provider text NOT NULL CHECK(provider IN('anthropic','openai')),
+  provider text NOT NULL CHECK(provider IN('anthropic','openai','perplexity')),
   model text NOT NULL CHECK(char_length(model) BETWEEN 1 AND 120),
   status text NOT NULL CHECK(status IN('answered','failed')),
   error_code text CHECK(error_code IS NULL OR error_code ~ '^[a-z0-9_]{1,80}$'),
@@ -94,6 +96,13 @@ ALTER TABLE ai_citation_observation FORCE ROW LEVEL SECURITY;
 CREATE POLICY ai_citation_observation_tenant_isolation ON ai_citation_observation
   USING(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid)
   WITH CHECK(tenant_id=nullif(current_setting('app.tenant_id',true),'')::uuid);
+
+ALTER TABLE tenant_credential DROP CONSTRAINT tenant_credential_provider_check;
+ALTER TABLE tenant_credential ADD CONSTRAINT tenant_credential_provider_check
+  CHECK(provider IN(
+    'google_oauth_client','github_app','anthropic_api_key','openai_api_key',
+    'perplexity_api_key'
+  ));
 
 ALTER TABLE routine DROP CONSTRAINT IF EXISTS routine_kind_check;
 ALTER TABLE routine ADD CONSTRAINT routine_kind_check

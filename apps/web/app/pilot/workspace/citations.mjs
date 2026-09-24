@@ -9,6 +9,7 @@
 export const ENGINES = [
   {provider: "anthropic", label: "Claude"},
   {provider: "openai", label: "ChatGPT"},
+  {provider: "perplexity", label: "Perplexity"},
 ];
 
 const FAILURES = {
@@ -16,6 +17,8 @@ const FAILURES = {
   openai_key_rejected: "OpenAI key rejected",
   anthropic_key_forbidden: "Claude key lacks access",
   openai_key_forbidden: "OpenAI key lacks access",
+  perplexity_key_rejected: "Perplexity key rejected",
+  perplexity_key_forbidden: "Perplexity key lacks access",
   provider_rate_limited: "Rate limited",
   model_refused: "Declined to answer",
 };

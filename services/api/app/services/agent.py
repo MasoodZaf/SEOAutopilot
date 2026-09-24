@@ -655,10 +655,10 @@ class AgentService:
         if latest is None:
             return _no_evidence(
                 "AI citation run",
-                "Track a few questions under AI citations, store a Claude or OpenAI key, "
+                "Track a few questions under AI citations, store a Claude, OpenAI or Perplexity key, "
                 "then run the AI citation routine.",
             )
-        names = {"anthropic": "Claude", "openai": "ChatGPT"}
+        names = {"anthropic": "Claude", "openai": "ChatGPT", "perplexity": "Perplexity"}
         answered = [row for row in observations if row.status == "answered"]
         lines = []
         for row in answered:

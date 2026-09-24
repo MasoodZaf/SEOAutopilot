@@ -44,9 +44,13 @@ class CitationAnswer:
     model: str
     input_tokens: int
     output_tokens: int
+    # What the provider itself reported, when it does (Perplexity does).
+    reported_cost_micros: int | None = None
 
     @property
     def cost_micros(self) -> int:
+        if self.reported_cost_micros is not None:
+            return self.reported_cost_micros
         price_in, price_out = price_for(self.model)
         tokens = -(-(self.input_tokens * price_in + self.output_tokens * price_out) // 1_000_000)
         return tokens + self.web_searches * SEARCH_PRICE_MICROS
@@ -162,6 +166,95 @@ class AnthropicCitationModel:
         if not text:
             raise CitationModelError("answer_empty")
         return CitationAnswer(text, urls, searches, served_by, input_tokens, output_tokens)
+
+
+def perplexity_answer(payload: dict[str, Any]) -> tuple[str, list[str], int]:
+    """Text, cited URLs and request cost from a Sonar response.
+
+    Sonar returns its sources as `search_results` (and, on older responses,
+    a bare `citations` URL list), in the order its [n] markers refer to.
+    """
+    try:
+        text = str(payload["choices"][0]["message"]["content"] or "")
+    except (KeyError, IndexError, TypeError):
+        text = ""
+    urls: list[str] = []
+    for result in payload.get("search_results") or []:
+        url = result.get("url") if isinstance(result, dict) else None
+        if isinstance(url, str) and url and url not in urls:
+            urls.append(url)
+    if not urls:
+        urls = [url for url in payload.get("citations") or [] if isinstance(url, str) and url]
+    cost = (payload.get("usage") or {}).get("cost") or {}
+    total = cost.get("total_cost") if isinstance(cost, dict) else None
+    micros = round(float(total) * 1_000_000) if isinstance(total, int | float) else 0
+    return text.strip(), urls[:MAX_CITED_URLS], micros
+
+
+# Sonar's request fee at its highest search-context tier, used when a response
+# does not report its own cost: $12 per 1,000 requests.
+PERPLEXITY_REQUEST_MICROS = 12_000
+
+
+class PerplexityCitationModel:
+    """Perplexity Sonar, which searches the web on every request, over httpx."""
+
+    URL = "https://api.perplexity.ai/chat/completions"
+
+    def __init__(
+        self, timeout_seconds: float = 120.0, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.transport = transport
+
+    async def ask(self, *, api_key: str, model: str, question: str) -> CitationAnswer:
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": question}],
+            "max_tokens": MAX_OUTPUT_TOKENS,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout_seconds), transport=self.transport
+            ) as client:
+                response = await client.post(
+                    self.URL, json=body, headers={"Authorization": f"Bearer {api_key}"}
+                )
+        except httpx.TimeoutException as error:
+            raise CitationModelError("provider_timeout") from error
+        except httpx.HTTPError as error:
+            raise CitationModelError("provider_unreachable") from error
+        code = response.status_code
+        if code == 401:
+            raise CitationModelError("perplexity_key_rejected")
+        if code == 403:
+            raise CitationModelError("perplexity_key_forbidden")
+        if code == 429:
+            raise CitationModelError("provider_rate_limited")
+        if code >= 500:
+            raise CitationModelError("provider_unavailable")
+        if code >= 400:
+            raise CitationModelError("provider_request_rejected")
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise CitationModelError("answer_invalid") from error
+        if not isinstance(payload, dict):
+            raise CitationModelError("answer_invalid")
+        text, urls, reported = perplexity_answer(payload)
+        if not text:
+            raise CitationModelError("answer_empty")
+        usage = payload.get("usage") or {}
+        input_tokens = int(usage.get("prompt_tokens") or 0)
+        output_tokens = int(usage.get("completion_tokens") or 0)
+        served_by = str(payload.get("model") or model)
+        if not reported:
+            # Sonar lists at $1 per million tokens each way -- one micro-dollar
+            # a token -- plus the request fee.
+            reported = input_tokens + output_tokens + PERPLEXITY_REQUEST_MICROS
+        return CitationAnswer(
+            text, urls, 1, served_by, input_tokens, output_tokens, reported_cost_micros=reported
+        )
 
 
 class OpenAICitationModel:

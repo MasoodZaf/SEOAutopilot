@@ -28,7 +28,11 @@ CONCURRENCY = 6
 ESTIMATE_PER_ANSWER_MICROS = 200_000
 MAX_EXCERPT = 600
 MAX_HOSTS = 20
-CREDENTIALS = {"anthropic": "anthropic_api_key", "openai": "openai_api_key"}
+CREDENTIALS = {
+    "anthropic": "anthropic_api_key",
+    "openai": "openai_api_key",
+    "perplexity": "perplexity_api_key",
+}
 
 
 def normalize_host(value: str) -> str:

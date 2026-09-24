@@ -44,7 +44,7 @@ async def workspace(engine):
             )
     yield ids
     async with factory() as session, session.begin():
-        for table in ("outbox_event", "routine", "ai_citation_observation", "ai_citation_run", "ai_citation_prompt", "audit_event",
+        for table in ("outbox_event", "routine", "tenant_credential", "ai_citation_observation", "ai_citation_run", "ai_citation_prompt", "audit_event",
                       "keyword_cluster", "keyword_analysis_run", "site"):
             await session.execute(text(f"DELETE FROM {table} WHERE tenant_id=:t"), {"t": ids["tenant"]})
         await session.execute(text("DELETE FROM tenant WHERE id=:t"), {"t": ids["tenant"]})
@@ -170,3 +170,27 @@ async def test_the_citation_scan_can_run_weekly_but_never_daily(tenant_session_f
             workspace["site"], RoutineUpsert(kind="ai_citation_scan", cadence="weekly", schedule_isodow=1)
         )
         assert routine.cadence == "weekly"
+
+
+async def test_a_perplexity_key_is_checked_and_kept_only_by_its_suffix(tenant_session_factory, workspace):
+    import base64
+    import secrets
+
+    from pydantic import SecretStr
+
+    from app.core.config import Settings
+    from app.services.tenant_credentials import PERPLEXITY_API_KEY, TenantCredentialService, store_for
+
+    settings = Settings(
+        connector_secret_backend="database_envelope",
+        connector_secret_encryption_key=SecretStr(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()),
+    )
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service = TenantCredentialService(session, ctx(workspace))
+        store = store_for(session, settings)
+        for wrong in ("sk-ant-abcdefghijklmnopqrstu", "sk-abcdefghijklmnopqrstuvw"):
+            with pytest.raises(HTTPException) as refused:
+                await service.upsert_ai_key(store, PERPLEXITY_API_KEY, wrong)
+            assert refused.value.detail == "perplexity_api_key_invalid"
+        stored = await service.upsert_ai_key(store, PERPLEXITY_API_KEY, "pplx-abcdefghijklmnopqrs9z")
+        assert stored.config_json == {"key_suffix": "rs9z"}

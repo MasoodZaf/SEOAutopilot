@@ -603,16 +603,16 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
             <div className={panel}>
               <h2 className={heading}>AI answer citations</h2>
               <p className={`${muted} text-pretty`}>
-                Each tracked question is asked of Claude and ChatGPT through their APIs, with web search on and your workspace&apos;s
-                own keys. The question never names this site. Answers vary from run to run and the API is close to, not the same
+                Each tracked question is asked of Claude, ChatGPT and Perplexity through their APIs, with web search on and your
+                workspace&apos;s own keys (whichever you have stored). The question never names this site. Answers vary from run to run and the API is close to, not the same
                 as, the apps people use, so read this as a sample of answers, not a ranking.
               </p>
 
               {!citations?.latest ? (
                 <div className="mt-3">
                   <Empty>
-                    No answers yet. Track a question below, store a Claude or OpenAI key under Settings, then enable the
-                    ai_citation_scan routine on the Skills tab.
+                    No answers yet. Track a question below, store a Claude, OpenAI or Perplexity key under Settings → Keys, then
+                    enable the ai_citation_scan routine on the Skills tab.
                   </Empty>
                 </div>
               ) : (

@@ -229,7 +229,7 @@ SKILLS: tuple[Skill, ...] = (
         key="ai_citations",
         name="Observed AI answer citations",
         description=(
-            "Report whether Claude and ChatGPT cited or named the site when asked its "
+            "Report whether Claude, ChatGPT and Perplexity cited or named the site when asked its "
             "tracked questions, observed through each provider's API with web search."
         ),
         effect=SkillEffect.READ,
@@ -240,7 +240,7 @@ SKILLS: tuple[Skill, ...] = (
     ),
     scheduling(
         "run_ai_citation_scan", "Ask the tracked questions",
-        "Ask each tracked question of Claude and ChatGPT with the workspace's own keys, "
+        "Ask each tracked question of Claude, ChatGPT and Perplexity with the workspace's own keys, "
         "and record whether the answers cite the site.",
         "ai_citation_scan", {"cite", "cited", "citation", "citations"},
         {"ask", "track"}, ACTING_ROLES,

@@ -26,8 +26,10 @@ from app.citations.models import (
     CitationAnswer,
     CitationModelError,
     OpenAICitationModel,
+    PerplexityCitationModel,
     anthropic_answer,
     openai_answer,
+    perplexity_answer,
 )
 from app.citations.scan import (
     ESTIMATE_PER_ANSWER_MICROS,
@@ -108,6 +110,42 @@ async def test_openai_sends_only_the_question() -> None:
     assert "instructions" not in seen
     assert seen["auth"] == "Bearer sk-workspace"
     assert answer.text == "Answer." and answer.cited_urls == []
+
+
+def test_perplexity_sources_come_from_search_results_with_its_reported_cost() -> None:
+    payload = {
+        "choices": [{"message": {"content": "EMI is fixed [1][2]."}}],
+        "search_results": [
+            {"title": "EMI", "url": "https://calc.example/emi"},
+            {"title": "Bank", "url": "https://bank.example/"},
+            {"title": "dup", "url": "https://calc.example/emi"},
+        ],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 80, "cost": {"total_cost": 0.0061}},
+    }
+    assert perplexity_answer(payload) == ("EMI is fixed [1][2].", ["https://calc.example/emi", "https://bank.example/"], 6_100)
+    # Older responses list bare URLs under `citations`.
+    legacy = {"choices": [{"message": {"content": "x"}}], "citations": ["https://calc.example/"]}
+    assert perplexity_answer(legacy)[1] == ["https://calc.example/"]
+
+
+async def test_perplexity_prices_from_tokens_when_it_reports_no_cost() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["messages"] == [{"role": "user", "content": "How is EMI calculated?"}]
+        return httpx.Response(200, json={"model": "sonar", "choices": [{"message": {"content": "Answer."}}],
+                                         "search_results": [], "usage": {"prompt_tokens": 100, "completion_tokens": 400}})
+
+    answer = await PerplexityCitationModel(transport=httpx.MockTransport(handler)).ask(
+        api_key="pplx-workspace", model="sonar", question="How is EMI calculated?"
+    )
+    assert answer.cost_micros == 500 + 12_000
+
+
+async def test_perplexity_key_rejection_is_a_stable_code() -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(401, text="bad key pplx-123"))
+    with pytest.raises(CitationModelError) as refused:
+        await PerplexityCitationModel(transport=transport).ask(api_key="pplx-x", model="sonar", question="q?")
+    assert refused.value.code == "perplexity_key_rejected"
 
 
 # --- judging an answer ---
@@ -248,9 +286,14 @@ async def _seed(conn: asyncpg.Connection, keys: dict[str, str], prompts: int = 2
     return ids
 
 
-def _settings(anthropic: FakeEngine, openai: FakeEngine, budget: int = 10_000_000) -> CitationSettings:
+def _settings(
+    anthropic: FakeEngine, openai: FakeEngine, budget: int = 10_000_000, perplexity: FakeEngine | None = None
+) -> CitationSettings:
+    models: dict = {"anthropic": (anthropic, "claude-opus-5"), "openai": (openai, "gpt-5")}
+    if perplexity is not None:
+        models["perplexity"] = (perplexity, "sonar")
     return CitationSettings(
-        models={"anthropic": (anthropic, "claude-opus-5"), "openai": (openai, "gpt-5")},
+        models=models,
         monthly_budget_micros=budget,
     )
 
@@ -288,6 +331,20 @@ async def test_only_engines_the_workspace_has_a_key_for_are_asked(connection) ->
     claude, chatgpt = FakeEngine("https://calc.example/"), FakeEngine("https://calc.example/")
     await process_run(connection, ids["tenant"], ids["run"], encryption_key=KEY, citations=_settings(claude, chatgpt))
     assert claude.calls == [] and len(chatgpt.calls) == 2
+
+
+@database
+async def test_a_perplexity_key_alone_is_enough(connection) -> None:
+    ids = await _seed(connection, {"perplexity": "pplx-workspace-key"})
+    claude, chatgpt, sonar = FakeEngine(None), FakeEngine(None), FakeEngine("https://calc.example/")
+    await process_run(
+        connection, ids["tenant"], ids["run"], encryption_key=KEY,
+        citations=_settings(claude, chatgpt, perplexity=sonar),
+    )
+    assert claude.calls == [] and chatgpt.calls == []
+    assert [call["api_key"] for call in sonar.calls] == ["pplx-workspace-key"] * 2
+    cited = await connection.fetchval("SELECT count(*) FROM ai_citation_observation WHERE provider='perplexity' AND site_cited")
+    assert cited == 2
 
 
 @database

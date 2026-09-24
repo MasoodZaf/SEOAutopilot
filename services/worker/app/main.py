@@ -9,7 +9,11 @@ import redis.asyncio as redis
 
 from app.analysis_consumer import AnalysisPool, AnalysisStream, run_analysis_consumer
 from app.analytics.consumer import run_analytics_consumer
-from app.citations.models import AnthropicCitationModel, OpenAICitationModel
+from app.citations.models import (
+    AnthropicCitationModel,
+    OpenAICitationModel,
+    PerplexityCitationModel,
+)
 from app.connectors.google_oauth import GoogleTokenHttpRefresher, TokenRefresher
 from app.connectors.grant_check import run_grant_checker
 from app.connectors.runtime import (
@@ -225,6 +229,10 @@ async def run() -> None:
                         "openai": (
                             OpenAICitationModel(),
                             os.environ.get("AI_CITATION_OPENAI_MODEL", "gpt-5"),
+                        ),
+                        "perplexity": (
+                            PerplexityCitationModel(),
+                            os.environ.get("AI_CITATION_PERPLEXITY_MODEL", "sonar"),
                         ),
                     },
                     monthly_budget_micros=int(

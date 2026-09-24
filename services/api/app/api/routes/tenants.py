@@ -19,6 +19,7 @@ from app.api.schemas import (
     GoogleClientCheckRead,
     GoogleOAuthClientCreate,
     OpenAIKeyCreate,
+    PerplexityKeyCreate,
     TenantCreate,
     TenantCredentialCollection,
     TenantCredentialRead,
@@ -37,6 +38,7 @@ from app.services.tenant_credentials import (
     GITHUB_APP,
     GOOGLE_OAUTH_CLIENT,
     OPENAI_API_KEY,
+    PERPLEXITY_API_KEY,
     SUPPORTED_PROVIDERS,
     TenantCredentialService,
     google_oauth_client,
@@ -118,6 +120,7 @@ async def list_credentials(
         # AI keys have no platform fallback: drafting is bring-your-own-key.
         (ANTHROPIC_API_KEY, False),
         (OPENAI_API_KEY, False),
+        (PERPLEXITY_API_KEY, False),
     ):
         credential = await store.describe(context.tenant_id, provider)
         if credential is not None:
@@ -282,6 +285,29 @@ async def put_openai_key(
     )
     return TenantCredentialRead(
         provider=OPENAI_API_KEY,
+        source="tenant",
+        config=dict(credential.config_json),
+        configured_at=credential.created_at,
+    )
+
+
+@credentials_router.put(
+    "/perplexity_api_key",
+    response_model=TenantCredentialRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def put_perplexity_key(
+    command: PerplexityKeyCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> TenantCredentialRead:
+    settings = get_settings()
+    store = store_for(session, settings)
+    credential = await TenantCredentialService(session, context).upsert_ai_key(
+        store, PERPLEXITY_API_KEY, command.api_key.get_secret_value()
+    )
+    return TenantCredentialRead(
+        provider=PERPLEXITY_API_KEY,
         source="tenant",
         config=dict(credential.config_json),
         configured_at=credential.created_at,

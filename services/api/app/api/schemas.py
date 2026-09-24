@@ -1718,6 +1718,12 @@ class AnthropicKeyCreate(BaseModel):
     api_key: SecretStr = Field(min_length=20, max_length=300)
 
 
+class PerplexityKeyCreate(BaseModel):
+    """The workspace's own Perplexity API key, which pays for its citation checks."""
+
+    api_key: SecretStr = Field(min_length=20, max_length=300)
+
+
 class OpenAIKeyCreate(BaseModel):
     """The workspace's own OpenAI API key, which pays for its AI drafts."""
 

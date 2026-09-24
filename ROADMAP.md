@@ -196,7 +196,9 @@ existing gates:
   and a bounded excerpt that is never passed to a model or tool. Reported as "cited in N of M
   answers", not a ranking: the API is not the consumer app, and answers vary. Migration 0046.
 
-Not done: Perplexity as an engine, Google AI Overviews (no API), and any claim that a change caused
+Perplexity (Sonar, `pplx-` keys, citations only) joined Claude and ChatGPT the same day.
+
+Not done: Google AI Overviews (no API), and any claim that a change caused
 a citation, which needs the same experimental design as ranking claims.
 
 ## Delivery principles
