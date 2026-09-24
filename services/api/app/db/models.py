@@ -1023,6 +1023,73 @@ class Competitor(Base):
     )
 
 
+class AiCitationPrompt(Base):
+    """A question tracked for observed AI citations. Deactivated, never deleted."""
+
+    __tablename__ = "ai_citation_prompt"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        Index("ai_citation_prompt_site_idx", "tenant_id", "site_id", "active"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(24))
+    keyword_cluster_id: Mapped[UUID | None] = mapped_column()
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[UUID]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiCitationRun(Base):
+    __tablename__ = "ai_citation_run"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        Index("ai_citation_run_site_idx", "tenant_id", "site_id", "started_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    routine_run_id: Mapped[UUID | None] = mapped_column()
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    prompts_asked: Mapped[int] = mapped_column(Integer, default=0)
+    answers: Mapped[int] = mapped_column(Integer, default=0)
+    cited: Mapped[int] = mapped_column(Integer, default=0)
+    mentioned: Mapped[int] = mapped_column(Integer, default=0)
+    cost_micros: Mapped[int] = mapped_column(BigInteger, default=0)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+class AiCitationObservation(Base):
+    __tablename__ = "ai_citation_observation"
+    __table_args__ = (
+        UniqueConstraint("run_id", "prompt_id", "provider"),
+        Index("ai_citation_observation_site_idx", "tenant_id", "site_id", "observed_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(nullable=False)
+    prompt_id: Mapped[UUID] = mapped_column(nullable=False)
+    prompt: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(16))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    site_cited: Mapped[bool] = mapped_column(Boolean, default=False)
+    site_mentioned: Mapped[bool] = mapped_column(Boolean, default=False)
+    own_citation_rank: Mapped[int | None] = mapped_column(Integer)
+    cited_hosts: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    own_urls: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    competitor_hosts: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    answer_excerpt: Mapped[str | None] = mapped_column(Text)
+    web_searches: Mapped[int] = mapped_column(Integer, default=0)
+    cost_micros: Mapped[int] = mapped_column(BigInteger, default=0)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CompetitorPage(Base):
     __tablename__ = "competitor_page"
     __table_args__ = (

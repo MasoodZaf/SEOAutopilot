@@ -303,3 +303,41 @@ export async function proposeLlmsTxt(formData: FormData): Promise<never> {
   revalidatePath("/pilot");
   redirectFresh(pilotPath(host, {proposed: "llms_txt"}));
 }
+
+/** Track a question for observed AI citations. Asking it waits for the routine. */
+export async function trackCitationPrompt(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  const prompt = String(formData.get("prompt") ?? "").trim().slice(0, 300);
+  const clusterId = String(formData.get("keyword_cluster_id") ?? "");
+  const back = (error?: string) => workspacePath(host, {tab: "reports", error});
+  try {
+    const siteId = await siteIdFor(host);
+    if (!siteId) redirectFresh(back("site_not_found"));
+    await apiJson(`/v1/sites/${siteId}/ai-citation-prompts`, {
+      method: "POST",
+      body: JSON.stringify({prompt, keyword_cluster_id: UUID.test(clusterId) ? clusterId : null}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(back(safeCode(error.code)));
+    throw error;
+  }
+  redirectFresh(back());
+}
+
+export async function untrackCitationPrompt(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  const promptId = String(formData.get("prompt_id") ?? "");
+  const back = (error?: string) => workspacePath(host, {tab: "reports", error});
+  if (!UUID.test(promptId)) redirectFresh(back("invalid_prompt"));
+  try {
+    const siteId = await siteIdFor(host);
+    if (!siteId) redirectFresh(back("site_not_found"));
+    await apiJson(`/v1/sites/${siteId}/ai-citation-prompts/${promptId}`, {method: "DELETE"});
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(back(safeCode(error.code)));
+    throw error;
+  }
+  redirectFresh(back());
+}

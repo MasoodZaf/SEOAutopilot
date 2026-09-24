@@ -28,6 +28,7 @@ def test_each_intent_routes_to_its_own_skill() -> None:
     assert routed("How is our sitemap coverage?") == "sitemap_review"
     assert routed("How do we compare to competitors?") == "competitor_pages"
     assert routed("What is our AI search visibility?") == "ai_visibility"
+    assert routed("Did ChatGPT or Claude cite us?") == "ai_citations"
     assert routed("Show me the latest weekly report") == "weekly_report"
     assert routed("What routines are scheduled?") == "routines"
     assert routed("What content briefs are queued?") == "content_briefs"
@@ -92,6 +93,7 @@ def test_every_routine_kind_can_be_scheduled_from_chat() -> None:
         "content_briefs",
         "competitor_scan",
         "ai_visibility_scan",
+        "ai_citation_scan",
         "weekly_report",
     }
 
@@ -187,6 +189,9 @@ def test_no_skill_can_deploy_or_approve() -> None:
                 "content_briefs",
                 "competitor_scan",
                 "ai_visibility_scan",
+                # Asks questions with the workspace's own key; writes only
+                # observations, never site content.
+                "ai_citation_scan",
                 "weekly_report",
             }
         else:

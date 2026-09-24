@@ -6,13 +6,25 @@ import {redirect} from "next/navigation";
 import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {pilotPath, selectSite} from "../site-selection.mjs";
-import {proposeLlmsTxt, runRoutineNow, scheduleRoutine, sendMessage, startConversation} from "./actions";
+import {
+  proposeLlmsTxt,
+  runRoutineNow,
+  scheduleRoutine,
+  sendMessage,
+  startConversation,
+  trackCitationPrompt,
+  untrackCitationPrompt,
+} from "./actions";
+import {citationGrid, formatMicros} from "./citations.mjs";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {readinessBreakdown} from "./readiness.mjs";
 import {
   type AgentMessage,
   type AgentSession,
   type AgentTask,
+  type AiCitationPrompt,
+  type AiCitationReport,
+  type AiCitationSuggestion,
   type AiVisibility,
   type ContentBrief,
   type KeywordCluster,
@@ -120,6 +132,13 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
   const clusters = site ? ((await maybe<{data: KeywordCluster[]}>(`/v1/sites/${site.id}/keyword-clusters?limit=10`))?.data ?? []) : [];
   const briefs = site ? ((await maybe<{data: ContentBrief[]}>(`/v1/sites/${site.id}/content-briefs?limit=10`))?.data ?? []) : [];
   const visibility = site ? ((await maybe<{data: AiVisibility[]}>(`/v1/sites/${site.id}/ai-visibility?limit=2`))?.data ?? []) : [];
+  const citationPrompts = site
+    ? await maybe<{data: AiCitationPrompt[]; suggestions: AiCitationSuggestion[]}>(`/v1/sites/${site.id}/ai-citation-prompts`)
+    : null;
+  const citations = site ? ((await maybe<{data: AiCitationReport}>(`/v1/sites/${site.id}/ai-citations`))?.data ?? null) : null;
+  const tracked = citationPrompts?.data ?? [];
+  const suggestions = citationPrompts?.suggestions ?? [];
+  const grid = citationGrid(citations?.observations ?? []);
 
   const routineByKind = new Map(routines.map((item) => [item.kind, item]));
 
@@ -380,7 +399,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 A routine gathers evidence and produces reports. It is skipped while the site is unverified or frozen, and it holds no deployment authority.
               </p>
               <ul className="mt-4 flex flex-col gap-2">
-                {["search_console_sync", "analytics_sync", "site_audit", "keyword_refresh", "sitemap_coverage", "content_briefs", "competitor_scan", "ai_visibility_scan", "weekly_report"].map((kind) => {
+                {["search_console_sync", "analytics_sync", "site_audit", "keyword_refresh", "sitemap_coverage", "content_briefs", "competitor_scan", "ai_visibility_scan", "ai_citation_scan", "weekly_report"].map((kind) => {
                   const routine = routineByKind.get(kind);
                   return (
                     <li key={kind} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rule bg-surface px-3 py-2">
@@ -399,7 +418,8 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                           <input type="hidden" name="site_host" value={target.host} />
                           <input type="hidden" name="tab" value="skills" />
                           <input type="hidden" name="kind" value={kind} />
-                          <input type="hidden" name="cadence" value={kind === "weekly_report" ? "weekly" : "daily"} />
+                          {/* The citation scan spends the workspace's own AI key; the API refuses daily. */}
+                          <input type="hidden" name="cadence" value={kind === "weekly_report" || kind === "ai_citation_scan" ? "weekly" : "daily"} />
                           <input type="hidden" name="enabled" value={routine?.enabled ? "false" : "true"} />
                           <button type="submit" disabled={!site} className="rounded-full border border-rule-strong bg-paper px-2.5 py-1 text-[11px] font-medium text-ink-soft hover:bg-sunk disabled:opacity-40">
                             {routine?.enabled ? "Disable" : "Enable"}
@@ -521,8 +541,8 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
             <div className={panel}>
               <h2 className={heading}>AI search visibility readiness</h2>
               <p className={muted}>
-                Measured from this site&apos;s own crawl and search evidence. It does not observe what any answer engine said;
-                that needs a certified provider, which is not connected.
+                Measured from this site&apos;s own crawl and search evidence: how well placed the site is to be cited. What the
+                answer engines actually said is below, under AI answer citations.
               </p>
               {visibility.length === 0 ? (
                 <div className="mt-3"><Empty>No readiness snapshot yet. Run the AI visibility routine after a crawl.</Empty></div>
@@ -578,6 +598,135 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                   );
                 })()
               )}
+            </div>
+
+            <div className={panel}>
+              <h2 className={heading}>AI answer citations</h2>
+              <p className={`${muted} text-pretty`}>
+                Each tracked question is asked of Claude and ChatGPT through their APIs, with web search on and your workspace&apos;s
+                own keys. The question never names this site. Answers vary from run to run and the API is close to, not the same
+                as, the apps people use, so read this as a sample of answers, not a ranking.
+              </p>
+
+              {!citations?.latest ? (
+                <div className="mt-3">
+                  <Empty>
+                    No answers yet. Track a question below, store a Claude or OpenAI key under Settings, then enable the
+                    ai_citation_scan routine on the Skills tab.
+                  </Empty>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-3 text-sm text-ink">
+                    Cited in <span className="tabular font-semibold">{citations.latest.cited}</span> of{" "}
+                    <span className="tabular">{citations.latest.answers}</span> answers, named in{" "}
+                    <span className="tabular">{citations.latest.mentioned}</span>
+                    <span className="ml-2 text-xs text-ink-faint">
+                      {new Date(citations.latest.started_at).toISOString().slice(0, 10)} · {formatMicros(citations.latest.cost_micros)} of your key
+                    </span>
+                  </p>
+                  {citations.history.length > 1 && (
+                    <p className={`${muted} mt-1 tabular`}>
+                      Earlier runs:{" "}
+                      {citations.history.slice(1, 6).map((run) => `${run.cited}/${run.answers}`).join(" · ")}
+                    </p>
+                  )}
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full min-w-[32rem] text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-rule text-xs text-ink-faint">
+                          <th className="py-2 pr-3 font-medium">Question</th>
+                          {grid.engines.map((engine) => (
+                            <th key={engine.provider} className="py-2 pr-3 font-medium">{engine.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {grid.rows.map((row) => (
+                          <tr key={row.promptId} className="border-b border-rule align-top last:border-0">
+                            <td className="py-2 pr-3 text-ink">
+                              {row.prompt}
+                              {row.excerpt && (
+                                <details className="mt-1">
+                                  <summary className="cursor-pointer text-xs text-ink-faint">What the answer said</summary>
+                                  {/* Third-party model output, rendered as plain text only. */}
+                                  <p className="mt-1 text-xs text-pretty text-ink-soft">{row.excerpt}</p>
+                                </details>
+                              )}
+                            </td>
+                            {grid.engines.map((engine) => {
+                              const cell = row.cells[engine.provider];
+                              return (
+                                <td key={engine.provider} className="py-2 pr-3" title={cell?.detail}>
+                                  <span className={statusChip(cell?.state === "cited" ? "completed" : cell?.state === "named" ? "skipped" : cell?.state === "failed" ? "failed" : "queued")}>
+                                    {cell?.label}
+                                  </span>
+                                  <span className="mt-1 block text-xs text-ink-faint">{cell?.detail}</span>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              <div className="mt-6 border-t border-rule pt-4">
+                <h3 className="text-sm font-medium text-ink">Tracked questions <span className="tabular text-ink-faint">({tracked.length} of 8)</span></h3>
+                {tracked.length > 0 && (
+                  <ul className="mt-2 flex flex-col gap-1.5">
+                    {tracked.map((item) => (
+                      <li key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-ink-soft">{item.prompt}</span>
+                        <form action={untrackCitationPrompt}>
+                          <input type="hidden" name="site_host" value={target?.host ?? ""} />
+                          <input type="hidden" name="prompt_id" value={item.id} />
+                          <button type="submit" className="text-xs text-ink-faint underline-offset-4 hover:underline">Stop tracking</button>
+                        </form>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {tracked.length < 8 && target && (
+                  <form action={trackCitationPrompt} className="mt-3 flex flex-wrap gap-2">
+                    <input type="hidden" name="site_host" value={target.host} />
+                    <label className="sr-only" htmlFor="citation-prompt">Question to track</label>
+                    <input
+                      id="citation-prompt"
+                      name="prompt"
+                      required
+                      minLength={8}
+                      maxLength={300}
+                      placeholder="A question your audience asks, e.g. How is EMI calculated?"
+                      className="min-w-0 flex-1 rounded-full border border-rule-strong bg-paper px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint"
+                    />
+                    <button type="submit" className="rounded-full border border-rule-strong bg-paper px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
+                      Track
+                    </button>
+                  </form>
+                )}
+                {tracked.length < 8 && target && suggestions.length > 0 && (
+                  <div className="mt-3">
+                    <p className={muted}>From your Search Console questions:</p>
+                    <ul className="mt-1 flex flex-wrap gap-2">
+                      {suggestions.slice(0, 6).map((item) => (
+                        <li key={item.keyword_cluster_id}>
+                          <form action={trackCitationPrompt}>
+                            <input type="hidden" name="site_host" value={target.host} />
+                            <input type="hidden" name="prompt" value={item.prompt} />
+                            <input type="hidden" name="keyword_cluster_id" value={item.keyword_cluster_id} />
+                            <button type="submit" className="rounded-full border border-rule px-2.5 py-1 text-xs text-ink-soft hover:bg-sunk">
+                              + {item.prompt}
+                            </button>
+                          </form>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         )}

@@ -20,8 +20,9 @@ from app.core.config import Settings, get_settings
 from app.core.context import Role, TenantContext
 from app.db.models import AgentMessage, AgentSession, AgentTask, Routine, Site
 from app.domain.github_adapter import GitHubDeploymentAdapter
-from app.domain.routines import Cadence, RoutineSchedule, initial_run_at
+from app.domain.routines import PAID_ROUTINE_KINDS, Cadence, RoutineSchedule, initial_run_at
 from app.domain.skills import SKILLS, RequestedCadence, Skill, SkillEffect, parse_cadence, route
+from app.services.ai_citations import AiCitationService
 from app.services.briefs import ContentBriefService
 from app.services.competitors import CompetitorService
 from app.services.github_connector import credential_for_site
@@ -346,12 +347,19 @@ class AgentService:
         if routine is None:
             # A one-off invocation creates the routine parked, never enabled:
             # asking for one run must not silently start a recurring schedule.
-            schedule = RoutineSchedule(cadence=Cadence.DAILY, hour_utc=DEFAULT_SCHEDULE_HOUR_UTC)
+            # A routine that spends the workspace's AI key is parked weekly, so
+            # enabling it later can never start a daily spend.
+            paid = skill.routine_kind in PAID_ROUTINE_KINDS
+            parked = Cadence.WEEKLY if paid else Cadence.DAILY
+            schedule = RoutineSchedule(
+                cadence=parked, hour_utc=DEFAULT_SCHEDULE_HOUR_UTC, isodow=1 if paid else None
+            )
             routine = Routine(
                 tenant_id=self.context.tenant_id,
                 site_id=site.id,
                 kind=skill.routine_kind,
-                cadence=Cadence.DAILY.value,
+                cadence=parked.value,
+                schedule_isodow=1 if paid else None,
                 schedule_hour_utc=DEFAULT_SCHEDULE_HOUR_UTC,
                 schedule_minute_utc=0,
                 enabled=False,
@@ -450,6 +458,7 @@ class AgentService:
             "sitemap_review": self._read_sitemap,
             "competitor_pages": self._read_competitors,
             "ai_visibility": self._read_ai_visibility,
+            "ai_citations": self._read_ai_citations,
             "weekly_report": self._read_weekly_report,
             "routines": self._read_routines,
         }
@@ -637,6 +646,41 @@ class AgentService:
             "observe what any answer engine actually said; that needs a certified "
             "provider, which is not connected.",
             [{"kind": "ai_visibility_snapshot", "id": str(latest.id)}],
+        )
+
+    async def _read_ai_citations(self, site: Site) -> SkillAnswer:
+        latest, observations, history = await AiCitationService(
+            self.session, self.context
+        ).report(site.id, history=2)
+        if latest is None:
+            return _no_evidence(
+                "AI citation run",
+                "Track a few questions under AI citations, store a Claude or OpenAI key, "
+                "then run the AI citation routine.",
+            )
+        names = {"anthropic": "Claude", "openai": "ChatGPT"}
+        answered = [row for row in observations if row.status == "answered"]
+        lines = []
+        for row in answered:
+            verdict = (
+                f"cited (source #{row.own_citation_rank})" if row.site_cited
+                else "named, not cited" if row.site_mentioned
+                else "not cited"
+            )
+            lines.append(f"{names.get(row.provider, row.provider)} — {row.prompt}: {verdict}")
+        failed = len(observations) - len(answered)
+        trend = ""
+        if len(history) > 1 and history[1].answers:
+            trend = f" (previous run: {history[1].cited} of {history[1].answers})"
+        return SkillAnswer(
+            f"In the latest run, {site.name} was cited in {latest.cited} of "
+            f"{latest.answers} answers and named in {latest.mentioned}{trend}:\n\n"
+            f"{_bullet(lines)}\n\n"
+            + (f"{failed} question(s) got no answer; the run's errors say why.\n\n" if failed else "")
+            + "Observed through each provider's API with web search, which is close to "
+            "but not the same as the consumer apps. Answers vary between runs, so read "
+            "this as a sample, not a ranking.",
+            [{"kind": "ai_citation_run", "id": str(latest.id)}],
         )
 
     async def _read_weekly_report(self, site: Site) -> SkillAnswer:
