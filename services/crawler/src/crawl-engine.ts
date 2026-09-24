@@ -4,6 +4,7 @@ import {load} from "cheerio";
 import {XMLParser} from "fast-xml-parser";
 import robotsParserModule from "robots-parser";
 
+import {assessCrawlerAccess, checkLlmsTxt, type AiAccessReport, type RobotsPolicy} from "./ai-access.js";
 import type {FetchResource, LinkObservation, PageObservation} from "./types.js";
 
 const USER_AGENT = "SEOAutopilotBot";
@@ -34,7 +35,6 @@ function readVisibleText(fragment: Fragment): string {
 const countWords = (text: string): number => (text ? text.split(" ").length : 0);
 
 const MAX_LINKS_PER_PAGE = 5_000;
-type RobotsPolicy = {isAllowed(url: string, userAgent?: string): boolean | undefined};
 const parseRobots = robotsParserModule as unknown as (url: string, body: string) => RobotsPolicy;
 
 export type SitemapSource = {
@@ -53,6 +53,7 @@ export type CrawlResult = {
   fetchErrors: number;
   discoveryTruncated: boolean;
   sitemaps: SitemapSource[];
+  aiAccess: AiAccessReport;
 };
 
 export function normalizeCandidate(raw: string, base: URL, host: string): string | null {
@@ -149,7 +150,13 @@ export async function crawlSite(
   const discoveryBudget = Math.max(maxPages, maxPages * 10);
   const robotsUrl = new URL("/robots.txt", root);
   let robotsText = "";
-  try { robotsText = (await fetchResource(robotsUrl)).body; } catch { robotsText = ""; }
+  let robotsState: AiAccessReport["robots_txt"] = "unreachable";
+  try {
+    const robots = await fetchResource(robotsUrl);
+    // A missing robots.txt admits everyone; its body is often an HTML 404 page.
+    robotsState = robots.status === 200 ? "found" : robots.status === 404 || robots.status === 410 ? "missing" : "unreachable";
+    robotsText = robots.status === 200 ? robots.body : "";
+  } catch { robotsText = ""; }
   const policy = parseRobots(robotsUrl.toString(), robotsText);
   const wellKnownSitemap = new URL("/sitemap.xml", root).toString();
   const sitemapCandidates = new Map<string, "well_known" | "robots_txt">([
@@ -274,5 +281,13 @@ export async function crawlSite(
     });
   }
   report();
-  return {observations, skippedByRobots, fetchErrors, discoveryTruncated, sitemaps};
+  // Every URL the crawl reached, including those robots kept us from, so a
+  // path closed to one bot is sampled even when it is closed to ours too.
+  const aiAccess: AiAccessReport = {
+    schema_version: 1,
+    robots_txt: robotsState,
+    crawlers: assessCrawlerAccess(policy, root.toString(), [...seen]),
+    llms_txt: await checkLlmsTxt(root, policy, USER_AGENT, fetchResource),
+  };
+  return {observations, skippedByRobots, fetchErrors, discoveryTruncated, sitemaps, aiAccess};
 }

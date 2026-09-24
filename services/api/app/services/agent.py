@@ -598,6 +598,33 @@ class AgentService:
             )
             for name, detail in factors.items()
         ]
+        access = factors.get("ai_crawler_access")
+        detail = access.get("detail", {}) if isinstance(access, dict) else {}
+        blocked = [
+            f"{row.get('token')} ({row.get('operator')}) is refused on "
+            f"{(1 - float(row.get('allowed_share', 0))) * 100:.0f}% of pages"
+            for row in detail.get("retrieval_blocked") or []
+            if isinstance(row, dict)
+        ]
+        training = [
+            str(row.get("token"))
+            for row in detail.get("training_blocked") or []
+            if isinstance(row, dict)
+        ]
+        llms = (latest.factors_json or {}).get("llms_txt")
+        notes: list[str] = []
+        if blocked:
+            notes.append(
+                "robots.txt keeps these answer-engine crawlers out, so they cannot "
+                f"cite those pages:\n\n{_bullet(blocked)}"
+            )
+        if training:
+            notes.append(
+                f"Training crawlers refused (a choice that does not affect citations): "
+                f"{', '.join(training)}."
+            )
+        if isinstance(llms, dict) and llms.get("status"):
+            notes.append(f"llms.txt: {llms['status']} (reported, not scored).")
         trend = ""
         if len(snapshots) > 1:
             delta = latest.readiness_score - snapshots[1].readiness_score
@@ -605,7 +632,8 @@ class AgentService:
         return SkillAnswer(
             f"Answer-engine readiness for {site.name} is "
             f"{latest.readiness_score:.0f}/100{trend}:\n\n{_bullet(lines)}\n\n"
-            "This measures how well the site is positioned to be cited. It does not "
+            + "".join(f"{note}\n\n" for note in notes)
+            + "This measures how well the site is positioned to be cited. It does not "
             "observe what any answer engine actually said; that needs a certified "
             "provider, which is not connected.",
             [{"kind": "ai_visibility_snapshot", "id": str(latest.id)}],

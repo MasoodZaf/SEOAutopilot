@@ -8,6 +8,7 @@ import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 import {pilotPath, selectSite} from "../site-selection.mjs";
 import {runRoutineNow, scheduleRoutine, sendMessage, startConversation} from "./actions";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
+import {readinessBreakdown} from "./readiness.mjs";
 import {
   type AgentMessage,
   type AgentSession,
@@ -526,11 +527,45 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               {visibility.length === 0 ? (
                 <div className="mt-3"><Empty>No readiness snapshot yet. Run the AI visibility routine after a crawl.</Empty></div>
               ) : (
-                <p className="mt-3 text-3xl font-semibold text-ink">
-                  {visibility[0]?.readiness_score.toFixed(0)}
-                  <span className="ml-1 text-base font-normal text-ink-faint">/ 100</span>
-                  <span className="ml-3 text-xs font-normal text-ink-faint">as of {visibility[0]?.captured_on}</span>
-                </p>
+                (() => {
+                  const view = readinessBreakdown(visibility[0]?.factors_json);
+                  return (
+                    <>
+                      <p className="mt-3 text-3xl font-semibold text-ink tabular">
+                        {visibility[0]?.readiness_score.toFixed(0)}
+                        <span className="ml-1 text-base font-normal text-ink-faint">/ 100</span>
+                        <span className="ml-3 text-xs font-normal text-ink-faint">as of {visibility[0]?.captured_on}</span>
+                      </p>
+                      <dl className="mt-4 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+                        {view.factors.map((row) => (
+                          <div key={row.key} className="flex justify-between gap-3">
+                            <dt className="text-ink-soft">{row.label}</dt>
+                            <dd className="tabular text-ink">{row.percent === null ? "Not measured" : `${row.percent}%`}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                      {view.blocked.length > 0 && (
+                        <div className="mt-4">
+                          <p className="text-sm font-medium text-ink">robots.txt keeps these answer engines out</p>
+                          <ul className="mt-1 space-y-0.5 text-sm text-ink-soft">
+                            {view.blocked.map((row) => (
+                              <li key={row.token}>
+                                {row.token} <span className="text-ink-faint">({row.operator})</span>, refused on <span className="tabular">{row.refusedPercent}%</span> of pages
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {(view.training.length > 0 || view.llmsTxt) && (
+                        <p className={`${muted} mt-4 text-pretty`}>
+                          Not scored:
+                          {view.training.length > 0 && ` training crawlers refused (${view.training.join(", ")}), which does not affect citations.`}
+                          {view.llmsTxt && ` llms.txt: ${view.llmsTxt}.`}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()
               )}
             </div>
           </section>

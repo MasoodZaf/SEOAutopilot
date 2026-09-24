@@ -280,6 +280,8 @@ def test_readiness_is_scored_only_from_first_party_evidence() -> None:
         "entity_markup",
         "question_answer_markup",
         "question_topic_coverage",
+        # robots.txt as the crawler fetched it: still first-party evidence.
+        "ai_crawler_access",
     }
     # The only tables read are our own observations and clusters.
     compact = " ".join(PAGE_EVIDENCE_SQL.split())
@@ -298,6 +300,66 @@ def test_the_snapshot_table_admits_no_citation_source_but_none() -> None:
     assert "CHECK(citation_source IN('none'))" in migration
 
 
+def _access(robots: str = "found", **overrides: tuple[int, int]) -> dict[str, object]:
+    purposes = {
+        "OAI-SearchBot": "retrieval", "PerplexityBot": "retrieval",
+        "Claude-SearchBot": "retrieval", "GPTBot": "training", "ClaudeBot": "training",
+    }
+    crawlers = []
+    for token, purpose in purposes.items():
+        allowed, sampled = overrides.get(token.replace("-", "_"), (10, 10))
+        crawlers.append({
+            "token": token, "operator": "x", "purpose": purpose,
+            "allowed_urls": allowed, "sampled_urls": sampled,
+            "homepage_allowed": allowed > 0,
+        })
+    return {
+        "schema_version": 1, "robots_txt": robots, "crawlers": crawlers,
+        "llms_txt": {"status": "missing", "bytes": 0, "links": 0, "has_title": False},
+    }
+
+
+def test_blocking_training_bots_costs_nothing() -> None:
+    from app.routines.ai_visibility import crawler_access_factor
+
+    factor, llms = crawler_access_factor(_access(GPTBot=(0, 10), ClaudeBot=(0, 10)))
+    assert factor["measured"] is True
+    assert factor["value"] == 1.0
+    assert [row["token"] for row in factor["detail"]["training_blocked"]] == ["GPTBot", "ClaudeBot"]
+    assert factor["detail"]["retrieval_blocked"] == []
+    assert llms == {"status": "missing", "bytes": 0, "links": 0, "has_title": False}
+
+
+def test_blocked_retrieval_bots_lower_the_factor_by_their_blocked_share() -> None:
+    from app.routines.ai_visibility import crawler_access_factor
+
+    factor, _ = crawler_access_factor(_access(PerplexityBot=(0, 10), OAI_SearchBot=(5, 10)))
+    # (0.5 + 0.0 + 1.0) / 3 retrieval bots
+    assert factor["value"] == 0.5
+    blocked = {row["token"]: row for row in factor["detail"]["retrieval_blocked"]}
+    assert set(blocked) == {"OAI-SearchBot", "PerplexityBot"}
+    assert blocked["PerplexityBot"]["homepage_allowed"] is False
+
+
+def test_crawl_access_is_unmeasured_on_old_crawls_and_unreadable_robots() -> None:
+    import json as _json
+
+    from app.routines.ai_visibility import crawler_access_factor
+
+    assert crawler_access_factor(None)[0]["measured"] is False
+    assert crawler_access_factor({})[0]["measured"] is False
+    assert crawler_access_factor(_access(robots="unreachable"))[0]["measured"] is False
+    # asyncpg hands jsonb back as text unless a codec is registered.
+    assert crawler_access_factor(_json.dumps(_access()))[0]["value"] == 1.0
+
+
+def test_crawl_access_is_read_from_the_tenant_scoped_crawl() -> None:
+    from app.routines.ai_visibility import CRAWL_ACCESS_SQL
+
+    compact = CRAWL_ACCESS_SQL.replace(" ", "")
+    assert "tenant_id=$1" in compact and "id=$2" in compact
+
+
 def test_an_unmeasured_factor_lowers_confidence_rather_than_scoring_zero() -> None:
     from app.routines.ai_visibility import FACTOR_WEIGHTS
 
@@ -308,6 +370,7 @@ def test_an_unmeasured_factor_lowers_confidence_rather_than_scoring_zero() -> No
         "entity_markup": {"value": 1.0, "measured": True},
         "question_answer_markup": {"value": 1.0, "measured": True},
         "question_topic_coverage": {"value": 0.0, "measured": False},
+        "ai_crawler_access": {"value": 1.0, "measured": True},
     }
     measured_weight = sum(w for n, w in FACTOR_WEIGHTS.items() if factors[n]["measured"])
     score = (
