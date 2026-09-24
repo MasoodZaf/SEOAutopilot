@@ -34,6 +34,7 @@ const list = (value) => (Array.isArray(value) ? value.map(record) : []);
  *   blocked: Array<{token: string, operator: string, refusedPercent: number}>,
  *   training: string[],
  *   llmsTxt: string | null,
+ *   canProposeLlmsTxt: boolean,
  * }}
  */
 export function readinessBreakdown(factorsJson) {
@@ -62,5 +63,8 @@ export function readinessBreakdown(factorsJson) {
     blocked,
     training,
     llmsTxt: typeof status === "string" ? (LLMS_TXT[status] ?? null) : null,
+    // Only a file the crawl saw missing is proposed; one that exists, even an
+    // invalid one, is the site owner's to edit.
+    canProposeLlmsTxt: status === "missing",
   };
 }

@@ -580,6 +580,9 @@ class Proposal(Base):
     opportunity_id: Mapped[UUID | None] = mapped_column(ForeignKey("opportunity.id"))
     page_id: Mapped[UUID] = mapped_column(ForeignKey("page.id"), nullable=False)
     content_draft_id: Mapped[UUID | None] = mapped_column()
+    # The deterministic generator that wrote a whole file ("llms_txt"), for a
+    # proposal that starts from neither a finding nor a content draft.
+    generator: Mapped[str | None] = mapped_column(String(40))
     author_id: Mapped[UUID]
     title: Mapped[str] = mapped_column(String(240))
     rationale: Mapped[str] = mapped_column(Text)

@@ -5,7 +5,7 @@ import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
 
-import {safeHost} from "../site-selection.mjs";
+import {pilotPath, safeHost} from "../site-selection.mjs";
 import type {AgentSession} from "./model";
 import {resolveTab, workspacePath} from "./paths";
 
@@ -278,4 +278,28 @@ export async function submitDraft(formData: FormData): Promise<never> {
     throw error;
   }
   redirectFresh(`${back}?submitted=1`);
+}
+
+/**
+ * Propose an llms.txt built from the last crawl.
+ *
+ * It becomes an ordinary new-file proposal -- two approvers who are not its
+ * author, then a pull request a person merges -- so success lands on the
+ * dashboard's proposal list rather than claiming anything was published.
+ */
+export async function proposeLlmsTxt(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  const back = (error: string) => workspacePath(host, {tab: "reports", error});
+  let siteId: string | undefined;
+  try {
+    siteId = await siteIdFor(host);
+    if (!siteId) redirectFresh(back("site_not_found"));
+    await apiJson(`/v1/sites/${siteId}/llms-txt/proposal`, {method: "POST"});
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redirectFresh(back(safeCode(error.code)));
+    throw error;
+  }
+  revalidatePath("/pilot");
+  redirectFresh(pilotPath(host, {proposed: "llms_txt"}));
 }

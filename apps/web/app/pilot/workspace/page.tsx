@@ -6,7 +6,7 @@ import {redirect} from "next/navigation";
 import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {pilotPath, selectSite} from "../site-selection.mjs";
-import {runRoutineNow, scheduleRoutine, sendMessage, startConversation} from "./actions";
+import {proposeLlmsTxt, runRoutineNow, scheduleRoutine, sendMessage, startConversation} from "./actions";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {readinessBreakdown} from "./readiness.mjs";
 import {
@@ -562,6 +562,17 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                           {view.training.length > 0 && ` training crawlers refused (${view.training.join(", ")}), which does not affect citations.`}
                           {view.llmsTxt && ` llms.txt: ${view.llmsTxt}.`}
                         </p>
+                      )}
+                      {view.canProposeLlmsTxt && target && (
+                        <form action={proposeLlmsTxt} className="mt-4 flex flex-wrap items-center gap-3">
+                          <input type="hidden" name="site_host" value={target.host} />
+                          <button type="submit" className="rounded-full border border-rule-strong bg-paper px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk">
+                            Propose an llms.txt
+                          </button>
+                          <span className={`${muted} text-pretty`}>
+                            Lists the pages the last crawl found indexable. Two people approve it; it ships as a pull request.
+                          </span>
+                        </form>
                       )}
                     </>
                   );

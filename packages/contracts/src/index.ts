@@ -36,6 +36,7 @@ export const ProposalSchema = z.object({
   // Null for a new blog post, which starts from a reviewed content draft.
   opportunity_id: z.string().uuid().nullable(),
   content_draft_id: z.string().uuid().nullable().optional(),
+  generator: z.string().nullable().optional(),
   page_id: z.string().uuid(),
   author_id: z.string().uuid(),
   title: z.string().min(3).max(240),

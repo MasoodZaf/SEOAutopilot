@@ -22,6 +22,13 @@ test("blocked answer crawlers are listed apart from refused training crawlers", 
   assert.deepEqual(view.blocked, [{token: "PerplexityBot", operator: "Perplexity", refusedPercent: 75}]);
   assert.deepEqual(view.training, ["GPTBot"]);
   assert.equal(view.llmsTxt, "Not served");
+  assert.equal(view.canProposeLlmsTxt, true);
+});
+
+test("an llms.txt that exists, even an invalid one, is never proposed over", () => {
+  for (const status of ["present", "invalid", "unreachable", "disallowed"]) {
+    assert.equal(readinessBreakdown({factors: {}, llms_txt: {status}}).canProposeLlmsTxt, false);
+  }
 });
 
 test("an unmeasured factor reads as unmeasured, not as zero", () => {

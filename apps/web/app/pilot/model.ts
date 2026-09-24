@@ -39,6 +39,7 @@ export type CalibrationItem = {
   calibration_run_id: string;
   opportunity_id: string | null;
   content_draft_id?: string | null;
+  generator?: string | null;
   page_id: string;
   page_url?: string | null;
   ordinal: number;

@@ -697,6 +697,7 @@ class ProposalRead(BaseModel):
     # Null for a new blog post, which comes from a reviewed content draft.
     opportunity_id: UUID | None
     content_draft_id: UUID | None = None
+    generator: str | None = None
     page_id: UUID
     # The public URL the change affects. For a new post this is where it will
     # be published, which is not derivable from its repository path.

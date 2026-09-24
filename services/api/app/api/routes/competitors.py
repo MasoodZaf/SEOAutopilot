@@ -16,10 +16,14 @@ from app.api.schemas import (
     CompetitorRead,
     CompetitorScanEnvelope,
     CompetitorScanRead,
+    ProposalEnvelope,
+    ProposalRead,
 )
 from app.core.auth import TenantContextDependency
+from app.core.config import get_settings
 from app.db.session import TenantSession
 from app.services.competitors import CompetitorService
+from app.services.llms_txt import LlmsTxtService
 
 router = APIRouter(prefix="/v1", tags=["competitors"])
 
@@ -127,4 +131,23 @@ async def list_ai_visibility(
             "count": len(snapshots),
             "citation_source": "none",
         },
+    )
+
+
+@router.post(
+    "/sites/{site_id}/llms-txt/proposal",
+    response_model=ProposalEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_llms_txt(
+    site_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> ProposalEnvelope:
+    """Propose an llms.txt built from the last crawl, when the site serves none.
+
+    It is a new-file proposal like any other: high risk, approved by two people
+    who did not create it, and deployed as a pull request a person merges.
+    """
+    proposal = await LlmsTxtService(session, context, get_settings()).propose(site_id)
+    return ProposalEnvelope(
+        data=ProposalRead.model_validate(proposal), meta={"trace_id": context.trace_id}
     )

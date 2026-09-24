@@ -112,12 +112,13 @@ class ProposalService:
         site: Site,
         *,
         page_id: UUID,
-        content_draft_id: UUID,
+        content_draft_id: UUID | None,
         title: str,
         rationale: str,
         target_path: str,
         after_content: str,
         evidence_refs: dict[str, Any],
+        generator: str | None = None,
     ) -> Proposal:
         """A proposal that adds a file which does not exist yet.
 
@@ -135,6 +136,7 @@ class ProposalService:
             opportunity_id=None,
             page_id=page_id,
             content_draft_id=content_draft_id,
+            generator=generator,
             title=title,
             rationale=rationale,
             target_type="github_file",
@@ -160,6 +162,7 @@ class ProposalService:
         after_content: str,
         evidence_refs: dict[str, Any],
         expires_in_days: int,
+        generator: str | None = None,
     ) -> Proposal:
         """Validate, evaluate policy, and record one proposal.
 
@@ -213,6 +216,7 @@ class ProposalService:
             opportunity_id=opportunity_id,
             page_id=page_id,
             content_draft_id=content_draft_id,
+            generator=generator,
             author_id=self.context.actor_id,
             title=title,
             rationale=rationale,
@@ -238,6 +242,7 @@ class ProposalService:
             "site_id": str(site_id),
             "opportunity_id": str(opportunity_id) if opportunity_id else None,
             "content_draft_id": str(content_draft_id) if content_draft_id else None,
+            "generator": generator,
             "author_id": str(self.context.actor_id),
             "risk": policy.risk,
             "status": initial_status,
