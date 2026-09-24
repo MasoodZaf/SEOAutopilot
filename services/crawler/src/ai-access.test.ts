@@ -59,9 +59,18 @@ test("llms.txt is missing on 404 and on a redirect away from the file",async()=>
   assert.equal(redirected.status,"missing");
 });
 
-test("an app shell served at /llms.txt is invalid, not present",async()=>{
+test("an app shell served at /llms.txt with a 200 means the file is missing",async()=>{
   const policy=parseRobots("https://a.test/robots.txt","");
-  const result=await checkLlmsTxt(new URL("https://a.test/"),policy,"SEOAutopilotBot",fetcherFor([["https://a.test/llms.txt",resource("https://a.test/llms.txt","<!doctype html><div id=root></div>","text/html")]]));
+  const shell=await checkLlmsTxt(new URL("https://a.test/"),policy,"SEOAutopilotBot",fetcherFor([["https://a.test/llms.txt",resource("https://a.test/llms.txt","<!doctype html><div id=root></div>","text/html")]]));
+  assert.equal(shell.status,"missing");
+  // Even when the server labels the shell as plain text.
+  const mislabelled=await checkLlmsTxt(new URL("https://a.test/"),policy,"SEOAutopilotBot",fetcherFor([["https://a.test/llms.txt",resource("https://a.test/llms.txt","<!DOCTYPE html><html></html>","text/plain")]]));
+  assert.equal(mislabelled.status,"missing");
+});
+
+test("a text file without an llms.txt title is invalid, and left to the owner",async()=>{
+  const policy=parseRobots("https://a.test/robots.txt","");
+  const result=await checkLlmsTxt(new URL("https://a.test/"),policy,"SEOAutopilotBot",fetcherFor([["https://a.test/llms.txt",resource("https://a.test/llms.txt","Acme docs\n[Docs](/docs)","text/plain")]]));
   assert.equal(result.status,"invalid");
 });
 

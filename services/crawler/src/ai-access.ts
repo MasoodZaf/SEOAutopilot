@@ -103,9 +103,15 @@ export async function checkLlmsTxt(
   if (resource.status === 404 || resource.status === 410 || landedElsewhere) return {status: "missing", ...empty};
   if (resource.status !== 200) return {status: "unreachable", ...empty};
   const body = resource.body.slice(0, MAX_LLMS_TXT_BYTES);
+  // A single-page app answers every path with its HTML shell and a 200. That
+  // is the site saying "no such file", not a malformed llms.txt, and treating
+  // it as invalid would refuse the one fix the site needs.
+  if (resource.contentType.includes("text/html") || /^\s*<(!doctype|html)\b/i.test(body)) {
+    return {status: "missing", ...empty};
+  }
   const shape = describeLlmsTxt(body);
   const bytes = Buffer.byteLength(resource.body);
-  if (resource.contentType.includes("text/html") || !shape.valid) {
+  if (!shape.valid) {
     return {status: "invalid", bytes, links: shape.links, has_title: shape.has_title};
   }
   return {status: "present", bytes, links: shape.links, has_title: shape.has_title};
