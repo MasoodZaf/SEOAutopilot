@@ -183,18 +183,22 @@ export function Metric({
  unit,
  hint,
  className,
+ size = "figure",
 }: {
  label: string;
  value: React.ReactNode;
  unit?: string;
  hint?: React.ReactNode;
  className?: string;
+ /** "word" for a reading that is a word, not a number: a nine-letter word at
+  * figure size is wider than a fifth of the page and runs into its neighbour. */
+ size?: "figure" | "word";
 }) {
  return (
     <div className={cn("flex min-w-0 flex-col gap-2", className)}>
       <dt className="eyebrow">{label}</dt>
-      <dd className="flex items-baseline gap-1.5">
-        <span className="figure text-[34px] text-ink">{value}</span>
+      <dd className="flex min-w-0 items-baseline gap-1.5">
+        <span className={cn("figure min-w-0 break-words text-ink", size === "word" ? "text-[26px]" : "text-[34px]")}>{value}</span>
         {unit ? <span className="font-mono text-[12px] text-ink-faint">{unit}</span> : null}
       </dd>
       {hint ? <dd className="text-[12px] leading-5 text-pretty text-ink-faint">{hint}</dd> : null}
