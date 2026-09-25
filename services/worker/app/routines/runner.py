@@ -9,6 +9,7 @@ reason rather than reporting a success they did not achieve.
 import json
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
@@ -16,7 +17,10 @@ from uuid import UUID
 from redis.exceptions import ResponseError
 
 from app.briefs.generate import generate_briefs
+from app.citations import scan as citation_scan
+from app.citations.models import CitationModel
 from app.competitors.scan import run_competitor_scan
+from app.content_drafts.consumer import tenant_key
 from app.keywords.analysis import run_keyword_analysis
 from app.routines.ai_visibility import build_ai_visibility_snapshot
 from app.routines.reports import build_weekly_digest, content_hash
@@ -472,6 +476,42 @@ async def _run_ai_visibility_scan(
     }, None
 
 
+@dataclass(frozen=True, slots=True)
+class CitationSettings:
+    """Which answer engines to ask, and the workspace's monthly spend cap."""
+
+    models: dict[str, tuple[CitationModel, str]]
+    monthly_budget_micros: int
+
+
+async def _collect_citations(
+    connection: Any,
+    tenant_id: UUID,
+    site_id: UUID,
+    encryption_key: bytes | None,
+    citations: CitationSettings | None,
+) -> citation_scan.Collected:
+    if citations is None or not citations.models:
+        return citation_scan.Collected(skip="citation_models_unavailable")
+    if encryption_key is None:
+        return citation_scan.Collected(skip="credential_key_unavailable")
+    key = encryption_key
+
+    async def read_key(credential: str) -> str | None:
+        return await tenant_key(connection, tenant_id, credential, key)
+
+    try:
+        return await citation_scan.collect(
+            connection, tenant_id, site_id,
+            models=citations.models,
+            read_key=read_key,
+            monthly_budget_micros=citations.monthly_budget_micros,
+        )
+    except ValueError:
+        # A stored key that fails its integrity check is not used.
+        return citation_scan.Collected(skip="tenant_credential_unreadable")
+
+
 async def _run_content_briefs(
     connection: Any, tenant_id: UUID, site_id: UUID, run_id: UUID
 ) -> tuple[str, dict[str, Any], str | None]:
@@ -606,6 +646,7 @@ async def process_run(
     today: date | None = None,
     encryption_key: bytes | None = None,
     fetcher: Any | None = None,
+    citations: CitationSettings | None = None,
 ) -> None:
     row = await connection.fetchrow(CLAIM_RUN_SQL, run_id, tenant_id, LEASE_MINUTES)
     if row is None:
@@ -624,6 +665,14 @@ async def process_run(
             skip_reason="routine_kind_not_implemented",
         )
         return
+
+    collected: citation_scan.Collected | None = None
+    if kind == "ai_citation_scan":
+        # Model calls take seconds to minutes; make them before the
+        # transaction opens so no lock is held while a provider answers.
+        collected = await _collect_citations(
+            connection, tenant_id, site_id, encryption_key, citations
+        )
 
     try:
         async with connection.transaction():
@@ -644,6 +693,10 @@ async def process_run(
                 status, summary, skip = await _run_ai_visibility_scan(
                     connection, tenant_id, site_id, run_id,
                     today or datetime.now(UTC).date(),
+                )
+            elif kind == "ai_citation_scan" and collected is not None:
+                status, summary, skip = await citation_scan.persist(
+                    connection, tenant_id, site_id, run_id, collected
                 )
             elif kind == "content_briefs":
                 status, summary, skip = await _run_content_briefs(
@@ -721,6 +774,7 @@ async def run_routine_consumer(
     consumer: str,
     encryption_key: bytes | None = None,
     fetcher: Any | None = None,
+    citations: CitationSettings | None = None,
 ) -> None:
     try:
         await streams.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
@@ -753,6 +807,7 @@ async def run_routine_consumer(
                         UUID(fields["aggregate_id"]),
                         encryption_key=encryption_key,
                         fetcher=fetcher,
+                        citations=citations,
                     )
                 await streams.xack(STREAM, GROUP, message_id)
             except (KeyError, ValueError):

@@ -123,7 +123,7 @@ export async function completeCrawl(pool: Pool, crawl: ClaimedCrawl, result: Cra
     const collapse=assessContentCollapse(result.observations);
     const partial=result.observations.length>=crawl.maxPages||result.discoveryTruncated||result.fetchErrors>0;
     const finalStatus=collapse.collapsed?"failed":partial?"partial":"completed";
-    const summary={pages_observed:result.observations.length,skipped_by_robots:result.skippedByRobots,fetch_errors:result.fetchErrors,discovery_truncated:result.discoveryTruncated,truncated_link_pages:result.observations.filter(item=>item.linksTruncated).length,max_pages:crawl.maxPages,max_depth:crawl.maxDepth,sitemaps_found:result.sitemaps.length,sitemap_urls_declared:result.sitemaps.reduce((total,item)=>total+item.inScopeUrls.length,0),distinct_content_hashes:collapse.distinctHashes,content_top_share:Number(collapse.topShare.toFixed(4))};
+    const summary={pages_observed:result.observations.length,skipped_by_robots:result.skippedByRobots,fetch_errors:result.fetchErrors,discovery_truncated:result.discoveryTruncated,truncated_link_pages:result.observations.filter(item=>item.linksTruncated).length,max_pages:crawl.maxPages,max_depth:crawl.maxDepth,sitemaps_found:result.sitemaps.length,sitemap_urls_declared:result.sitemaps.reduce((total,item)=>total+item.inScopeUrls.length,0),distinct_content_hashes:collapse.distinctHashes,content_top_share:Number(collapse.topShare.toFixed(4)),ai_access:result.aiAccess};
     // A collapsed crawl is terminal rather than requeued: refetching the same
     // wall produces the same wall. The observations stay so the shell can be
     // inspected, but no crawl.completed event is emitted, so analysis never

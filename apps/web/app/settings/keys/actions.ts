@@ -85,13 +85,14 @@ export async function revokeCredentialAction(formData: FormData): Promise<never>
   redirectFresh(`${PAGE}?revoked=${encodeURIComponent(provider)}`);
 }
 
-const AI_PROVIDERS = new Set(["anthropic_api_key", "openai_api_key"]);
+const AI_PROVIDERS = new Set(["anthropic_api_key", "openai_api_key", "perplexity_api_key"]);
 
 /**
- * Store a key this workspace's AI blog drafts are written with.
+ * Store a key this workspace's AI features run on: blog drafts and the
+ * citation checks.
  *
- * Bring-your-own-key: drafting never falls back to a deployment key, so a
- * workspace without one simply cannot request drafts from that provider.
+ * Bring-your-own-key: neither falls back to a deployment key, so a workspace
+ * without one simply cannot use that provider.
  */
 export async function saveAiKeyAction(formData: FormData): Promise<never> {
   const provider = String(formData.get("provider") ?? "");

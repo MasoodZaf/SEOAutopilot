@@ -170,3 +170,49 @@ export type ContentDraftDetail = ContentDraftSummary & {
   cost_micros: number;
   proposal_id: string | null;
 };
+
+export type AiCitationPrompt = {
+  id: string;
+  site_id: string;
+  prompt: string;
+  source: "manual" | "question_cluster" | string;
+  active: boolean;
+  created_at: string;
+};
+
+export type AiCitationSuggestion = {prompt: string; keyword_cluster_id: string};
+
+export type AiCitationObservation = {
+  prompt_id: string;
+  prompt: string;
+  provider: "anthropic" | "openai" | string;
+  model: string;
+  status: "answered" | "failed" | string;
+  error_code: string | null;
+  site_cited: boolean;
+  site_mentioned: boolean;
+  own_citation_rank: number | null;
+  cited_hosts: string[];
+  own_urls: string[];
+  competitor_hosts: string[];
+  answer_excerpt: string | null;
+  observed_at: string;
+};
+
+export type AiCitationRun = {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  prompts_asked: number;
+  answers: number;
+  cited: number;
+  mentioned: number;
+  cost_micros: number;
+  summary_json: Record<string, unknown>;
+};
+
+export type AiCitationReport = {
+  latest: AiCitationRun | null;
+  observations: AiCitationObservation[];
+  history: AiCitationRun[];
+};

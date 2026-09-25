@@ -25,6 +25,8 @@ type Credential = {
 const REASONS: Record<string, string> = {
   anthropic_api_key_invalid:
     "That is not an Anthropic API key. It starts with sk-ant- and comes from console.anthropic.com.",
+  perplexity_api_key_invalid:
+    "That is not a Perplexity API key. It starts with pplx- and comes from perplexity.ai/settings/api.",
   openai_api_key_invalid:
     "That is not an OpenAI API key. It starts with sk- (not sk-ant-) and comes from platform.openai.com.",
   google_client_incomplete: "Enter both the client ID and the client secret.",
@@ -151,9 +153,9 @@ export default async function KeysPage({searchParams}: PageProps) {
           Saved. Anything you connect from now on uses it.
         </p>
       ) : null}
-      {query.revoked === "anthropic_api_key" || query.revoked === "openai_api_key" ? (
+      {query.revoked === "anthropic_api_key" || query.revoked === "openai_api_key" || query.revoked === "perplexity_api_key" ? (
         <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
-          Removed. Drafts can no longer be written with that provider until a key is stored again.
+          Removed. That provider is off for drafts and citation checks until a key is stored again.
         </p>
       ) : query.revoked ? (
         <p className="rounded-xl border border-rule bg-sunk px-3 py-2 text-sm text-ink-soft">
@@ -383,21 +385,23 @@ export default async function KeysPage({searchParams}: PageProps) {
       >
         <div>
           <h2 id="ai-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
-            AI keys for blog drafts
+            Your AI keys
           </h2>
           <p className="mt-1 text-sm text-pretty text-ink-soft">
-            Used for one thing only: writing first drafts of blog posts from your content briefs.
-            Drafts are written with, and billed to, the key you store here &mdash; there is no
-            shared key, so without one of these drafting is simply off. Store either or both; you
-            choose which writes each draft. Every draft is reviewed and approved by a person before
-            anything is published.
+            Used for two things. <strong className="font-medium text-ink">Blog drafts</strong> (Claude or
+            OpenAI) write first drafts from your content briefs; a person reviews and approves every one
+            before anything is published. <strong className="font-medium text-ink">AI answer citations</strong>{" "}
+            (any of the three) ask your tracked questions each week and record whether the answer cites
+            your site. Everything runs on, and is billed to, the key you store here &mdash; there is no
+            shared key, and citation checks stop at a monthly spend cap.
           </p>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           {(
             [
               {provider: "anthropic_api_key", name: "Anthropic (Claude)", where: "console.anthropic.com", placeholder: "sk-ant-..."},
-              {provider: "openai_api_key", name: "OpenAI", where: "platform.openai.com", placeholder: "sk-..."},
+              {provider: "openai_api_key", name: "OpenAI (ChatGPT)", where: "platform.openai.com", placeholder: "sk-..."},
+              {provider: "perplexity_api_key", name: "Perplexity (citations only)", where: "perplexity.ai/settings/api", placeholder: "pplx-..."},
             ] as const
           ).map((item) => {
             const stored = find(credentials, item.provider);

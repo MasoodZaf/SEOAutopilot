@@ -28,6 +28,7 @@ def test_each_intent_routes_to_its_own_skill() -> None:
     assert routed("How is our sitemap coverage?") == "sitemap_review"
     assert routed("How do we compare to competitors?") == "competitor_pages"
     assert routed("What is our AI search visibility?") == "ai_visibility"
+    assert routed("Did ChatGPT or Claude cite us?") == "ai_citations"
     assert routed("Show me the latest weekly report") == "weekly_report"
     assert routed("What routines are scheduled?") == "routines"
     assert routed("What content briefs are queued?") == "content_briefs"
@@ -92,6 +93,7 @@ def test_every_routine_kind_can_be_scheduled_from_chat() -> None:
         "content_briefs",
         "competitor_scan",
         "ai_visibility_scan",
+        "ai_citation_scan",
         "weekly_report",
     }
 
@@ -187,6 +189,9 @@ def test_no_skill_can_deploy_or_approve() -> None:
                 "content_briefs",
                 "competitor_scan",
                 "ai_visibility_scan",
+                # Asks questions with the workspace's own key; writes only
+                # observations, never site content.
+                "ai_citation_scan",
                 "weekly_report",
             }
         else:
@@ -245,3 +250,54 @@ def test_a_politely_phrased_instruction_is_still_an_instruction() -> None:
     # Suppressing questions must not suppress a real request that ends in "?".
     assert routed("Can you run a crawl every day?") == "run_site_audit"
     assert routed("please run an audit") == "run_site_audit"
+
+
+def test_ai_visibility_answer_names_blocked_answer_crawlers(monkeypatch) -> None:
+    """The reader says which answer engines robots.txt shuts out, and keeps
+    training-bot refusals and llms.txt visibly separate from the score."""
+    import asyncio
+    from datetime import date
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.services import agent as agent_module
+
+    snapshot = SimpleNamespace(
+        id=uuid4(),
+        readiness_score=62.0,
+        captured_on=date(2026, 9, 24),
+        factors_json={
+            "factors": {
+                "crawlable_indexable": {"value": 0.9, "measured": True},
+                "ai_crawler_access": {
+                    "value": 0.6667,
+                    "measured": True,
+                    "detail": {
+                        "retrieval_blocked": [
+                            {"token": "PerplexityBot", "operator": "Perplexity",
+                             "allowed_share": 0.0, "homepage_allowed": False},
+                        ],
+                        "training_blocked": [
+                            {"token": "GPTBot", "operator": "OpenAI",
+                             "allowed_share": 0.0, "homepage_allowed": False},
+                        ],
+                    },
+                },
+            },
+            "llms_txt": {"status": "missing", "bytes": 0, "links": 0, "has_title": False},
+        },
+    )
+
+    class FakeCompetitors:
+        def __init__(self, *_: object) -> None: ...
+
+        async def ai_visibility_history(self, *_: object) -> list[SimpleNamespace]:
+            return [snapshot]
+
+    monkeypatch.setattr(agent_module, "CompetitorService", FakeCompetitors)
+    service = agent_module.AgentService(SimpleNamespace(), SimpleNamespace())  # type: ignore[arg-type]
+    answer = asyncio.run(service._read_ai_visibility(SimpleNamespace(id=uuid4(), name="Acme")))  # type: ignore[arg-type]
+    assert "PerplexityBot (Perplexity) is refused on 100% of pages" in answer.body
+    assert "Training crawlers refused (a choice that does not affect citations): GPTBot." in answer.body
+    assert "llms.txt: missing (reported, not scored)." in answer.body
+    assert "ai crawler access: 67%" in answer.body

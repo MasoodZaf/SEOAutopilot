@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import RoutineUpsert
 from app.core.context import Role, TenantContext
 from app.db.models import AuditEvent, OutboxEvent, Routine, RoutineRun, Site
-from app.domain.routines import Cadence, RoutineSchedule, initial_run_at
+from app.domain.routines import PAID_ROUTINE_KINDS, Cadence, RoutineSchedule, initial_run_at
 from app.services.opportunities import stable_hash
 
 MANAGE_ROUTINE_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
@@ -71,6 +71,11 @@ class RoutineService:
                 status_code=status.HTTP_403_FORBIDDEN, detail="insufficient_permissions_for_routine"
             )
         await self._require_schedulable_site(site_id)
+        if command.kind.value in PAID_ROUTINE_KINDS and command.cadence.value == "daily":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="paid_routine_cadence_too_frequent",
+            )
         schedule = schedule_from_command(command)
         now = datetime.now(UTC)
 

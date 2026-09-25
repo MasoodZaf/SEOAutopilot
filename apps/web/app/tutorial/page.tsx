@@ -145,7 +145,7 @@ const blogSteps: {title: string; where: {label: string; href?: string}; body: st
     title: "Add your own AI key",
     where: {label: "Settings → Keys", href: "/settings/keys"},
     body:
-      "Under AI keys for blog drafts, add an Anthropic (Claude) key, an OpenAI key, or both. The provider bills you directly. We show only the last four characters, and there is no shared key: without one, drafting stays off.",
+      "Under Your AI keys, add an Anthropic (Claude) key, an OpenAI key, or both. The provider bills you directly. We show only the last four characters, and there is no shared key: without one, drafting stays off.",
   },
   {
     title: "Open a content brief",
@@ -170,6 +170,39 @@ const blogSteps: {title: string; where: {label: string; href?: string}; body: st
     where: {label: "Draft → Send for approval"},
     body:
       "Once every flag is resolved, the post becomes a proposal like any other. A new page is always high risk, so it needs two approvers, neither of them the author. Deploy opens a pull request adding the post to your repository; it goes live when a person merges it.",
+  },
+];
+
+const aiSearchSteps: {title: string; where: {label: string; href?: string}; body: string}[] = [
+  {
+    title: "See which AI engines can read you",
+    where: {label: "Agent workspace → Reports", href: "/pilot/workspace?tab=reports"},
+    body:
+      "Every crawl checks your robots.txt against the crawlers ChatGPT, Claude, Perplexity, Google and Bing use to fetch pages for their answers. AI search readiness lists any you shut out and what share of your pages each one is refused. Refusing the training-only crawlers (GPTBot, ClaudeBot) is your choice and is shown but never counted against you.",
+  },
+  {
+    title: "Add an llms.txt",
+    where: {label: "Readiness → Propose an llms.txt"},
+    body:
+      "If your site has no /llms.txt, one click builds it from the pages the last crawl found indexable, with the titles and descriptions you already publish. It is a proposal like any other change: two approvals, then a pull request that goes live when a person merges it. Some AI tools read the file; no engine has said it uses it for ranking, so it is not scored.",
+  },
+  {
+    title: "Track the questions your customers ask",
+    where: {label: "Reports → AI answer citations", href: "/pilot/workspace?tab=reports"},
+    body:
+      "Add up to eight questions, typed in or picked from the questions people already search to find you. Keep them the way a customer would ask; the question is sent exactly as written and never names your site.",
+  },
+  {
+    title: "Bring your own key",
+    where: {label: "Settings → Keys", href: "/settings/keys"},
+    body:
+      "Add a Claude, OpenAI or Perplexity key; each engine you have a key for is asked. Your provider bills you directly, and a workspace spends at most $10 a month on these checks. Perplexity is the cheapest per answer.",
+  },
+  {
+    title: "Run it weekly and read the grid",
+    where: {label: "Skills → ai_citation_scan", href: "/pilot/workspace?tab=skills"},
+    body:
+      "Enable the routine (weekly; daily is refused) or run it once. Each question gets a verdict per engine: cited, with your place among the sources; named but not linked; or not cited, with the sites cited instead. Compare runs over weeks rather than trusting any single one.",
   },
 ];
 
@@ -237,6 +270,15 @@ export default function TutorialPage() {
                 >
                   <span className="font-mono text-[11px] leading-5">+</span>
                   <span className="leading-5">Write a new blog post</span>
+                </a>
+              </li>
+              <li>
+                <a
+                  href="#ai-search"
+                  className="-ml-px flex gap-3 border-l border-transparent py-1.5 pl-4 text-[13px] text-ink-faint transition-colors hover:border-accent hover:text-ink"
+                >
+                  <span className="font-mono text-[11px] leading-5">+</span>
+                  <span className="leading-5">Get cited by AI answers</span>
                 </a>
               </li>
             </ol>
@@ -330,6 +372,52 @@ export default function TutorialPage() {
                     The AI never publishes. Its draft cannot be sent until a person has resolved every flag, and it
                     reaches your site only after two approvals and a merged pull request. A published post can be
                     undone: the revert removes the file.
+                  </p>
+                </li>
+              </ol>
+            </section>
+
+            <section id="ai-search" aria-labelledby="ai-search-heading" className="mt-10 scroll-mt-24">
+              <p className="eyebrow">A third path</p>
+              <h2 id="ai-search-heading" className="mt-4 font-display text-[30px] leading-tight font-light tracking-tight text-balance text-ink">
+                Get cited by AI answers
+              </h2>
+              <p className="mt-3 max-w-2xl text-[14px] leading-6 text-pretty text-ink-soft">
+                People now ask ChatGPT, Claude and Perplexity what they used to ask a search box. Being the page those
+                answers cite is the new first result. SEO Autopilot shows whether the engines can read your site, and
+                whether they actually cite it for the questions your customers ask.
+              </p>
+              <ol className="mt-8 flex flex-col overflow-hidden rounded-2xl border border-rule bg-surface">
+                {aiSearchSteps.map((step, index) => (
+                  <li
+                    key={step.title}
+                    className="grid gap-3 border-b border-rule p-6 last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)] sm:p-8"
+                  >
+                    <span className="font-mono text-[13px] text-accent">{String.fromCharCode(97 + index)}.</span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h3 className="font-display text-[18px] font-medium tracking-tight text-ink">{step.title}</h3>
+                        {step.where.href ? (
+                          <Link
+                            href={step.where.href}
+                            className="inline-flex items-center rounded-full border border-accent-rule bg-accent-soft px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-wider text-accent uppercase transition-colors hover:border-accent"
+                          >
+                            {step.where.label}
+                          </Link>
+                        ) : (
+                          <Badge tone="accent">{step.where.label}</Badge>
+                        )}
+                      </div>
+                      <p className="mt-2 max-w-2xl text-[14px] leading-6 text-pretty text-ink-soft">{step.body}</p>
+                    </div>
+                  </li>
+                ))}
+                <li className="flex gap-3 bg-sunk/60 px-6 py-4 sm:px-8">
+                  <span className="eyebrow shrink-0 pt-0.5 text-good">Boundary</span>
+                  <p className="text-[13px] leading-6 text-pretty text-ink-soft">
+                    This is a sample, not a ranking. Answers change from run to run, and the APIs are close to, not the
+                    same as, the apps people use. Google&apos;s AI Overviews has no API and is not measured. We never
+                    claim a change caused a citation without a proper before-and-after comparison.
                   </p>
                 </li>
               </ol>

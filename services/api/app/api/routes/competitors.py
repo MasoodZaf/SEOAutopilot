@@ -3,6 +3,15 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.schemas import (
+    AiCitationEnvelope,
+    AiCitationObservationRead,
+    AiCitationPromptCollection,
+    AiCitationPromptCreate,
+    AiCitationPromptEnvelope,
+    AiCitationPromptRead,
+    AiCitationPromptSuggestion,
+    AiCitationReport,
+    AiCitationRunRead,
     AiVisibilityCollection,
     AiVisibilityRead,
     CompetitorCollection,
@@ -16,10 +25,15 @@ from app.api.schemas import (
     CompetitorRead,
     CompetitorScanEnvelope,
     CompetitorScanRead,
+    ProposalEnvelope,
+    ProposalRead,
 )
 from app.core.auth import TenantContextDependency
+from app.core.config import get_settings
 from app.db.session import TenantSession
+from app.services.ai_citations import AiCitationService
 from app.services.competitors import CompetitorService
+from app.services.llms_txt import LlmsTxtService
 
 router = APIRouter(prefix="/v1", tags=["competitors"])
 
@@ -127,4 +141,85 @@ async def list_ai_visibility(
             "count": len(snapshots),
             "citation_source": "none",
         },
+    )
+
+
+@router.post(
+    "/sites/{site_id}/llms-txt/proposal",
+    response_model=ProposalEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def propose_llms_txt(
+    site_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> ProposalEnvelope:
+    """Propose an llms.txt built from the last crawl, when the site serves none.
+
+    It is a new-file proposal like any other: high risk, approved by two people
+    who did not create it, and deployed as a pull request a person merges.
+    """
+    proposal = await LlmsTxtService(session, context, get_settings()).propose(site_id)
+    return ProposalEnvelope(
+        data=ProposalRead.model_validate(proposal), meta={"trace_id": context.trace_id}
+    )
+
+
+@router.get("/sites/{site_id}/ai-citation-prompts", response_model=AiCitationPromptCollection)
+async def list_ai_citation_prompts(
+    site_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> AiCitationPromptCollection:
+    """The questions tracked for observed AI citations, plus untracked suggestions."""
+    tracked, suggestions = await AiCitationService(session, context).prompts(site_id)
+    return AiCitationPromptCollection(
+        data=[AiCitationPromptRead.model_validate(item) for item in tracked],
+        suggestions=[AiCitationPromptSuggestion(**item) for item in suggestions],
+        meta={"trace_id": context.trace_id, "count": len(tracked)},
+    )
+
+
+@router.post(
+    "/sites/{site_id}/ai-citation-prompts",
+    response_model=AiCitationPromptEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def track_ai_citation_prompt(
+    site_id: UUID,
+    command: AiCitationPromptCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> AiCitationPromptEnvelope:
+    prompt = await AiCitationService(session, context).track(
+        site_id, command.prompt, command.keyword_cluster_id
+    )
+    return AiCitationPromptEnvelope(
+        data=AiCitationPromptRead.model_validate(prompt), meta={"trace_id": context.trace_id}
+    )
+
+
+@router.delete(
+    "/sites/{site_id}/ai-citation-prompts/{prompt_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def untrack_ai_citation_prompt(
+    site_id: UUID, prompt_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> None:
+    await AiCitationService(session, context).untrack(site_id, prompt_id)
+
+
+@router.get("/sites/{site_id}/ai-citations", response_model=AiCitationEnvelope)
+async def read_ai_citations(
+    site_id: UUID, context: TenantContextDependency, session: TenantSession
+) -> AiCitationEnvelope:
+    """What the answer engines cited in the latest run, and earlier runs' totals.
+
+    Observed through each provider's API with web search; answers vary between
+    runs, so counts are "cited in N of M answers", never a rank.
+    """
+    latest, observations, history = await AiCitationService(session, context).report(site_id)
+    return AiCitationEnvelope(
+        data=AiCitationReport(
+            latest=AiCitationRunRead.model_validate(latest) if latest else None,
+            observations=[AiCitationObservationRead.model_validate(item) for item in observations],
+            history=[AiCitationRunRead.model_validate(item) for item in history],
+        ),
+        meta={"trace_id": context.trace_id},
     )

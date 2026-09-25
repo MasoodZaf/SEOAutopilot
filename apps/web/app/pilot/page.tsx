@@ -516,11 +516,13 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <Metric
                   className="border-b border-rule p-6 lg:border-b-0"
                   label="Operation mode"
-                  value={<span className="uppercase">{gov.mode}</span>}
+                  size="word"
+                  value={<span className="capitalize">{gov.mode}</span>}
                 />
                 <Metric
                   className="border-b border-rule p-6 lg:border-b-0"
                   label="Autopilot governor"
+                  size="word"
                   value={<span className={gov.autopilot_enabled ? "text-good" : "text-warn"}>{gov.autopilot_enabled ? "Active" : "Human"}</span>}
                   hint={gov.autopilot_enabled ? undefined : "Approvals only"}
                 />
@@ -546,6 +548,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <Metric
                   className="p-6"
                   label="Freeze window"
+                  size="word"
                   value={gov.freeze_window_start ? "Set" : "None"}
                   hint={gov.freeze_window_start ? "Scheduled" : "No window active"}
                 />
