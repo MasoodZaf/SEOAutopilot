@@ -180,7 +180,14 @@ export type AiCitationPrompt = {
   created_at: string;
 };
 
-export type AiCitationSuggestion = {prompt: string; keyword_cluster_id: string};
+export type AiCitationSuggestion = {
+  prompt: string;
+  /** A question people searched (with its impressions), or a question-shaped topic. */
+  source: "search_console" | "question_cluster";
+  keyword_cluster_id: string | null;
+  query_hash: string | null;
+  impressions: number | null;
+};
 
 export type AiCitationObservation = {
   prompt_id: string;

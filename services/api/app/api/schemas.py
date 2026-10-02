@@ -1365,6 +1365,8 @@ class AiVisibilityRead(BaseModel):
 class AiCitationPromptCreate(BaseModel):
     prompt: str = Field(min_length=8, max_length=300)
     keyword_cluster_id: UUID | None = None
+    # From a Search Console suggestion; checked against the site's own queries.
+    query_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class AiCitationPromptRead(BaseModel):
@@ -1384,12 +1386,16 @@ class AiCitationPromptEnvelope(BaseModel):
 
 class AiCitationPromptSuggestion(BaseModel):
     prompt: str
-    keyword_cluster_id: UUID
+    source: Literal["search_console", "question_cluster"]
+    keyword_cluster_id: UUID | None = None
+    query_hash: str | None = None
+    # Search Console impressions in the latest keyword window; None for a topic.
+    impressions: int | None = None
 
 
 class AiCitationPromptCollection(BaseModel):
     data: list[AiCitationPromptRead]
-    # Question-shaped topics from the latest keyword analysis, not yet tracked.
+    # Questions people searched, then question-shaped topics, not yet tracked.
     suggestions: list[AiCitationPromptSuggestion]
     meta: dict[str, object]
 

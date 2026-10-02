@@ -709,16 +709,20 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 )}
                 {tracked.length < 8 && target && suggestions.length > 0 && (
                   <div className="mt-3">
-                    <p className={muted}>From your Search Console questions:</p>
+                    <p className={muted}>From your Search Console data, questions people searched first:</p>
                     <ul className="mt-1 flex flex-wrap gap-2">
-                      {suggestions.slice(0, 6).map((item) => (
-                        <li key={item.keyword_cluster_id}>
+                      {suggestions.slice(0, 8).map((item) => (
+                        <li key={item.query_hash ?? item.keyword_cluster_id ?? item.prompt}>
                           <form action={trackCitationPrompt}>
                             <input type="hidden" name="site_host" value={target.host} />
                             <input type="hidden" name="prompt" value={item.prompt} />
-                            <input type="hidden" name="keyword_cluster_id" value={item.keyword_cluster_id} />
+                            <input type="hidden" name="keyword_cluster_id" value={item.keyword_cluster_id ?? ""} />
+                            <input type="hidden" name="query_hash" value={item.query_hash ?? ""} />
                             <button type="submit" className="rounded-full border border-rule px-2.5 py-1 text-xs text-ink-soft hover:bg-sunk">
                               + {item.prompt}
+                              {item.impressions !== null && (
+                                <span className="tabular ml-1.5 text-ink-faint">{item.impressions.toLocaleString("en-US")} impressions</span>
+                              )}
                             </button>
                           </form>
                         </li>

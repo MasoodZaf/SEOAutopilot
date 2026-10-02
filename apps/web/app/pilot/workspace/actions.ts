@@ -309,13 +309,18 @@ export async function trackCitationPrompt(formData: FormData): Promise<never> {
   const host = formHost(formData);
   const prompt = String(formData.get("prompt") ?? "").trim().slice(0, 300);
   const clusterId = String(formData.get("keyword_cluster_id") ?? "");
+  const queryHash = String(formData.get("query_hash") ?? "");
   const back = (error?: string) => workspacePath(host, {tab: "reports", error});
   try {
     const siteId = await siteIdFor(host);
     if (!siteId) redirectFresh(back("site_not_found"));
     await apiJson(`/v1/sites/${siteId}/ai-citation-prompts`, {
       method: "POST",
-      body: JSON.stringify({prompt, keyword_cluster_id: UUID.test(clusterId) ? clusterId : null}),
+      body: JSON.stringify({
+        prompt,
+        keyword_cluster_id: UUID.test(clusterId) ? clusterId : null,
+        query_hash: /^[0-9a-f]{64}$/.test(queryHash) ? queryHash : null,
+      }),
     });
   } catch (error) {
     unstable_rethrow(error);

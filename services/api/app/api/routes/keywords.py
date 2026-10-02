@@ -14,8 +14,7 @@ from app.api.schemas import (
 from app.core.auth import TenantContextDependency
 from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
-from app.services.connector_secrets import decode_encryption_key
-from app.services.keywords import KeywordService
+from app.services.keywords import KeywordService, term_encryption_key
 
 router = APIRouter(prefix="/v1", tags=["keywords"])
 
@@ -23,13 +22,7 @@ router = APIRouter(prefix="/v1", tags=["keywords"])
 def keyword_service(
     settings: Settings, session: TenantSession, context: TenantContextDependency
 ) -> KeywordService:
-    key: bytes | None = None
-    if (
-        settings.connector_secret_backend == "database_envelope"
-        and settings.connector_secret_encryption_key
-    ):
-        key = decode_encryption_key(settings.connector_secret_encryption_key.get_secret_value())
-    return KeywordService(session, context, encryption_key=key)
+    return KeywordService(session, context, encryption_key=term_encryption_key(settings))
 
 
 @router.get("/sites/{site_id}/keyword-clusters", response_model=KeywordClusterCollection)

@@ -25,12 +25,17 @@ from app.db.models import (
     AuditEvent,
     KeywordAnalysisRun,
     KeywordCluster,
+    KeywordClusterMember,
+    SearchQuery,
     Site,
 )
+from app.services.keywords import READ_TERM_ROLES, decrypt_term
 
 # Matches the worker's per-run cap: a question beyond it would never be asked.
 MAX_TRACKED = 8
 MAX_SUGGESTIONS = 10
+# Questions people typed come first, but never crowd out every topic suggestion.
+MAX_SEARCH_SUGGESTIONS = 6
 WRITE_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR}
 QUESTION_WORDS = ("how", "what", "which", "why", "when", "where", "who", "is", "are", "can", "does", "do", "should")
 
@@ -53,9 +58,18 @@ def as_question(label: str) -> str:
 
 
 class AiCitationService:
-    def __init__(self, session: AsyncSession, context: TenantContext) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        context: TenantContext,
+        *,
+        encryption_key: bytes | None = None,
+    ) -> None:
         self.session = session
         self.context = context
+        # Opens the search terms the worker sealed; without it, or for a role
+        # that may not read terms, suggestions come from cluster labels only.
+        self.encryption_key = encryption_key
 
     async def _site(self, site_id: UUID) -> Site:
         site = await self.session.scalar(
@@ -86,10 +100,8 @@ class AiCitationService:
         )
         return tracked, await self._suggestions(site_id, tracked)
 
-    async def _suggestions(
-        self, site_id: UUID, tracked: list[AiCitationPrompt]
-    ) -> list[dict[str, Any]]:
-        latest = (
+    def _latest_keyword_run(self, site_id: UUID) -> Any:
+        return (
             select(KeywordAnalysisRun.id)
             .where(
                 KeywordAnalysisRun.tenant_id == self.context.tenant_id,
@@ -100,6 +112,16 @@ class AiCitationService:
             .limit(1)
             .scalar_subquery()
         )
+
+    async def _suggestions(
+        self, site_id: UUID, tracked: list[AiCitationPrompt]
+    ) -> list[dict[str, Any]]:
+        latest = self._latest_keyword_run(site_id)
+        taken_text = {item.prompt.lower() for item in tracked}
+        taken_cluster = {item.keyword_cluster_id for item in tracked if item.keyword_cluster_id}
+        out = await self._search_console_suggestions(site_id, latest, taken_text)
+        taken_text |= {item["prompt"].lower() for item in out}
+
         clusters = await self.session.execute(
             select(KeywordCluster.id, KeywordCluster.label)
             .where(
@@ -111,20 +133,105 @@ class AiCitationService:
             .order_by(KeywordCluster.opportunity_score.desc(), KeywordCluster.id)
             .limit(MAX_SUGGESTIONS * 2)
         )
-        taken_text = {item.prompt.lower() for item in tracked}
-        taken_cluster = {item.keyword_cluster_id for item in tracked if item.keyword_cluster_id}
-        out: list[dict[str, Any]] = []
         for cluster_id, label in clusters.all():
+            if len(out) >= MAX_SUGGESTIONS:
+                break
             question = as_question(str(label))
             if len(question) < 8 or cluster_id in taken_cluster or question.lower() in taken_text:
                 continue
-            out.append({"prompt": question[:300], "keyword_cluster_id": cluster_id})
-            if len(out) >= MAX_SUGGESTIONS:
+            out.append({
+                "prompt": question[:300],
+                "source": "question_cluster",
+                "keyword_cluster_id": cluster_id,
+                "query_hash": None,
+                "impressions": None,
+            })
+        return out
+
+    async def _search_console_suggestions(
+        self, site_id: UUID, latest: Any, taken_text: set[str]
+    ) -> list[dict[str, Any]]:
+        """Questions people already typed into Google and saw this site for.
+
+        The terms are sealed at rest. Opening them is limited to the roles that
+        may read search terms, and each listing that opens any is audited, the
+        same as reading a keyword cluster's members.
+        """
+        if self.context.role not in READ_TERM_ROLES or self.encryption_key is None or len(self.encryption_key) != 32:
+            return []
+        rows = await self.session.execute(
+            select(SearchQuery, func.sum(KeywordClusterMember.impressions).label("impressions"))
+            .join(
+                KeywordClusterMember,
+                (KeywordClusterMember.tenant_id == SearchQuery.tenant_id)
+                & (KeywordClusterMember.site_id == SearchQuery.site_id)
+                & (KeywordClusterMember.query_hash == SearchQuery.query_hash),
+            )
+            .join(
+                KeywordCluster,
+                (KeywordCluster.id == KeywordClusterMember.cluster_id)
+                & (KeywordCluster.tenant_id == KeywordClusterMember.tenant_id),
+            )
+            .where(
+                SearchQuery.tenant_id == self.context.tenant_id,
+                SearchQuery.site_id == site_id,
+                SearchQuery.is_question.is_(True),
+                KeywordCluster.analysis_run_id == latest,
+            )
+            # Grouped by the primary key, so the row's other columns may be selected.
+            .group_by(SearchQuery.tenant_id, SearchQuery.site_id, SearchQuery.query_hash)
+            .order_by(func.sum(KeywordClusterMember.impressions).desc(), SearchQuery.query_hash)
+            .limit(MAX_SEARCH_SUGGESTIONS * 3)
+        )
+        out: list[dict[str, Any]] = []
+        unreadable = 0
+        for stored, impressions in rows.all():
+            term = decrypt_term(self.encryption_key, stored)
+            if term is None:
+                unreadable += 1
+                continue
+            question = as_question(term)
+            if not 8 <= len(question) <= 300 or question.lower() in taken_text:
+                continue
+            taken_text.add(question.lower())
+            out.append({
+                "prompt": question,
+                "source": "search_console",
+                "keyword_cluster_id": None,
+                "query_hash": stored.query_hash,
+                "impressions": int(impressions or 0),
+            })
+            if len(out) >= MAX_SEARCH_SUGGESTIONS:
                 break
+        if out or unreadable:
+            metadata = {
+                "site_id": str(site_id),
+                "purpose": "ai_citation_suggestions",
+                "revealed_terms": len(out),
+                "unreadable_terms": unreadable,
+            }
+            self.session.add(
+                AuditEvent(
+                    tenant_id=self.context.tenant_id,
+                    actor_type="user",
+                    actor_id=str(self.context.actor_id),
+                    action="keyword_terms.read",
+                    resource_type="site",
+                    resource_id=str(site_id),
+                    trace_id=self.context.trace_id,
+                    metadata_json=metadata,
+                    event_hash=_hash({**metadata, "actor_id": str(self.context.actor_id)}),
+                )
+            )
+            await self.session.flush()
         return out
 
     async def track(
-        self, site_id: UUID, prompt: str, keyword_cluster_id: UUID | None
+        self,
+        site_id: UUID,
+        prompt: str,
+        keyword_cluster_id: UUID | None,
+        query_hash: str | None = None,
     ) -> AiCitationPrompt:
         self._require_writer()
         await self._site(site_id)
@@ -144,6 +251,21 @@ class AiCitationService:
                 )
             )
             keyword_cluster_id = owned
+        from_search = False
+        if query_hash is not None:
+            # Like the cluster id, a query hash is only provenance: it counts
+            # when this site has that question on record, and is dropped if not.
+            from_search = (
+                await self.session.scalar(
+                    select(SearchQuery.query_hash).where(
+                        SearchQuery.tenant_id == self.context.tenant_id,
+                        SearchQuery.site_id == site_id,
+                        SearchQuery.query_hash == query_hash,
+                        SearchQuery.is_question.is_(True),
+                    )
+                )
+                is not None
+            )
         existing = await self.session.scalar(
             select(AiCitationPrompt).where(
                 AiCitationPrompt.tenant_id == self.context.tenant_id,
@@ -171,7 +293,11 @@ class AiCitationService:
                 tenant_id=self.context.tenant_id,
                 site_id=site_id,
                 prompt=text,
-                source="question_cluster" if keyword_cluster_id else "manual",
+                source=(
+                    "search_console"
+                    if from_search
+                    else "question_cluster" if keyword_cluster_id else "manual"
+                ),
                 keyword_cluster_id=keyword_cluster_id,
                 created_by=self.context.actor_id,
             )

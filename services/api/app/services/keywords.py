@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import KeywordMemberRead
+from app.core.config import Settings
 from app.core.context import Role, TenantContext
 from app.db.models import (
     AuditEvent,
@@ -25,6 +26,7 @@ from app.db.models import (
     SearchQuery,
     Site,
 )
+from app.services.connector_secrets import decode_encryption_key
 from app.services.opportunities import stable_hash
 
 # Viewers and developers see cluster shape and metrics; revealing the raw
@@ -37,6 +39,31 @@ MAX_MEMBER_PAGE_SIZE = 200
 def query_aad(tenant_id: UUID, site_id: UUID, key_version: str) -> bytes:
     """Must match app.keywords.secrets.query_aad in the worker service."""
     return f"{tenant_id}:{site_id}:search_query:{key_version}".encode()
+
+
+def term_encryption_key(settings: Settings) -> bytes | None:
+    """The key the worker sealed search terms with, when this deployment has one."""
+    if (
+        settings.connector_secret_backend == "database_envelope"
+        and settings.connector_secret_encryption_key
+    ):
+        return decode_encryption_key(settings.connector_secret_encryption_key.get_secret_value())
+    return None
+
+
+def decrypt_term(key: bytes, stored: SearchQuery) -> str | None:
+    """A stored search term in clear, or None when this key cannot open it.
+
+    A rotated key leaves older rows unreadable; callers skip them rather than
+    fail, and never echo the stored bytes.
+    """
+    aad = query_aad(stored.tenant_id, stored.site_id, stored.key_version)
+    if not stdlib_secrets.compare_digest(hashlib.sha256(aad).hexdigest(), stored.aad_hash):
+        return None
+    try:
+        return AESGCM(key).decrypt(stored.nonce, stored.ciphertext, aad).decode("utf-8")
+    except (InvalidTag, ValueError, UnicodeDecodeError):
+        return None
 
 
 class KeywordService:
@@ -141,19 +168,8 @@ class KeywordService:
         members: list[KeywordMemberRead] = []
         unreadable = 0
         for member, stored in rows.all():
-            aad = query_aad(cluster.tenant_id, cluster.site_id, stored.key_version)
-            if not stdlib_secrets.compare_digest(
-                hashlib.sha256(aad).hexdigest(), stored.aad_hash
-            ):
-                unreadable += 1
-                continue
-            try:
-                term = AESGCM(self.encryption_key).decrypt(
-                    stored.nonce, stored.ciphertext, aad
-                ).decode("utf-8")
-            except (InvalidTag, ValueError, UnicodeDecodeError):
-                # A rotated key leaves older rows unreadable; skip rather than
-                # fail, and never echo the stored bytes.
+            term = decrypt_term(self.encryption_key, stored)
+            if term is None:
                 unreadable += 1
                 continue
             members.append(
