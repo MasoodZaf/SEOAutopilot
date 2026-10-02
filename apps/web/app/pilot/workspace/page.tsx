@@ -15,7 +15,7 @@ import {
   trackCitationPrompt,
   untrackCitationPrompt,
 } from "./actions";
-import {citationGrid, formatMicros} from "./citations.mjs";
+import {citationGrid, citationShare, formatMicros} from "./citations.mjs";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {readinessBreakdown} from "./readiness.mjs";
 import {
@@ -139,6 +139,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
   const tracked = citationPrompts?.data ?? [];
   const suggestions = citationPrompts?.suggestions ?? [];
   const grid = citationGrid(citations?.observations ?? []);
+  const share = citationShare(citations?.observations ?? [], target?.host ?? "");
 
   const routineByKind = new Map(routines.map((item) => [item.kind, item]));
 
@@ -671,6 +672,38 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                     </table>
                   </div>
                 </>
+              )}
+
+              {citations?.latest && share.hosts.length > 0 && (
+                <div className="mt-6 border-t border-rule pt-4">
+                  <h3 className="text-sm font-medium text-ink">Who gets cited</h3>
+                  <p className={`${muted} text-pretty`}>
+                    Every source cited across the <span className="tabular">{share.answers}</span> answers in the latest run, counted once per answer.
+                    A share of this sample, not a ranking.
+                  </p>
+                  <table className="mt-2 w-full max-w-xl text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-rule text-xs text-ink-faint">
+                        <th className="py-1.5 pr-3 font-medium">Source</th>
+                        <th className="py-1.5 pr-3 font-medium">Whose</th>
+                        <th className="py-1.5 text-right font-medium">Cited in</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {share.hosts.map((row) => (
+                        <tr key={row.host} className="border-b border-rule last:border-0">
+                          <td className={row.kind === "yours" ? "py-1.5 pr-3 font-medium text-ink" : "py-1.5 pr-3 text-ink-soft"}>{row.host}</td>
+                          <td className="py-1.5 pr-3 text-xs text-ink-faint">
+                            {row.kind === "yours" ? "This site" : row.kind === "competitor" ? "Tracked competitor" : "Other"}
+                          </td>
+                          <td className="tabular py-1.5 text-right text-ink-soft">
+                            {row.answers} of {share.answers}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
 
               <div className="mt-6 border-t border-rule pt-4">
