@@ -76,3 +76,18 @@ def test_a_closing_script_sequence_in_an_answer_cannot_end_the_markup_early():
     head = edit.after[: edit.after.index("</head>")]
     assert head.count("</script>") == 1
     assert "<\\/script>" in head
+
+
+def test_an_answer_takes_the_styling_of_the_page_s_own_paragraphs():
+    # TheCalcHive styles its copy inline; an unstyled <p> would sit out of place.
+    page = (
+        "<html><head></head><body>\n"
+        "  <h2 style=\"font-size: 24px\">How is BMI Calculated?</h2>\n"
+        "  <p style=\"margin-bottom: 1.5rem;\">Existing copy.</p>\n"
+        "  <h2>Is it free?</h2>\n  <h3>Next</h3>\n  <p class=\"x\">Not this one.</p>\n"
+        "</body></html>"
+    )
+    edit = place_answers(page, "bmi.html", [AnswerItem("How is BMI Calculated?", "Weight over height squared."), AnswerItem("Is it free?", "Yes.")])
+    assert '<h2 style="font-size: 24px">How is BMI Calculated?</h2>\n  <p style="margin-bottom: 1.5rem;">Weight over height squared.</p>' in edit.after
+    # A heading comes before any paragraph, so nothing is borrowed from beyond it.
+    assert "<h2>Is it free?</h2>\n  <p>Yes.</p>" in edit.after

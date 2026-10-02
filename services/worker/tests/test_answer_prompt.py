@@ -54,3 +54,13 @@ def test_a_reviewer_must_clear_claims_figures_lengths_and_gaps() -> None:
     assert kinds.count("claim") == 1 and kinds.count("figure") == 1 and kinds.count("missing") == 1
     assert kinds.count("length") == 2  # five words is too short; 120 too long
     assert all(flag["resolved"] is False for flag in flags)
+
+
+def test_a_bare_constant_in_an_answer_is_a_figure_to_check() -> None:
+    # From the first real run (gpt-4.1, TheCalcHive /bmi-calculator, 2026-10-02):
+    # the model declared no claims, and a units-only figure check let 703 through.
+    answer = ("BMI is weight in kilograms divided by height in metres squared. In pounds and inches, "
+              "divide weight by height squared and multiply by 703 to get the same number.")
+    flags = answer_flags({"items": [{"heading": "How is BMI calculated?", "answer": answer}], "claims": []})
+    assert [flag["kind"] for flag in flags] == ["figure"]
+    assert "703" in flags[0]["detail"]

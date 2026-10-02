@@ -23,6 +23,7 @@ _HEADING = re.compile(
     r"<(?P<tag>h[23])(?P<attrs>\s[^>]*)?>(?P<inner>.*?)</(?P=tag)\s*>", re.IGNORECASE | re.DOTALL
 )
 _BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_NEXT_BLOCK = re.compile(r"<(?:p(?P<attrs>\s[^>]*)?>|h[1-6][\s>])", re.IGNORECASE)
 _TAG = re.compile(r"<[^>]+>")
 _JSX_EXPRESSION = re.compile(r"\{[^{}]*\}")
 HTML_SUFFIXES = (".html", ".htm")
@@ -62,6 +63,15 @@ def _escape(text: str, jsx: bool) -> str:
     escaped = html.escape(" ".join(text.split()), quote=False)
     # Braces open an expression in JSX; as entities they are only characters.
     return escaped.replace("{", "&#123;").replace("}", "&#125;") if jsx else escaped
+
+
+def _paragraph_attrs(document: str, index: int) -> str:
+    """The attributes of the page's own next paragraph, so an inserted answer
+    is styled like the copy around it. None when a heading comes first."""
+    following = _NEXT_BLOCK.search(document, index)
+    if following is None or following.group(0).lower().startswith("<h"):
+        return ""
+    return following.group("attrs") or ""
 
 
 def _line_indent(document: str, index: int) -> str:
@@ -110,7 +120,8 @@ def place_answers(document: str, target_path: str, items: list[AnswerItem]) -> A
             raise AnswerBlockError("answer_heading_ambiguous")
         heading = found[0]
         indent = _line_indent(document, heading.start())
-        insertions.append((heading.end(), f"\n{indent}<p>{_escape(item.answer, jsx)}</p>"))
+        attrs = _paragraph_attrs(document, heading.end())
+        insertions.append((heading.end(), f"\n{indent}<p{attrs}>{_escape(item.answer, jsx)}</p>"))
 
     markup = faq_json_ld(items)
     if jsx:

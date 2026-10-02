@@ -133,6 +133,7 @@ async def test_openai_answer_is_parsed_with_usage():
     ("status", "payload", "code", "retryable"),
     [
         (401, None, "openai_key_rejected", False),
+        (404, {"error": {"code": "model_not_found"}}, "openai_model_unavailable", False),
         (429, None, "provider_rate_limited", True),
         (503, None, "provider_unavailable", True),
         (200, {"choices": [{"finish_reason": "stop", "message": {"content": None, "refusal": "no"}}]}, "model_refused", False),

@@ -39,6 +39,8 @@ const FAILURES: Record<string, string> = {
   anthropic_key_rejected: "Anthropic rejected the stored key. Replace it under Settings → Keys.",
   openai_key_rejected: "OpenAI rejected the stored key. Replace it under Settings → Keys.",
   anthropic_key_forbidden: "The Anthropic key is not allowed to use this model.",
+  anthropic_model_unavailable: "The configured Claude model is not available to this key. Ask an operator to set CONTENT_DRAFT_ANTHROPIC_MODEL to one it can use.",
+  openai_model_unavailable: "The configured OpenAI model is not available to this key. gpt-5 needs a verified OpenAI organization; verify it, or ask an operator to set CONTENT_DRAFT_OPENAI_MODEL to one the key can use.",
   openai_key_forbidden: "The OpenAI key is not allowed to use this model.",
   content_draft_budget_exhausted: "This month's drafting budget is spent. It resets on the 1st.",
   model_refused: "The model declined to write this post.",

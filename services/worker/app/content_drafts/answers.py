@@ -8,13 +8,18 @@ from them later, in code, after a person has reviewed every one.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.content_drafts.checks import FIGURE, DraftRejected, sentence_around
+from app.content_drafts.checks import DraftRejected, sentence_around
 from app.llm.sanitizer import detect_and_guard_injection, wrap_untrusted_evidence
 
 PROMPT_VERSION = "answer-block-v1"
+# Any number at all. A blog post is long enough that only figures with a unit
+# are flagged; an answer is two or three sentences that a reader and an AI
+# engine will quote whole, so a bare constant ("multiplied by 703") counts too.
+NUMBER = re.compile(r"(?<![\w.])[$£€₹]?\d[\d,]*(?:\.\d+)?%?")
 # The window the worker's geo.question_without_direct_answer rule asks for.
 MIN_WORDS = 15
 MAX_WORDS = 100
@@ -156,7 +161,7 @@ def answer_flags(draft: dict[str, Any]) -> list[dict[str, Any]]:
         if not MIN_WORDS <= words <= MAX_WORDS:
             add("length", item["heading"], f"The answer is {words} words; {MIN_WORDS}–{MAX_WORDS} is what an answer engine can quote whole.")
         seen: set[str] = set()
-        for match in FIGURE.finditer(answer):
+        for match in NUMBER.finditer(answer):
             if match.group(0) in declared:
                 continue
             sentence = sentence_around(answer, match.start(), match.end())

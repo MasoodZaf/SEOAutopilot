@@ -38,6 +38,8 @@ PRICES_PER_MILLION: dict[str, tuple[int, int]] = {
     "claude-sonnet-5": (2_000_000, 10_000_000),
     "claude-fable-5-1": (10_000_000, 50_000_000),
     "gpt-5": (1_250_000, 10_000_000),
+    # For keys whose organization is not verified for gpt-5.
+    "gpt-4.1": (2_000_000, 8_000_000),
 }
 MOST_EXPENSIVE = (10_000_000, 50_000_000)
 
@@ -128,6 +130,9 @@ class AnthropicDraftModel:
             raise DraftModelError("anthropic_key_forbidden") from error
         except anthropic.BadRequestError as error:
             raise DraftModelError("provider_request_rejected") from error
+        except anthropic.NotFoundError as error:
+            # The model named in the worker's settings is not one this key can use.
+            raise DraftModelError("anthropic_model_unavailable") from error
         except anthropic.RateLimitError as error:
             raise DraftModelError("provider_rate_limited", retryable=True) from error
         except anthropic.APIStatusError as error:
@@ -227,6 +232,11 @@ class OpenAIDraftModel:
             raise DraftModelError("openai_key_rejected")
         if code == 403:
             raise DraftModelError("openai_key_forbidden")
+        if code == 404:
+            # OpenAI answers 404 for a model this key's organization may not use
+            # (gpt-5 needs a verified organization), which is a settings problem,
+            # not a bad request: say so, or every draft fails with no clue why.
+            raise DraftModelError("openai_model_unavailable")
         if code == 429:
             raise DraftModelError("provider_rate_limited", retryable=True)
         if code >= 500:
