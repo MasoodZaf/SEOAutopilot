@@ -208,7 +208,7 @@ const aiSearchSteps: {title: string; where: {label: string; href?: string}; body
     title: "Make your answers quotable",
     where: {label: "Dashboard → Opportunities", href: "/pilot"},
     body:
-      "Answer engines quote the passage directly under a question. Each crawl flags question headings with no 15–100 word answer beneath them, answered questions with no FAQ markup, and FAQ markup that lists questions the page does not show. For the first, Draft direct answers has your own Claude or OpenAI key write one answer per question; you check every claim and figure, then send it for approval. It becomes a high-risk edit to that page's source file, with each answer placed under its heading and FAQ markup built from them, and it goes live only when a person merges the pull request.",
+      "Answer engines quote the passage directly under a question. Each crawl flags question headings with no 15–100 word answer beneath them, answered questions with no FAQ markup, and FAQ markup that lists questions the page does not show. For answered questions without markup, Draft proposal builds FAQ markup from the page's own headings and paragraphs, with no AI, as a pull request. For questions without an answer, Draft direct answers has your own Claude or OpenAI key write one answer per question; you check every claim and figure, then send it for approval. It becomes a high-risk edit to that page's source file, with each answer placed under its heading and FAQ markup built from them, and it goes live only when a person merges the pull request.",
   },
 ];
 

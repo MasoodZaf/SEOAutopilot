@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from app.domain.answer_block import AnswerBlockError, AnswerItem, place_answers
+from app.domain.answer_block import AnswerBlockError, AnswerItem, faq_from_page, place_answers
 
 PAGE = """<!doctype html>
 <html>
@@ -91,3 +91,51 @@ def test_an_answer_takes_the_styling_of_the_page_s_own_paragraphs():
     assert '<h2 style="font-size: 24px">How is BMI Calculated?</h2>\n  <p style="margin-bottom: 1.5rem;">Weight over height squared.</p>' in edit.after
     # A heading comes before any paragraph, so nothing is borrowed from beyond it.
     assert "<h2>Is it free?</h2>\n  <p>Yes.</p>" in edit.after
+
+
+ANSWER = "It is the payment that repays a loan over its term, covering that month's interest and part of what is still owed."
+
+
+def test_faq_markup_copies_only_questions_answered_directly_beneath_them():
+    page = (
+        "<html><head></head><body>\n"
+        f"<h2>What is an <em>EMI</em>?</h2>\n<p class=\"lead\">{ANSWER}</p>\n"
+        f"<h2>Is it free?</h2>\n<div class=\"widget\">Calculate</div>\n<p>{ANSWER}</p>\n"
+        "<h2>Why does tenure matter?</h2>\n<p>Too short.</p>\n"
+        f"<h3>How is it calculated?</h3>\n<p>{ANSWER}<br>Second line of the same answer here.</p>\n"
+        "</body></html>"
+    )
+    edit = faq_from_page(page, "emi.html")
+    data = json.loads(re.search(r'ld\+json">(.*?)</script>', edit.after).group(1))
+    assert [q["name"] for q in data["mainEntity"]] == ["What is an EMI?", "How is it calculated?"]
+    assert data["mainEntity"][1]["acceptedAnswer"]["text"].endswith("Second line of the same answer here.")
+    # Only the markup is added.
+    assert edit.after.replace(re.search(r'  <script type="application/ld\+json">.*?</script>\n', edit.after).group(0), "") == page
+
+
+def test_faq_markup_in_jsx_skips_expressions_and_lands_after_the_last_answer():
+    page = (
+        "export default function Page() {\n  return (\n    <main>\n"
+        f"      <h2>What is an EMI?</h2>\n      <p>{ANSWER}</p>\n"
+        "      <h2>What is {name}?</h2>\n      <p>{text}</p>\n"
+        f"      <h2>Why use it?</h2>\n      <p>{ANSWER}</p>\n"
+        "      <Footer />\n    </main>\n  );\n}\n"
+    )
+    edit = faq_from_page(page, "page.tsx")
+    assert edit.placed == 2
+    # After the last answered question's paragraph (the JSON itself repeats the text).
+    assert edit.after.index("dangerouslySetInnerHTML") > edit.after.index("<h2>Why use it?</h2>")
+    assert edit.after.index("dangerouslySetInnerHTML") < edit.after.index("<Footer />")
+
+
+@pytest.mark.parametrize(
+    ("page", "code"),
+    [
+        (f"<head></head><h2>What is it?</h2><p>{ANSWER}</p>", "page_has_too_few_answered_questions"),
+        (f'<head><script type="application/ld+json">{{"@type":"FAQPage"}}</script></head><h2>What?</h2><p>{ANSWER}</p>', "page_already_has_faq_markup"),
+    ],
+)
+def test_faq_markup_refusals(page, code):
+    with pytest.raises(AnswerBlockError) as refused:
+        faq_from_page(page, "x.html")
+    assert str(refused.value) == code

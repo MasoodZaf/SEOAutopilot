@@ -186,7 +186,11 @@ async def test_a_perplexity_key_is_checked_and_kept_only_by_its_suffix(tenant_se
     from pydantic import SecretStr
 
     from app.core.config import Settings
-    from app.services.tenant_credentials import PERPLEXITY_API_KEY, TenantCredentialService, store_for
+    from app.services.tenant_credentials import (
+        PERPLEXITY_API_KEY,
+        TenantCredentialService,
+        store_for,
+    )
 
     settings = Settings(
         connector_secret_backend="database_envelope",

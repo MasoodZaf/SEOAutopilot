@@ -21,7 +21,7 @@ const adviceByTitle = Object.freeze([
   }),
   Object.freeze({
     includes: "no FAQPage, QAPage or HowTo markup",
-    correction: "Add FAQPage (or HowTo) JSON-LD whose questions and answers are exactly the ones visible on the page. It helps answer engines parse them; Google shows FAQ results for few sites.",
+    correction: "Add FAQPage JSON-LD whose questions and answers are exactly the ones visible on the page. Draft proposal builds it from the page's own headings and paragraphs, with no AI. It helps answer engines parse them; Google shows FAQ results for few sites.",
     validation: "Validate the markup and confirm every question in it appears in the rendered page text.",
   }),
   Object.freeze({

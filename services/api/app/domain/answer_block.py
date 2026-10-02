@@ -123,30 +123,114 @@ def place_answers(document: str, target_path: str, items: list[AnswerItem]) -> A
         attrs = _paragraph_attrs(document, heading.end())
         insertions.append((heading.end(), f"\n{indent}<p{attrs}>{_escape(item.answer, jsx)}</p>"))
 
-    markup = faq_json_ld(items)
+    last = max(insertions, key=lambda pair: pair[0])
+    index, script = _markup_insertion(document, jsx, faq_json_ld(items), last[0])
     if jsx:
-        # After the last answer, in the component's own markup: a script tag
-        # in JSX needs its JSON passed as a string, not as children.
-        last = max(insertions, key=lambda pair: pair[0])
-        indent = _line_indent(document, last[0])
-        script = (
+        # Merged with the last answer so the script lands after it, not before.
+        insertions.remove(last)
+        insertions.append((index, last[1] + script))
+    else:
+        insertions.append((index, script))
+    return AnswerBlockEdit(before=document, after=_apply(document, insertions), placed=len(items))
+
+
+def _markup_insertion(document: str, jsx: bool, markup: str, jsx_after: int) -> tuple[int, str]:
+    """Where FAQ JSON-LD goes, and the text to put there.
+
+    HTML: in <head> (or, failing that, before </body>). JSX: after `jsx_after`,
+    in the component's own markup, because a script tag in JSX needs its JSON
+    passed as a string, not as children.
+    """
+    if jsx:
+        indent = _line_indent(document, jsx_after)
+        return jsx_after, (
             f"\n{indent}<script type=\"application/ld+json\" "
             f"dangerouslySetInnerHTML={{{{ __html: {json.dumps(markup)} }}}} />"
         )
-        insertions.append((last[0], last[1] + script))
-        insertions.remove(last)
-    else:
-        anchor = re.search(r"</head\s*>", document, re.IGNORECASE) or re.search(
-            r"</body\s*>", document, re.IGNORECASE
-        )
-        if anchor is None:
-            raise AnswerBlockError("answer_block_no_head_or_body")
-        indent = _line_indent(document, anchor.start())
-        insertions.append(
-            (anchor.start(), f'  <script type="application/ld+json">{markup}</script>\n{indent}')
-        )
+    anchor = re.search(r"</head\s*>", document, re.IGNORECASE) or re.search(
+        r"</body\s*>", document, re.IGNORECASE
+    )
+    if anchor is None:
+        raise AnswerBlockError("answer_block_no_head_or_body")
+    indent = _line_indent(document, anchor.start())
+    return anchor.start(), f'  <script type="application/ld+json">{markup}</script>\n{indent}'
 
+
+def _apply(document: str, insertions: list[tuple[int, str]]) -> str:
     after = document
     for index, text in sorted(insertions, key=lambda pair: pair[0], reverse=True):
         after = after[:index] + text + after[index:]
-    return AnswerBlockEdit(before=document, after=after, placed=len(items))
+    return after
+
+
+_PARAGRAPH = re.compile(r"<p(?:\s[^>]*)?>(?P<inner>.*?)</p\s*>", re.IGNORECASE | re.DOTALL)
+_ANY_HEADING = re.compile(r"<h[1-6][\s>]", re.IGNORECASE)
+# The window the crawl rule treats as an answer an engine can quote whole.
+FAQ_MIN_WORDS = 15
+FAQ_MAX_WORDS = 100
+FAQ_MIN_QUESTIONS = 2
+FAQ_MAX_QUESTIONS = 10
+_WH_WORDS = {"how", "what", "which", "why", "when", "where", "who"}
+
+
+def _shown(fragment: str) -> str:
+    """Visible text with its case kept, read the way the crawler reads it."""
+    text = _BREAK.sub(" ", fragment)
+    text = _TAG.sub("", text)
+    return " ".join(html.unescape(text).split())
+
+
+def _is_question(text: str) -> bool:
+    first = re.sub(r"[^a-z]", "", text.split(" ", 1)[0].lower()) if text else ""
+    return text.endswith("?") or first in _WH_WORDS
+
+
+def faq_from_page(document: str, target_path: str) -> AnswerBlockEdit:
+    """FAQPage JSON-LD for the questions a page already answers, and nothing else.
+
+    No model is involved: each question is a heading's visible text and its
+    answer is the visible text of the first paragraph under it, exactly as a
+    reader sees them -- so the markup cannot say anything the page does not.
+    A question whose answer is not a plain 15-100 word paragraph is left out;
+    a paragraph built from a JSX expression is left out, because its text is
+    only known once the page renders.
+    """
+    path = target_path.lower()
+    jsx = path.endswith(JSX_SUFFIXES)
+    if not (jsx or path.endswith(HTML_SUFFIXES)):
+        raise AnswerBlockError("answer_block_unsupported_file")
+    if re.search(r"FAQPage", document):
+        raise AnswerBlockError("page_already_has_faq_markup")
+
+    items: list[AnswerItem] = []
+    last_end = 0
+    for heading in _HEADING.finditer(document):
+        inner = heading.group("inner")
+        if jsx and _JSX_EXPRESSION.search(inner):
+            continue
+        question = _shown(inner)
+        if not _is_question(question):
+            continue
+        paragraph = _PARAGRAPH.search(document, heading.end())
+        if paragraph is None:
+            continue
+        between = document[heading.end() : paragraph.start()]
+        if _ANY_HEADING.search(between) or _shown(between):
+            # Another heading, or copy outside a <p>, comes first: the paragraph
+            # is not the answer directly under this question.
+            continue
+        if jsx and _JSX_EXPRESSION.search(paragraph.group("inner")):
+            continue
+        answer = _shown(paragraph.group("inner"))
+        if not FAQ_MIN_WORDS <= len(answer.split()) <= FAQ_MAX_WORDS:
+            continue
+        if any(item.heading.casefold() == question.casefold() for item in items):
+            continue
+        items.append(AnswerItem(question, answer))
+        last_end = paragraph.end()
+        if len(items) >= FAQ_MAX_QUESTIONS:
+            break
+    if len(items) < FAQ_MIN_QUESTIONS:
+        raise AnswerBlockError("page_has_too_few_answered_questions")
+    insertion = _markup_insertion(document, jsx, faq_json_ld(items), last_end)
+    return AnswerBlockEdit(before=document, after=_apply(document, [insertion]), placed=len(items))

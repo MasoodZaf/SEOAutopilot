@@ -45,6 +45,21 @@ REPOSITORY = {
     "CalcHive/emi-calculator.html": document("EMI Calculator"),
     "CalcHive/index.html": document("CalcHive"),
     "CalcHive/bmi-calculator.html": document("BMI Calculator"),
+    "CalcHive/bmi-calculator-faq.html": "<html><head></head><body><h2>What is BMI?</h2><p>Short.</p></body></html>",
+    # Shaped like TheCalcHive's real calculator pages: styled question headings,
+    # each followed directly by its answer paragraph.
+    "CalcHive/compound-calculator.html": (
+        "<!doctype html><html><head><title>Compound Interest Calculator</title>\n</head><body>\n"
+        "<h2 style=\"font-size: 24px\">What is compound interest?</h2>\n"
+        "<p style=\"margin-bottom: 1.5rem;\">Compound interest is interest earned on both the original "
+        "deposit and the interest already added to it, so the balance grows faster each period than "
+        "simple interest would.</p>\n"
+        "<h2>How often is interest compounded?</h2>\n"
+        "<p>That depends on the account. Banks commonly compound daily, monthly or yearly, and the more "
+        "often it is compounded the more the balance grows over the same time.</p>\n"
+        "<h2>Formula</h2><p>A = P(1 + r/n)^nt, with each symbol explained in the table below this line.</p>\n"
+        "</body></html>"
+    ),
 }
 
 
@@ -104,6 +119,10 @@ async def _seed(session, ids: dict[str, UUID]) -> None:
          "content.thin", "open"),
         ("suppressed", "/love-calculator", "Love Calculator — Free Online Tool | CalcHive",
          "h1.duplicate_across_site", "suppressed"),
+        ("faq", "/compound-calculator", "Compound Interest Calculator",
+         "geo.qa_content_without_schema", "open"),
+        ("faq_thin", "/bmi-calculator-faq", "BMI FAQ",
+         "geo.qa_content_without_schema", "open"),
     )
     for name, path, title, rule_key, status in pages:
         url = f"https://calc.example{path}"
@@ -399,3 +418,31 @@ async def test_a_rejected_proposal_does_not_block_a_new_one(app_engine, evidence
         )
 
     assert again.target_path == "CalcHive/emi-calculator.html"
+
+
+async def test_answered_questions_become_faq_markup_and_nothing_else(app_engine, evidence) -> None:
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        _, command = await drafts(session, evidence).draft_from_opportunity(
+            evidence["opportunity_faq"], read_repository
+        )
+        proposal = await proposals(session, evidence).create_proposal(evidence["site_id"], command)
+
+    before = REPOSITORY["CalcHive/compound-calculator.html"]
+    assert command.target_path == "CalcHive/compound-calculator.html"
+    added = [line for line in command.after_content.splitlines() if line not in before.splitlines()]
+    # One line: the JSON-LD in <head>. No copy on the page changes.
+    assert len(added) == 1 and '"@type":"FAQPage"' in added[0]
+    assert '"name":"What is compound interest?"' in added[0]
+    assert '"name":"How often is interest compounded?"' in added[0]
+    assert "Formula" not in added[0]  # not a question
+    assert "geo.qa_content_without_schema" in command.rationale
+    assert proposal.status in {"validated", "review_required"}
+
+
+async def test_faq_markup_needs_two_answered_questions(app_engine, evidence) -> None:
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        with pytest.raises(HTTPException) as raised:
+            await drafts(session, evidence).draft_from_opportunity(
+                evidence["opportunity_faq_thin"], read_repository
+            )
+    assert raised.value.detail == "page_has_too_few_answered_questions"
