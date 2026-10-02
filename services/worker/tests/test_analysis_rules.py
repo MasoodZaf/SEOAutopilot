@@ -316,3 +316,85 @@ def test_server_html_carrying_the_substance_is_not_reported() -> None:
 
 def test_a_page_short_in_both_forms_is_thin_not_client_rendered() -> None:
     assert rendering_codes(word_count=60, server_word_count=0) == []
+
+
+def outline(*headings: tuple[str, int, str], faq: tuple[int, int] = (0, 0)) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "headings": [
+            {"level": 2, "text": text, "question": text.endswith("?"), "answer_words": words, "answer_kind": kind}
+            for text, words, kind in headings
+        ],
+        "headings_truncated": False,
+        "faq_schema": {"questions": faq[0], "visible": faq[1]},
+    }
+
+
+def geo_codes(page: PageEvidence) -> list[str]:
+    _, findings = evaluate_multiagent_page(multiagent_evidence(page=page))
+    return [f.code for f in findings if f.code.startswith("geo.")]
+
+
+def test_a_question_heading_without_a_quotable_answer_is_reported_with_its_count() -> None:
+    page = page_evidence(answer_outline=outline(
+        ("What is APR?", 0, "none"),
+        ("How is it calculated?", 8, "paragraph"),
+        ("Why does it matter?", 40, "paragraph"),
+        ("Pricing", 0, "none"),
+    ))
+    _, findings = evaluate_multiagent_page(multiagent_evidence(page=page))
+    finding = next(f for f in findings if f.code == "geo.question_without_direct_answer")
+    assert finding.summary.startswith("2 of 3 question headings")
+
+
+def test_a_list_or_a_table_under_a_question_is_an_answer() -> None:
+    page = page_evidence(answer_outline=outline(
+        ("How do I start?", 4, "list"), ("Which plan fits?", 6, "table"),
+    ), structured_data=[{"@type": "HowTo"}])
+    assert geo_codes(page) == []
+
+
+def test_an_answer_too_long_to_quote_is_not_a_direct_answer() -> None:
+    page = page_evidence(answer_outline=outline(("What is it?", 240, "paragraph")))
+    assert "geo.question_without_direct_answer" in geo_codes(page)
+
+
+def test_answered_questions_without_answer_markup_are_reported() -> None:
+    page = page_evidence(answer_outline=outline(
+        ("What is it?", 30, "paragraph"), ("Is it free?", 20, "paragraph"),
+    ))
+    assert geo_codes(page) == ["geo.qa_content_without_schema"]
+
+
+def test_answer_markup_inside_a_graph_counts() -> None:
+    page = page_evidence(
+        answer_outline=outline(("What is it?", 30, "paragraph"), ("Is it free?", 20, "paragraph")),
+        structured_data=[{"@graph": [{"@type": "WebPage"}, {"@type": ["FAQPage"]}]}],
+    )
+    assert geo_codes(page) == []
+
+
+def test_a_single_answered_question_is_not_qa_content() -> None:
+    page = page_evidence(answer_outline=outline(("What is it?", 30, "paragraph")))
+    assert geo_codes(page) == []
+
+
+def test_faq_markup_the_reader_cannot_see_is_reported() -> None:
+    page = page_evidence(
+        answer_outline=outline(faq=(5, 2)), structured_data=[{"@type": "FAQPage"}]
+    )
+    _, findings = evaluate_multiagent_page(multiagent_evidence(page=page))
+    finding = next(f for f in findings if f.code == "geo.faq_schema_not_visible")
+    assert finding.severity == "high"
+    assert finding.summary.startswith("3 of 5 questions")
+
+
+def test_crawls_without_an_outline_raise_no_answer_findings() -> None:
+    assert geo_codes(page_evidence()) == []
+
+
+def test_a_noindex_page_is_not_held_to_answer_rules() -> None:
+    page = page_evidence(
+        robots_directives=["noindex"], answer_outline=outline(("What is it?", 0, "none"), faq=(3, 0))
+    )
+    assert geo_codes(page) == []

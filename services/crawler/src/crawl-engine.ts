@@ -4,6 +4,7 @@ import {load} from "cheerio";
 import {XMLParser} from "fast-xml-parser";
 import robotsParserModule from "robots-parser";
 
+import {buildAnswerOutline} from "./answer-outline.js";
 import {assessCrawlerAccess, checkLlmsTxt, type AiAccessReport, type RobotsPolicy} from "./ai-access.js";
 import type {FetchResource, LinkObservation, PageObservation} from "./types.js";
 
@@ -259,6 +260,7 @@ export async function crawlSite(
       });
     }
     const text = readVisibleText($("body"));
+    const structuredData = extractStructuredData($);
     observations.push({
       normalizedUrl: current,
       finalUrl: resource.finalUrl,
@@ -274,7 +276,8 @@ export async function crawlSite(
       rendered: resource.rendered,
       canonicalUrl: resolveCanonical($('link[rel~="canonical"]').first().attr("href"), finalBase),
       robotsDirectives: extractRobotsDirectives($),
-      structuredData: extractStructuredData($),
+      structuredData,
+      answerOutline: buildAnswerOutline($, node => readVisibleText($(node as Parameters<typeof $>[0])), text, structuredData),
       links,
       linkCountTotal: linkElements.length,
       linksTruncated: linkElements.length > MAX_LINKS_PER_PAGE,

@@ -1,3 +1,5 @@
+import type {AnswerOutline} from "./answer-outline.js";
+
 export type FetchedResource = {
   requestedUrl: string;
   finalUrl: string;
@@ -33,6 +35,8 @@ export type PageObservation = {
   canonicalUrl: string | null;
   robotsDirectives: string[];
   structuredData: unknown[];
+  // Question headings and the copy under them, for answer engines; see answer-outline.ts.
+  answerOutline: AnswerOutline;
   links: LinkObservation[];
   linkCountTotal: number;
   linksTruncated: boolean;
