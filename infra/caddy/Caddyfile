@@ -125,3 +125,24 @@ bidlenz.oryxenlabs.com {
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 }
+
+# ---------------------------------------------------------------------------
+# Mizan prototype (OryxenLabs) -- mizan.oryxenlabs.com
+#
+# Demo dashboard on fictional companies; source in the Mizan repo,
+# infra/compose/prototype.yml, deployed to /opt/mizan. Only the web container
+# is on this network; it forwards /api/* to the Mizan API itself.
+# Upstream named by container (mizan-prototype-web), not by compose service,
+# for the reason given at the seo.oryxenlabs.com block above.
+mizan.oryxenlabs.com {
+	encode zstd gzip
+
+	reverse_proxy mizan-prototype-web:3000
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Robots-Tag "noindex, nofollow"
+	}
+}
