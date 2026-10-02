@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from redis.exceptions import ResponseError
 
 from app.connectors.tenant_clients import credential_aad
+from app.content_drafts import answers
 from app.content_drafts.checks import DraftRejected, normalize, review_flags
 from app.content_drafts.model import DraftModel, DraftModelError
 from app.content_drafts.prompt import (
@@ -190,7 +191,7 @@ async def process_draft(
           lease_until=now()+interval '6 minutes',error_code=NULL,updated_at=now()
         WHERE id=$1 AND tenant_id=$2 AND attempts<$3
           AND (status='queued' OR (status='running' AND lease_until<now()))
-        RETURNING site_id,content_brief_id,author_name,provider
+        RETURNING site_id,content_brief_id,author_name,provider,kind,page_id,answer_items_json
         """,
         draft_id,
         tenant_id,
@@ -217,6 +218,10 @@ async def process_draft(
     api_key = await tenant_key(connection, tenant_id, CREDENTIALS[provider], encryption_key)
     if not api_key:
         await _fail(connection, draft_id, tenant_id, f"{provider}_key_not_configured")
+        return
+
+    if claimed["kind"] == "answer_block":
+        await _write_answers(connection, tenant_id, draft_id, claimed, model, model_name, api_key)
         return
 
     try:
@@ -272,6 +277,112 @@ async def process_draft(
         draft["meta_description"],
         draft["body_markdown"],
         json.dumps(flags),
+    )
+
+
+async def _load_answer_input(
+    connection: Any, tenant_id: UUID, claimed: Mapping[str, Any]
+) -> answers.AnswerInput:
+    page = await connection.fetchrow(
+        """
+        SELECT p.normalized_url,s.name AS site_name,s.canonical_origin,
+               (SELECT o.title FROM page_observation o
+                 WHERE o.tenant_id=p.tenant_id AND o.page_id=p.id
+                 ORDER BY o.observed_at DESC LIMIT 1) AS title,
+               (SELECT o.answer_outline_json FROM page_observation o
+                 WHERE o.tenant_id=p.tenant_id AND o.page_id=p.id AND o.answer_outline_json IS NOT NULL
+                 ORDER BY o.observed_at DESC LIMIT 1) AS outline
+        FROM page p JOIN site s ON s.id=p.site_id AND s.tenant_id=p.tenant_id
+        WHERE p.id=$1 AND p.tenant_id=$2
+        """,
+        claimed["page_id"],
+        tenant_id,
+    )
+    if page is None:
+        raise DraftRejected("page_not_found")
+    # The questions were fixed when the draft was requested; only those are asked.
+    questions = [
+        str(item.get("heading") or "")
+        for item in _json(claimed["answer_items_json"]) or []
+        if isinstance(item, dict) and item.get("heading")
+    ]
+    if not questions:
+        raise DraftRejected("answers_missing")
+    outline = _json(page["outline"]) or {}
+    headings = [
+        str(item.get("text") or "")
+        for item in (outline.get("headings") or [] if isinstance(outline, dict) else [])
+        if isinstance(item, dict) and item.get("text")
+    ][:40]
+    return answers.AnswerInput(
+        site_name=str(page["site_name"]),
+        site_origin=str(page["canonical_origin"]).rstrip("/"),
+        page_url=str(page["normalized_url"]),
+        page_title=str(page["title"] or ""),
+        headings=headings,
+        questions=questions,
+    )
+
+
+async def _write_answers(
+    connection: Any,
+    tenant_id: UUID,
+    draft_id: UUID,
+    claimed: Mapping[str, Any],
+    model: DraftModel,
+    model_name: str,
+    api_key: str,
+) -> None:
+    """The answer-block path: same claim, key and budget, a different prompt."""
+    try:
+        data = await _load_answer_input(connection, tenant_id, claimed)
+    except DraftRejected as error:
+        await _fail(connection, draft_id, tenant_id, str(error))
+        return
+    user = answers.build_user_prompt(data)
+    try:
+        result = await model.draft(
+            api_key=api_key,
+            model=model_name,
+            system=answers.SYSTEM_PROMPT,
+            user=user,
+            schema=answers.ANSWER_SCHEMA,
+            schema_name="answer_block",
+        )
+    except DraftModelError as error:
+        if error.retryable:
+            raise
+        await _fail(connection, draft_id, tenant_id, error.code)
+        return
+    try:
+        draft = answers.normalize_answers(result.answer, data.questions)
+    except DraftRejected as error:
+        await connection.execute(
+            "UPDATE content_draft SET cost_micros=$3,input_tokens=$4,output_tokens=$5,model=$6 "
+            "WHERE id=$1 AND tenant_id=$2",
+            draft_id, tenant_id, result.cost_micros, result.input_tokens, result.output_tokens, result.model,
+        )
+        await _fail(connection, draft_id, tenant_id, str(error))
+        return
+    await connection.execute(
+        """
+        UPDATE content_draft SET status='ready',finished_at=now(),lease_until=NULL,error_code=NULL,
+          model=$3,prompt_version=$4,input_hash=$5,input_tokens=$6,output_tokens=$7,
+          cost_micros=$8,generated_json=$9::jsonb,answer_items_json=$10::jsonb,flags_json=$11::jsonb,
+          version=version+1,updated_at=now()
+        WHERE id=$1 AND tenant_id=$2 AND status='running'
+        """,
+        draft_id,
+        tenant_id,
+        result.model,
+        answers.PROMPT_VERSION,
+        input_hash(answers.SYSTEM_PROMPT, user, model_name),
+        result.input_tokens,
+        result.output_tokens,
+        result.cost_micros,
+        json.dumps(draft),
+        json.dumps(draft["items"]),
+        json.dumps(answers.answer_flags(draft)),
     )
 
 

@@ -75,7 +75,16 @@ class ModelAnswer:
 
 
 class DraftModel(Protocol):
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer: ...
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer: ...
 
 
 class AnthropicDraftModel:
@@ -85,7 +94,16 @@ class AnthropicDraftModel:
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
 
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer:
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
         client = anthropic.AsyncAnthropic(
             api_key=api_key, timeout=self.timeout_seconds, max_retries=2
         )
@@ -98,7 +116,7 @@ class AnthropicDraftModel:
                 thinking={"type": "adaptive"},
                 output_config={
                     "effort": "high",
-                    "format": {"type": "json_schema", "schema": DRAFT_SCHEMA},
+                    "format": {"type": "json_schema", "schema": schema or DRAFT_SCHEMA},
                 },
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": user}],
@@ -171,7 +189,16 @@ class OpenAIDraftModel:
         self.timeout_seconds = timeout_seconds
         self.transport = transport
 
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer:
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
         body = {
             "model": model,
             "max_completion_tokens": self.max_tokens,
@@ -181,7 +208,7 @@ class OpenAIDraftModel:
             ],
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": "blog_draft", "strict": True, "schema": DRAFT_SCHEMA},
+                "json_schema": {"name": schema_name, "strict": True, "schema": schema or DRAFT_SCHEMA},
             },
         }
         try:

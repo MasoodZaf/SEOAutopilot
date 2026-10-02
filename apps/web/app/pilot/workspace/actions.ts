@@ -196,6 +196,52 @@ export async function requestDraft(formData: FormData): Promise<never> {
 }
 
 /**
+ * Queue AI-drafted direct answers for a page's unanswered question headings.
+ *
+ * The page id is the only input that names what to answer; the questions are
+ * chosen by the API from the page's latest crawl.
+ */
+export async function requestAnswerDraft(formData: FormData): Promise<never> {
+  const pageId = String(formData.get("page_id") ?? "");
+  const provider = String(formData.get("provider") ?? "");
+  const idempotencyKey = String(formData.get("idempotency_key") ?? "");
+  const host = safeHost(String(formData.get("site_host") ?? ""));
+  const back = (error: string) => pilotPath(host, {error});
+  if (!UUID.test(pageId) || !PROVIDERS.has(provider) || idempotencyKey.length < 8) {
+    redirectFresh(back("invalid_draft_request"));
+  }
+  let draftId = "";
+  try {
+    const created = await apiJson<{data: {id: string}}>(`/v1/pages/${pageId}/answer-drafts`, {
+      method: "POST",
+      body: JSON.stringify({provider, idempotency_key: idempotencyKey}),
+    });
+    draftId = created.data.id;
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError && error.code === "answer_draft_already_live") {
+      // One live answer draft per page: open that one rather than refuse.
+      draftId = (await liveAnswerDraft(host, pageId)) ?? "";
+      if (draftId) redirectFresh(`/pilot/workspace/drafts/${draftId}`);
+    }
+    if (error instanceof ApiError) redirectFresh(back(safeCode(error.code)));
+    throw error;
+  }
+  redirectFresh(`/pilot/workspace/drafts/${draftId}`);
+}
+
+async function liveAnswerDraft(host: string, pageId: string): Promise<string | undefined> {
+  const siteId = await siteIdFor(host);
+  if (!siteId) return undefined;
+  const drafts = await apiJson<{data: Array<{id: string; kind?: string; page_id?: string | null; status: string}>}>(
+    `/v1/sites/${siteId}/content-drafts?limit=100`,
+  );
+  return drafts.data.find(
+    (draft) => draft.kind === "answer_block" && draft.page_id === pageId && ["queued", "running", "ready"].includes(draft.status),
+  )?.id;
+}
+
+/**
  * Save a reviewer's edits and flag resolutions.
  *
  * A flag is resolved by ticking it and saying how: verified, corrected or
@@ -235,6 +281,7 @@ export async function saveDraft(formData: FormData): Promise<never> {
         body_markdown: text("body_markdown", 60000),
         author_name: text("author_name", 120),
         resolved_flags: resolved,
+        answers: answerEdits(formData),
       }),
     });
   } catch (error) {
@@ -243,6 +290,18 @@ export async function saveDraft(formData: FormData): Promise<never> {
     throw error;
   }
   redirectFresh(`${back}?saved=1`);
+}
+
+/** An answer block's edited answers, keyed by the heading each answers. */
+function answerEdits(formData: FormData): Record<string, string> | undefined {
+  const answers: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (!key.startsWith("answer_heading:") || typeof value !== "string") continue;
+    const index = key.slice("answer_heading:".length);
+    const answer = formData.get(`answer:${index}`);
+    if (typeof answer === "string") answers[value] = answer.replace(/\s+/g, " ").trim().slice(0, 600);
+  }
+  return Object.keys(answers).length ? answers : undefined;
 }
 
 export async function withdrawDraft(formData: FormData): Promise<never> {
@@ -274,7 +333,9 @@ export async function submitDraft(formData: FormData): Promise<never> {
     await apiJson(`/v1/content-drafts/${draftId}/submit`, {method: "POST"});
   } catch (error) {
     unstable_rethrow(error);
-    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code)}`);
+    // "draft_target_not_found:<path>" carries the file it looked for; the page
+    // explains the code, so only the code travels in the URL.
+    if (error instanceof ApiError) redirectFresh(`${back}?error=${safeCode(error.code.split(":")[0] ?? "")}`);
     throw error;
   }
   redirectFresh(`${back}?submitted=1`);

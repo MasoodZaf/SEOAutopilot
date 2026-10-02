@@ -147,6 +147,48 @@ class ProposalService:
             expires_in_days=14,
         )
 
+    async def create_page_edit(
+        self,
+        site: Site,
+        *,
+        page_id: UUID,
+        content_draft_id: UUID,
+        title: str,
+        rationale: str,
+        target_path: str,
+        before_content: str,
+        after_content: str,
+        evidence_refs: dict[str, Any],
+    ) -> Proposal:
+        """A proposal that edits an existing page's file with reviewed copy.
+
+        The copy came from a content draft whose every flag a person resolved,
+        and it adds claims to a live page, so it is classified claim-changing:
+        high risk, two approvers, never auto-deployed. `before_content` is the
+        file as read, so the deployment's drift check refuses it if the file
+        changed in the meantime.
+        """
+        if self.context.role not in ALLOWED_PROPOSAL_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_create_proposal",
+            )
+        return await self._create(
+            site,
+            opportunity_id=None,
+            page_id=page_id,
+            content_draft_id=content_draft_id,
+            title=title,
+            rationale=rationale,
+            target_type="github_file",
+            target_path=target_path,
+            before_content=before_content,
+            after_content=after_content,
+            evidence_refs=evidence_refs,
+            expires_in_days=14,
+            claim_changing=True,
+        )
+
     async def _create(
         self,
         site: Site,
@@ -163,6 +205,7 @@ class ProposalService:
         evidence_refs: dict[str, Any],
         expires_in_days: int,
         generator: str | None = None,
+        claim_changing: bool = False,
     ) -> Proposal:
         """Validate, evaluate policy, and record one proposal.
 
@@ -187,6 +230,7 @@ class ProposalService:
             author_id=self.context.actor_id,
             tenant_mode=site.mode,
             site_required_approver_count=site.required_approver_count,
+            claim_changing=claim_changing,
         )
 
         proposal_payload = {

@@ -67,6 +67,12 @@ TITLE_RATIONALE = (
 )
 
 
+def target_path_for(path_template: str, normalized_url: str) -> str:
+    """The repository file a crawled page is built from, per the site's connector."""
+    path = urlsplit(normalized_url).path.strip("/") or "index"
+    return path_template.format(path=path)
+
+
 class ProposalDraftService:
     def __init__(
         self,
@@ -187,8 +193,7 @@ class ProposalDraftService:
             raise self._refuse(str(error)) from error
 
     def _target_path(self, normalized_url: str) -> str:
-        path = urlsplit(normalized_url).path.strip("/") or "index"
-        return self.path_template.format(path=path)
+        return target_path_for(self.path_template, normalized_url)
 
     def _display_path(self, normalized_url: str) -> str:
         return urlsplit(normalized_url).path or "/"

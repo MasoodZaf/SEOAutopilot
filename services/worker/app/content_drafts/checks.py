@@ -37,7 +37,7 @@ def slugify(value: str) -> str:
     return slug[:60].rstrip("-") or "post"
 
 
-def _sentence_around(text: str, start: int, end: int) -> str:
+def sentence_around(text: str, start: int, end: int) -> str:
     left = max(text.rfind(". ", 0, start), text.rfind("\n", 0, start))
     right_candidates = [i for i in (text.find(". ", end), text.find("\n", end)) if i != -1]
     right = min(right_candidates) if right_candidates else len(text)
@@ -99,7 +99,7 @@ def review_flags(draft: dict[str, Any], pages: list[SitePage]) -> list[dict[str,
     for match in FIGURE.finditer(body):
         if match.group(0) in declared:
             continue
-        sentence = _sentence_around(body, match.start(), match.end())
+        sentence = sentence_around(body, match.start(), match.end())
         if sentence in seen:
             continue
         seen.add(sentence)

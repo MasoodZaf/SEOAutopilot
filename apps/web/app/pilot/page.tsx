@@ -28,7 +28,8 @@ import {
   toggleEmergencyFreezeAction,
   verifyPortfolioDns,
 } from "./actions";
-import {advisoryFor} from "./advisory.mjs";
+import {advisoryFor, answersDraftable} from "./advisory.mjs";
+import {requestAnswerDraft} from "./workspace/actions";
 import {SerpPreview} from "./components/serp-preview";
 import {CrawlPanel} from "./crawl-panel";
 import {challengeCookie, type CalibrationRun, type Crawl, type Site} from "./model";
@@ -160,6 +161,10 @@ const errorMessages: Record<string, string> = {
   site_not_verified: "Verify site ownership before connecting data or crawling.",
   calibration_run_already_open: "A calibration review set is already open.",
   no_opportunities: "Run and analyze a crawl before creating a review set.",
+  page_has_no_unanswered_questions: "The page's latest crawl shows no question heading without an answer. Re-crawl after editing it.",
+  anthropic_key_not_configured: "This workspace has no Claude key. Add one under Settings → Keys.",
+  openai_key_not_configured: "This workspace has no OpenAI key. Add one under Settings → Keys.",
+  content_draft_budget_exhausted: "This month's drafting budget is spent. It resets on the 1st.",
   calibration_evidence_not_ready: "The newest crawl and analysis must finish before a review set can be frozen.",
   crawl_already_active: "A bounded crawl is already queued or running for this site.",
   "dns-provider-connection-invalid": "Enter a zone ID and a scoped DNS-provider token.",
@@ -939,16 +944,39 @@ export default async function PilotPage({searchParams}: PageProps) {
                               opportunity implies and submits it for review; it
                               writes nothing to the site.
                             */}
-                            <form action={draftProposalAction}>
-                              <input type="hidden" name="site_host" value={target.host} />
-                              <input type="hidden" name="opportunity_id" value={opportunity.id} />
-                              <button
-                                type="submit"
-                                className={smallButton.secondary}
-                               data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing." aria-describedby="tip-6d09637632">
-                                Draft proposal
-                              </button>
-                            </form>
+                            {answersDraftable(opportunity.title) ? (
+                              // The answers are AI-written with the workspace's own key and land
+                              // as a draft to check, never on the site.
+                              <form action={requestAnswerDraft} className="flex flex-wrap items-center justify-end gap-2">
+                                <input type="hidden" name="site_host" value={target.host} />
+                                <input type="hidden" name="page_id" value={opportunity.page_id} />
+                                <input type="hidden" name="idempotency_key" value={randomUUID()} />
+                                <label className="sr-only" htmlFor={`answer-provider-${opportunity.id}`}>Write with</label>
+                                <select
+                                  id={`answer-provider-${opportunity.id}`}
+                                  name="provider"
+                                  defaultValue="anthropic"
+                                  className="rounded-full border border-rule-strong bg-paper px-2 py-1 text-[12px] text-ink"
+                                >
+                                  <option value="anthropic">Claude</option>
+                                  <option value="openai">OpenAI</option>
+                                </select>
+                                <button type="submit" className={smallButton.secondary}>
+                                  Draft direct answers
+                                </button>
+                              </form>
+                            ) : (
+                              <form action={draftProposalAction}>
+                                <input type="hidden" name="site_host" value={target.host} />
+                                <input type="hidden" name="opportunity_id" value={opportunity.id} />
+                                <button
+                                  type="submit"
+                                  className={smallButton.secondary}
+                                 data-tip="Turn this opportunity into a reviewable proposal with an exact diff. Publishes nothing." aria-describedby="tip-6d09637632">
+                                  Draft proposal
+                                </button>
+                              </form>
+                            )}
                           </div>
                         </li>
                       );

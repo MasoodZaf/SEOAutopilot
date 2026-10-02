@@ -229,3 +229,17 @@ def test_a_site_setting_cannot_soften_an_indexing_control_change() -> None:
     assert decision.risk == "high"
     assert decision.required_approver_count == 2
     assert decision.can_auto_deploy is False
+
+
+def test_claim_changing_copy_is_high_risk_however_small() -> None:
+    before = "<h2>Is it free?</h2>"
+    after = "<h2>Is it free?</h2>\n<p>Yes.</p>"
+    checks = validate_proposal_content("github_file", "emi.html", before, after)
+    plain = evaluate_proposal_policy("github_file", "emi.html", before, after, checks, tenant_mode="autopilot")
+    claimed = evaluate_proposal_policy(
+        "github_file", "emi.html", before, after, checks, tenant_mode="autopilot", claim_changing=True
+    )
+    assert plain.risk == "medium"
+    assert claimed.risk == "high"
+    assert claimed.required_approver_count >= 2
+    assert claimed.can_auto_deploy is False

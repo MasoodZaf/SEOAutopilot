@@ -1,9 +1,11 @@
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.api.schemas import (
+    AnswerDraftCreate,
     ContentDraftCollection,
     ContentDraftCreate,
     ContentDraftEnvelope,
@@ -15,7 +17,9 @@ from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
 from app.db.models import ContentDraft, Proposal
 from app.db.session import TenantSession
+from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
 from app.services.content_drafts import ContentDraftService
+from app.services.github_connector import credential_for_site
 
 router = APIRouter(prefix="/v1", tags=["content-drafts"])
 
@@ -46,6 +50,29 @@ async def request_content_draft(
     draft = await service.request(
         brief_id, command.idempotency_key, command.author_name, command.provider
     )
+    return ContentDraftEnvelope(
+        data=await _read(session, draft), meta={"trace_id": context.trace_id}
+    )
+
+
+@router.post(
+    "/pages/{page_id}/answer-drafts",
+    response_model=ContentDraftEnvelope,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def request_answer_draft(
+    page_id: UUID,
+    command: AnswerDraftCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> ContentDraftEnvelope:
+    """Queue AI-drafted direct answers for a page's unanswered question headings.
+
+    The questions come from the page's latest crawl, not from the request.
+    Returns at once; the worker writes the answers with the workspace's key.
+    """
+    service = ContentDraftService(session, context, get_settings())
+    draft = await service.request_answers(page_id, command.idempotency_key, command.provider)
     return ContentDraftEnvelope(
         data=await _read(session, draft), meta={"trace_id": context.trace_id}
     )
@@ -100,6 +127,7 @@ async def update_content_draft(
         body_markdown=command.body_markdown,
         author_name=command.author_name,
         resolved_flags=command.resolved_flags,
+        answers=command.answers,
     )
     return ContentDraftEnvelope(data=await _read(session, draft), meta={"trace_id": context.trace_id})
 
@@ -108,9 +136,24 @@ async def update_content_draft(
 async def submit_content_draft(
     draft_id: UUID, context: TenantContextDependency, session: TenantSession
 ) -> ContentDraftEnvelope:
-    """Turn a reviewed draft into a proposal to add the post to the site."""
-    service = ContentDraftService(session, context, get_settings())
-    await service.submit(draft_id)
+    """Turn a reviewed draft into a proposal: a new post, or answers added to a page."""
+    settings = get_settings()
+    service = ContentDraftService(session, context, settings)
+    draft = await service.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="content_draft_not_found")
+    if draft.kind == "answer_block":
+        # The answers edit a file that exists, so it is read through the
+        # page's own site connector -- never another site's.
+        async with httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(20.0)) as client:
+            credential = await credential_for_site(session, context, draft.site_id, settings, client)
+            adapter = GitHubDeploymentAdapter(client, credential.target, credential.token)
+            try:
+                await service.submit(draft_id, adapter.read_file, credential.path_template)
+            except GitHubDeploymentError as error:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+    else:
+        await service.submit(draft_id)
     draft = await service.get(draft_id)
     if draft is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="content_draft_not_found")

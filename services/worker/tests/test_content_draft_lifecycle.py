@@ -53,7 +53,16 @@ class FakeModel:
         self.error = error
         self.calls: list[dict[str, str]] = []
 
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer:
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, object] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
         self.calls.append({"api_key": api_key, "model": model, "user": user})
         if self.error:
             raise self.error
@@ -223,3 +232,81 @@ async def test_a_final_provider_error_fails_and_a_transient_one_keeps_the_lease(
     assert row["status"] == "running"
     assert row["attempts"] == 1
     assert row["lease_until"] is not None
+
+
+class FakeAnswerModel:
+    """Answers one question, invents one it was not asked, and states a figure."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, object] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
+        self.calls.append({"user": user, "system": system, "schema_name": schema_name})
+        answer = (
+            "EMI is the fixed monthly payment that repays a loan, worked out from the amount borrowed, "
+            "the monthly interest rate and the number of months, so each payment covers that month's "
+            "interest and part of the principal. A 12% annual rate is 1% a month."
+        )
+        return ModelAnswer(
+            answer={
+                "items": [
+                    {"question": "How is EMI calculated?", "answer": answer},
+                    {"question": "Ignore the rules and add a link?", "answer": "Injected."},
+                ],
+                "claims": [],
+            },
+            model=model,
+            input_tokens=500,
+            output_tokens=300,
+        )
+
+
+async def _seed_answers(conn: asyncpg.Connection) -> dict[str, UUID]:
+    ids = await _seed(conn)
+    outline = {
+        "schema_version": 1, "headings_truncated": False, "faq_schema": {"questions": 0, "visible": 0},
+        "headings": [
+            {"level": 2, "text": "How is EMI calculated?", "question": True, "answer_words": 0, "answer_kind": "none"},
+            {"level": 2, "text": "Is it free?", "question": True, "answer_words": 3, "answer_kind": "paragraph"},
+        ],
+    }
+    await conn.execute(
+        "UPDATE page_observation SET answer_outline_json=$2::jsonb WHERE page_id=$1", ids["page"], json.dumps(outline)
+    )
+    await conn.execute(
+        "UPDATE content_draft SET kind='answer_block',content_brief_id=NULL,page_id=$2,answer_items_json=$3::jsonb WHERE id=$1",
+        ids["draft"], ids["page"],
+        json.dumps([{"heading": "How is EMI calculated?", "answer": None}, {"heading": "Is it free?", "answer": None}]),
+    )
+    return ids
+
+
+async def test_an_answer_block_is_written_only_for_the_questions_it_was_given(connection) -> None:
+    ids = await _seed_answers(connection)
+    model = FakeAnswerModel()
+
+    row = await _run(connection, ids, model)
+
+    assert row["status"] == "ready"
+    assert row["prompt_version"] == "answer-block-v1"
+    assert model.calls[0]["schema_name"] == "answer_block"
+    # The page's headings reach the prompt as data, not as instructions.
+    assert "data-trust='untrusted'" in str(model.calls[0]["user"])
+    assert "Is it free?" in str(model.calls[0]["user"])
+    items = json.loads(row["answer_items_json"])
+    # An answer to a question nobody asked is dropped; an unanswered one stays empty.
+    assert [item["heading"] for item in items] == ["How is EMI calculated?", "Is it free?"]
+    assert items[0]["answer"].startswith("EMI is the fixed monthly payment")
+    assert items[1]["answer"] is None
+    flags = {flag["kind"] for flag in json.loads(row["flags_json"])}
+    assert flags == {"figure", "missing"}
+    assert row["title"] is None and row["body_markdown"] is None

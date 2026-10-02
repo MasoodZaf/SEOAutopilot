@@ -135,6 +135,8 @@ export type AiVisibility = {
   factors_json: Record<string, unknown>;
 };
 
+export type AnswerItem = {heading: string; answer: string | null};
+
 export type DraftFlag = {
   id: string;
   kind: "claim" | "figure" | "link" | "overlap" | string;
@@ -147,7 +149,10 @@ export type DraftFlag = {
 export type ContentDraftSummary = {
   id: string;
   site_id: string;
-  content_brief_id: string;
+  /** A new blog post written from a brief, or direct answers for an existing page. */
+  kind?: "blog_post" | "answer_block";
+  content_brief_id: string | null;
+  page_id?: string | null;
   status: "queued" | "running" | "ready" | "failed" | "submitted" | "withdrawn";
   title: string | null;
   slug: string | null;
@@ -162,7 +167,13 @@ export type ContentDraftDetail = ContentDraftSummary & {
   body_markdown: string | null;
   author_name: string | null;
   flags_json: DraftFlag[];
-  generated_json: {title?: string; meta_description?: string; body_markdown?: string} | null;
+  answer_items_json?: AnswerItem[];
+  generated_json: {
+    title?: string;
+    meta_description?: string;
+    body_markdown?: string;
+    items?: AnswerItem[];
+  } | null;
   provider: "anthropic" | "openai";
   model: string | null;
   input_tokens: number;
