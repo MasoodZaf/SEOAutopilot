@@ -20,3 +20,9 @@ artifacts
 data
 *.log
 .DS_Store
+# Host-only state. The crawler image copies the whole build context, and on
+# 2026-10-02 it was found carrying 21 production database dumps and every
+# infra/local env file (OIDC client secret, session secret) -- in the one
+# service that fetches untrusted web pages. Nothing in an image needs either.
+backups
+infra/local
