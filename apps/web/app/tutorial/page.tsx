@@ -69,7 +69,7 @@ const steps: Step[] = [
       "For the repository, sign in with GitHub and pick the site's repository from a list. No token to copy.",
       "If a connection stops working, a banner says so on every page, with a Reconnect link.",
     ],
-    never: "Connections are read-only for Google. GitHub access is used only to open pull requests.",
+    never: "Connections are read-only for Google. GitHub access opens pull requests, and merges one only when an owner or admin clicks Publish on a site that allows it.",
   },
   {
     id: "crawl",
@@ -116,7 +116,7 @@ const steps: Step[] = [
       "Another person approves. Riskier changes, such as canonical, robots or redirect edits, need more approvers. Deploy then opens a pull request on your repository.",
     actions: [
       "An author can never approve their own change. Invite reviewers under Settings → Members.",
-      "Deploy opens the pull request. The change reaches the live site only when a person merges it.",
+      "Deploy opens the pull request. The change reaches the live site when a person merges it: on GitHub, or with Publish if an owner or admin has turned on Publish from SEO Autopilot under Adjust governance. Publish merges only the exact reviewed change; robots, redirect, configuration and template-wide changes are always merged on GitHub.",
       "Request revert opens a revert pull request if a deployed change needs undoing.",
     ],
     never: "Deployments stop at the daily change budget, during a freeze window, and site-wide under the emergency freeze.",

@@ -854,6 +854,7 @@ class GovernanceSettingsUpdate(BaseModel):
     clear_required_approver_count: bool = False
     freeze_window_start: datetime | None = None
     freeze_window_end: datetime | None = None
+    publish_from_app: bool | None = None
 
 
 class SiteModeUpdate(BaseModel):
@@ -871,6 +872,7 @@ class GovernanceStatusRead(BaseModel):
     today_deployments_count: int
     freeze_window_start: datetime | None
     freeze_window_end: datetime | None
+    publish_from_app: bool = False
 
 
 class GovernanceStatusEnvelope(BaseModel):

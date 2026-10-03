@@ -77,6 +77,7 @@ class GovernanceService:
             today_deployments_count=today_count,
             freeze_window_start=site.freeze_window_start,
             freeze_window_end=site.freeze_window_end,
+            publish_from_app=bool(site.publish_from_app),
         )
 
     async def update_governance_settings(
@@ -106,12 +107,15 @@ class GovernanceService:
             site.freeze_window_start = command.freeze_window_start
         if command.freeze_window_end is not None:
             site.freeze_window_end = command.freeze_window_end
+        if command.publish_from_app is not None:
+            site.publish_from_app = command.publish_from_app
 
         event_payload = {
             "site_id": str(site_id),
             "autopilot_enabled": site.autopilot_enabled,
             "daily_change_budget": site.daily_change_budget,
             "required_approver_count": site.required_approver_count,
+            "publish_from_app": site.publish_from_app,
         }
         self.session.add(
             AuditEvent(

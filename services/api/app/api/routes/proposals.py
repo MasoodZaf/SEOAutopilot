@@ -252,3 +252,43 @@ async def deploy_proposals(
         data=[DeploymentReceiptRead.model_validate(r) for r in receipts],
         meta={"trace_id": context.trace_id, "count": len(receipts)},
     )
+
+
+@router.post(
+    "/v1/proposals/{proposal_id}/publish",
+    response_model=DeploymentReceiptEnvelope,
+    status_code=status.HTTP_200_OK,
+)
+async def publish_proposal(
+    proposal_id: UUID,
+    context: TenantContextDependency,
+    session: TenantSession,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=200)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DeploymentReceiptEnvelope:
+    """Open the approved change's pull request if needed, and merge it.
+
+    `meta.published` says whether it went live. When GitHub or the review
+    check refused the merge, `meta.refusal` says why and the receipt still
+    points at the pull request, to be merged on GitHub.
+    """
+    async with httpx.AsyncClient(
+        follow_redirects=False, timeout=httpx.Timeout(30.0)
+    ) as client:
+        credential = await credential_for_proposal(session, context, proposal_id, settings, client)
+        try:
+            receipt, refusal = await ProposalService(
+                session, context, deployments_enabled=settings.deployments_enabled
+            ).publish_proposal(
+                proposal_id,
+                idempotency_key,
+                GitHubDeploymentAdapter(client, credential.target, credential.token),
+            )
+        except GitHubDeploymentError as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+            ) from error
+    meta = {"trace_id": context.trace_id, "published": "false" if refusal else "true"}
+    if refusal:
+        meta["refusal"] = refusal
+    return DeploymentReceiptEnvelope(data=DeploymentReceiptRead.model_validate(receipt), meta=meta)
