@@ -95,6 +95,8 @@ type Opportunity = {
   confidence: number;
   risk: string;
   page_url: string | null;
+  // Absent from an older API: treated as not draftable.
+  draftable?: boolean;
 };
 type Proposal = {
   id: string;
@@ -969,6 +971,12 @@ export default async function PilotPage({searchParams}: PageProps) {
                                   Draft direct answers
                                 </button>
                               </form>
+                            ) : !opportunity.draftable ? (
+                              // No deterministic repair exists for this rule; the
+                              // guidance above is the next step, not a refusal.
+                              <p className="text-right text-[12px] text-ink-faint text-pretty">
+                                No automatic fix. Follow the correction above.
+                              </p>
                             ) : (
                               <form action={draftProposalAction}>
                                 <input type="hidden" name="site_host" value={target.host} />

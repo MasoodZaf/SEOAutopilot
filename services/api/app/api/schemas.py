@@ -287,6 +287,9 @@ class OpportunityRead(BaseModel):
     type: str
     title: str
     status: str
+    # Whether "Draft proposal" can build a change for it. Most rules have no
+    # deterministic repair; offering the action there only produces a refusal.
+    draftable: bool = False
     impact: float
     confidence: float
     urgency: float

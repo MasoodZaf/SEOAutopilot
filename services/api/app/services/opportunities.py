@@ -10,7 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import OpportunitySuppress
 from app.core.context import Role, TenantContext
-from app.db.models import AnalysisRun, AuditEvent, Opportunity, OutboxEvent, Page, Site
+from app.db.models import (
+    AnalysisRun,
+    AuditEvent,
+    Finding,
+    Opportunity,
+    OpportunityFinding,
+    OutboxEvent,
+    Page,
+    Site,
+)
+from app.services.proposal_drafts import REPAIRABLE_RULES
 
 ALLOWED_SUPPRESSION_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
 
@@ -207,6 +217,23 @@ class OpportunityService:
             )
         )
         return {page_id: normalized_url for page_id, normalized_url in rows.all()}
+
+    async def draftable_ids(self, opportunities: list[Opportunity]) -> set[UUID]:
+        """The opportunities a finding of a repairable rule stands behind."""
+        ids = [item.id for item in opportunities]
+        if not ids:
+            return set()
+        rows = await self.session.scalars(
+            select(OpportunityFinding.opportunity_id)
+            .join(Finding, Finding.id == OpportunityFinding.finding_id)
+            .where(
+                OpportunityFinding.tenant_id == self.context.tenant_id,
+                Finding.tenant_id == self.context.tenant_id,
+                OpportunityFinding.opportunity_id.in_(ids),
+                Finding.rule_key.in_(REPAIRABLE_RULES),
+            )
+        )
+        return set(rows.all())
 
     async def get(self, opportunity_id: UUID) -> Opportunity | None:
         return await self.session.scalar(

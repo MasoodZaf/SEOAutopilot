@@ -11,6 +11,7 @@ hand-written hero headline with the brand name.
 """
 
 from hashlib import sha256
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -446,3 +447,58 @@ async def test_faq_markup_needs_two_answered_questions(app_engine, evidence) -> 
                 evidence["opportunity_faq_thin"], read_repository
             )
     assert raised.value.detail == "page_has_too_few_answered_questions"
+
+
+async def test_only_opportunities_with_a_repair_are_offered_as_draftable(
+    app_engine, evidence
+) -> None:
+    # The queue offered "Draft proposal" on a thin-content page, and the click
+    # came back as opportunity_has_no_deterministic_repair.
+    from app.services.opportunities import OpportunityService
+
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        service = OpportunityService(
+            session,
+            TenantContext(
+                tenant_id=evidence["tenant_id"],
+                actor_id=evidence["actor_id"],
+                role=Role.OWNER,
+                trace_id="integration",
+            ),
+        )
+        listed = await service.list_top(evidence["site_id"], 50, "open", scope="all")
+        assert listed is not None
+        draftable = await service.draftable_ids(listed)
+
+    assert evidence["opportunity_thin"] not in draftable
+    assert evidence["opportunity_calculator"] in draftable
+    assert evidence["opportunity_faq"] in draftable
+
+
+async def test_draftable_does_not_reach_another_tenants_opportunities(
+    app_engine, evidence
+) -> None:
+    from app.services.opportunities import OpportunityService
+
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        listed = await OpportunityService(
+            session,
+            TenantContext(
+                tenant_id=evidence["tenant_id"], actor_id=evidence["actor_id"],
+                role=Role.OWNER, trace_id="integration",
+            ),
+        ).list_top(evidence["site_id"], 50, "open", scope="all")
+        assert listed
+        # The ids only: the session's rollback expires the loaded rows.
+        listed = [SimpleNamespace(id=item.id) for item in listed]
+
+    other = uuid4()
+    async with scoped(app_engine, other) as session:
+        draftable = await OpportunityService(
+            session,
+            TenantContext(
+                tenant_id=other, actor_id=evidence["actor_id"],
+                role=Role.OWNER, trace_id="integration",
+            ),
+        ).draftable_ids(listed)
+    assert draftable == set()
