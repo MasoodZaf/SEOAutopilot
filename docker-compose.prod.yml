@@ -41,6 +41,7 @@ services:
     build:
       args:
         NEXT_PUBLIC_APP_URL: https://${DOMAIN}
+        NEXT_PUBLIC_SHOWCASE_HOME_URL: https://oryxenlabs.com/#product-seo-autopilot
 
   caddy:
     image: caddy:2-alpine

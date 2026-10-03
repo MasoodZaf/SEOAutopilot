@@ -10,6 +10,10 @@ COPY . .
 # falls back to the seoautopilot.dev default in robots/sitemap/OG tags.
 ARG NEXT_PUBLIC_APP_URL
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+# The OryxenLabs showcase page a "back" link points to, shown only to visitors
+# who arrived from it. Empty (the default) means no link anywhere.
+ARG NEXT_PUBLIC_SHOWCASE_HOME_URL=
+ENV NEXT_PUBLIC_SHOWCASE_HOME_URL=$NEXT_PUBLIC_SHOWCASE_HOME_URL
 RUN pnpm --filter @seo-autopilot/contracts build \
     && pnpm --filter @seo-autopilot/web build
 FROM node:22-alpine
