@@ -69,6 +69,38 @@ export function citationGrid(observations) {
 
 const bareHost = (host) => String(host ?? "").toLowerCase().replace(/^www\./, "");
 
+// Places an answer engine cites that the site does not own, by what reaching
+// them takes. Matched on the domain and any subdomain of it (en.wikipedia.org).
+const SOURCE_KINDS = {
+  forum: ["reddit.com", "quora.com", "stackexchange.com", "stackoverflow.com", "news.ycombinator.com", "community.hubspot.com"],
+  video: ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com"],
+  review: [
+    "g2.com", "capterra.com", "trustpilot.com", "yelp.com", "producthunt.com", "getapp.com",
+    "softwareadvice.com", "trustradius.com", "alternativeto.net", "tripadvisor.com",
+  ],
+  reference: ["wikipedia.org", "wikihow.com", "britannica.com", "investopedia.com"],
+};
+
+/** What to do about a source, by kind. Advice only: other people's sites are not ours to change. */
+export const SOURCE_ADVICE = {
+  yours: "Keep the cited page current; it is what the answer quotes.",
+  competitor: "Compare the page they cite with yours on the same question.",
+  forum: "Answer where the question is asked, as a person, not an advert.",
+  video: "A short video answering the question can be cited in its own right.",
+  review: "Get listed or reviewed there; engines lean on these for recommendations.",
+  reference: "Make sure the facts there about your subject are right and sourced.",
+  other: "See what that page offers that yours does not.",
+};
+
+/** @param {string} host */
+export function sourceKind(host) {
+  const bare = bareHost(host);
+  for (const [kind, domains] of Object.entries(SOURCE_KINDS)) {
+    if (domains.some((domain) => bare === domain || bare.endsWith(`.${domain}`))) return kind;
+  }
+  return "other";
+}
+
 /**
  * Who the answer engines cite, across every answer in one run.
  *
@@ -97,7 +129,7 @@ export function citationShare(observations, siteHost, limit = 8) {
       if (host) counts.set(host, (counts.get(host) ?? 0) + 1);
     }
   }
-  const kindOf = (host) => (own.has(host) ? "yours" : competitors.has(host) ? "competitor" : "other");
+  const kindOf = (host) => (own.has(host) ? "yours" : competitors.has(host) ? "competitor" : sourceKind(host));
   const ranked = [...counts.entries()]
     .map(([host, answers]) => ({host, kind: kindOf(host), answers}))
     .sort((a, b) => b.answers - a.answers || a.host.localeCompare(b.host));
