@@ -202,13 +202,19 @@ const aiSearchSteps: {title: string; where: {label: string; href?: string}; body
     title: "Run it weekly and read the grid",
     where: {label: "Skills → ai_citation_scan", href: "/pilot/workspace?tab=skills"},
     body:
-      "Enable the routine (weekly; daily is refused) or run it once. Each question gets a verdict per engine: cited, with your place among the sources; named but not linked; or not cited, with the sites cited instead. Under the grid, Who gets cited counts every source across the run's answers, with your site and your tracked competitors marked. Compare runs over weeks rather than trusting any single one.",
+      "Enable the routine (weekly; daily is refused) or run it once. Each question gets a verdict per engine: cited, with your place among the sources; named but not linked; or not cited, with the sites cited instead. Under the grid, Who gets cited counts every source across the run's answers, with your site and your tracked competitors marked, and each source labelled as a forum, video, review site, reference or other, with what to do about it. Compare runs over weeks rather than trusting any single one.",
   },
   {
     title: "Make your answers quotable",
     where: {label: "Dashboard → Opportunities", href: "/pilot"},
     body:
       "Answer engines quote the passage directly under a question. Each crawl flags question headings with no 15–100 word answer beneath them, answered questions with no FAQ markup, and FAQ markup that lists questions the page does not show. For answered questions without markup, Draft proposal builds FAQ markup from the page's own headings and paragraphs, with no AI, as a pull request. For questions without an answer, Draft direct answers has your own Claude or OpenAI key write one answer per question; you check every claim and figure, then send it for approval. It becomes a high-risk edit to that page's source file, with each answer placed under its heading and FAQ markup built from them, and it goes live only when a person merges the pull request.",
+  },
+  {
+    title: "Watch what grows without clicks",
+    where: {label: "Dashboard → Search and visitors", href: "/pilot"},
+    body:
+      "Most searches end without a click, so the zero-click scorecard tracks what clicks miss, comparing the latest four weeks with the four before: searches that name your site, the share of impressions answered on the results page, direct visits from GA4, and how often AI answers name you. Brand terms come from the site's name and domain; replace them if people search for you another way. It describes a trend and never claims a change caused it.",
   },
 ];
 

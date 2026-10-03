@@ -5,6 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 
 from app.api.schemas import (
+    BrandTermsEnvelope,
+    BrandTermsUpdate,
     CalibrationRunCreate,
     CalibrationRunEnvelope,
     CalibrationRunRead,
@@ -32,12 +34,15 @@ from app.api.schemas import (
     SiteVerify,
     VerificationChallengeEnvelope,
     VerificationChallengeRead,
+    VisibilityTrendEnvelope,
+    VisibilityTrendRead,
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
 from app.core.cursors import CursorError, decode_page_cursor, encode_page_cursor
 from app.db.session import TenantSession
 from app.services.calibrations import CalibrationService
+from app.services.keywords import term_encryption_key
 from app.services.opportunities import OpportunityService
 from app.services.pages import PageService
 from app.services.performance import PerformanceService
@@ -45,6 +50,7 @@ from app.services.search_performance import SearchPerformanceService
 from app.services.site_engagement import SiteEngagementService
 from app.services.sites import SiteService
 from app.services.verification import DnsTxtVerifier, get_site_verifier
+from app.services.visibility import VisibilityService
 
 router = APIRouter(prefix="/v1/sites", tags=["sites"])
 
@@ -358,3 +364,32 @@ async def get_engagement(
     return EngagementEnvelope(
         data=EngagementRead.model_validate(summary), meta={"trace_id": context.trace_id}
     )
+
+
+@router.get("/{site_id}/visibility-trend", response_model=VisibilityTrendEnvelope)
+async def get_visibility_trend(
+    site_id: UUID,
+    context: TenantContextDependency,
+    session: TenantSession,
+    weeks: Annotated[int, Query(ge=1, le=26)] = 12,
+) -> VisibilityTrendEnvelope:
+    # Weekly totals only. Search terms are opened to tell branded from
+    # non-branded and never returned; see services/visibility.py.
+    service = VisibilityService(
+        session, context, encryption_key=term_encryption_key(get_settings())
+    )
+    trend = await service.trend(site_id, weeks)
+    return VisibilityTrendEnvelope(
+        data=VisibilityTrendRead.model_validate(trend), meta={"trace_id": context.trace_id}
+    )
+
+
+@router.put("/{site_id}/brand-terms", response_model=BrandTermsEnvelope)
+async def put_brand_terms(
+    site_id: UUID,
+    command: BrandTermsUpdate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> BrandTermsEnvelope:
+    terms = await VisibilityService(session, context).set_brand_terms(site_id, command.terms)
+    return BrandTermsEnvelope(data=terms, meta={"trace_id": context.trace_id})

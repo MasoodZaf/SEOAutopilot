@@ -31,6 +31,7 @@ import {
 import {advisoryFor, answersDraftable} from "./advisory.mjs";
 import {requestAnswerDraft} from "./workspace/actions";
 import {SerpPreview} from "./components/serp-preview";
+import {VisibilityPanel, type VisibilityTrend} from "./components/visibility-panel";
 import {CrawlPanel} from "./crawl-panel";
 import {challengeCookie, type CalibrationRun, type Crawl, type Site} from "./model";
 import {pilotPath, selectSite} from "./site-selection.mjs";
@@ -199,6 +200,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   renderedAt?: string;
   searchPerformance?: SearchPerformance;
   engagement?: Engagement;
+  visibility?: VisibilityTrend;
   performanceRun?: PerformanceRun;
   performanceSummary?: PerformanceSummary;
 }> {
@@ -252,6 +254,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
 
     let searchPerformance: SearchPerformance | undefined;
     let engagement: Engagement | undefined;
+    let visibility: VisibilityTrend | undefined;
     let performanceRun: PerformanceRun | undefined;
     let performanceSummary: PerformanceSummary | undefined;
     const crawls = (await apiJson<{data: Crawl[]}>(`/v1/sites/${site.id}/crawls?limit=5`)).data;
@@ -266,6 +269,11 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
         engagement = (await apiJson<{data: Engagement}>(`/v1/sites/${site.id}/engagement`)).data;
       } catch {
         engagement = undefined;
+      }
+      try {
+        visibility = (await apiJson<{data: VisibilityTrend}>(`/v1/sites/${site.id}/visibility-trend?weeks=12`)).data;
+      } catch {
+        visibility = undefined;
       }
       try {
         performanceRun = (await apiJson<{data: PerformanceRun}>(`/v1/sites/${site.id}/performance-runs/latest`)).data;
@@ -301,6 +309,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       renderedAt: new Date().toISOString(),
       searchPerformance,
       engagement,
+      visibility,
       performanceRun,
       performanceSummary,
     };
@@ -872,6 +881,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                     <p className="mt-4 text-[13px] leading-6 text-pretty text-ink-faint">No Analytics data yet. Connect Google under Settings; GA4 collects nothing from before its tag went live.</p>
                   )}
                 </Panel>
+                <VisibilityPanel trend={data.visibility} host={target.host} />
               </div>
             </section>
 

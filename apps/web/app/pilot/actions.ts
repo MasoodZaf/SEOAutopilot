@@ -509,3 +509,21 @@ export async function withdrawProposalAction(formData: FormData): Promise<never>
   }
   redirectFresh(pilotPath(host, {proposal: "withdrawn"}));
 }
+
+export async function saveBrandTerms(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  try {
+    const site = await ownedSite(host);
+    if (!site) redirectFresh(pilotPath(host));
+    const terms = String(formData.get("brand_terms") ?? "")
+      .split(",")
+      .map((term) => term.trim())
+      .filter(Boolean)
+      .slice(0, 10);
+    await apiJson(`/v1/sites/${site.id}/brand-terms`, {method: "PUT", body: JSON.stringify({terms})});
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirectFresh(pilotPath(host));
+}

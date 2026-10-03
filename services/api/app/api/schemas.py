@@ -1788,3 +1788,56 @@ class GoogleClientCheckRead(BaseModel):
     source: str
     redirect_uri: str
     client_id: str | None = None
+
+
+class VisibilityWeekRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    week_start: date
+    clicks: float
+    impressions: float
+    # None when the terms could not be opened (no key, or a rotated one).
+    branded_clicks: float | None
+    branded_impressions: float | None
+    zero_click_queries: int
+    zero_click_impressions: float
+    # None when no GA4 property is syncing for the site.
+    direct_sessions: float | None
+    sessions: float | None
+
+
+class VisibilityCitationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    run_id: UUID
+    finished_at: datetime
+    answers: int
+    named: int
+    cited: int
+    competitor_cited: int
+
+
+class VisibilityTrendRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    weeks: list[VisibilityWeekRead]
+    citation_runs: list[VisibilityCitationRead]
+    brand_terms: list[str]
+    brand_terms_derived: bool
+    branded_available: bool
+    search_connected: bool
+    analytics_connected: bool
+    sparse: bool
+    notes: list[str]
+
+
+class VisibilityTrendEnvelope(BaseModel):
+    data: VisibilityTrendRead
+    meta: dict[str, str]
+
+
+class BrandTermsUpdate(BaseModel):
+    # Empty goes back to the terms derived from the site's name and domain.
+    terms: list[str] = Field(default_factory=list, max_length=10)
+
+
+class BrandTermsEnvelope(BaseModel):
+    data: list[str]
+    meta: dict[str, str]
