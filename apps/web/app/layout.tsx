@@ -42,24 +42,24 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://seoautopilot.dev";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "SEO Autopilot — Auditable Multi-Tenant SEO Operations",
+    default: "SEO Autopilot — SEO and AI-search operations, reviewed",
     template: "%s | SEO Autopilot",
   },
   description:
-    "Auditable, multi-tenant SEO operations connecting crawl evidence, Search Console metrics, reviewable proposals, and outcome tracking.",
+    "Audit your site, connect Search Console and Analytics in one step, track how Claude, ChatGPT and Perplexity cite you, and ship fixes as pull requests you approve.",
   keywords: [
     "SEO Autopilot",
-    "Governed SEO",
-    "Multi-Tenant SEO Platform",
-    "Technical SEO Crawler",
-    "Automated SEO Operations",
-    "Google Search Console Analytics",
-    "Core Web Vitals Optimization",
-    "SEO Governance",
+    "AI search visibility",
+    "Answer engine optimization",
+    "AI citation tracking",
+    "Technical SEO audit",
+    "Google Search Console",
+    "SEO pull requests",
+    "SEO governance",
   ],
-  authors: [{name: "SEO Autopilot Team"}],
-  creator: "SEO Autopilot",
-  publisher: "SEO Autopilot",
+  authors: [{name: "Oryxen Labs", url: "https://oryxenlabs.com"}],
+  creator: "Oryxen Labs",
+  publisher: "Oryxen Labs",
   robots: {
     index: true,
     follow: true,
@@ -78,17 +78,16 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     url: siteUrl,
-    title: "SEO Autopilot — Auditable SEO Operations",
+    title: "SEO Autopilot — SEO and AI-search operations, reviewed",
     description:
-      "Connect crawl and Search Console evidence to prioritize opportunities, review proposed changes, and track outcomes under governance.",
+      "Audits, Search Console and Analytics insight, AI citation tracking and drafting with your own key. Every fix is a pull request you approve.",
     siteName: "SEO Autopilot",
   },
   twitter: {
     card: "summary_large_image",
-    title: "SEO Autopilot — Auditable SEO Operations",
+    title: "SEO Autopilot — SEO and AI-search operations, reviewed",
     description:
-      "SEO operations with separation of duties, fail-closed deployment policy, and clearly labeled outcome tracking.",
-    creator: "@seoautopilot",
+      "Audits, AI citation tracking and drafting with your own key. Every fix is a pull request you approve.",
   },
 };
 

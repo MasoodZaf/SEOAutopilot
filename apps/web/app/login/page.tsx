@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import {ShowcaseLink} from "@/app/components/showcase-link";
 import {Glyph, Note, button} from "@/app/components/ui";
 import {TipDescriptions} from "@/app/components/tips";
 import {isConfigured} from "@/lib/oidc";
@@ -26,6 +27,7 @@ export default async function LoginPage({
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-8 px-6 py-20">
       <div className="flex flex-col gap-3">
+        <ShowcaseLink className="-ml-3 self-start" />
         <p className="flex items-center gap-2.5 text-ink">
           <Glyph />
           <span className="font-display text-[15px] font-medium tracking-tight">SEO Autopilot</span>

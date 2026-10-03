@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import {ShowcaseLink} from "./showcase-link";
 import {button, Glyph} from "./ui";
 
 /** The public pages' header: the landing page and the tutorial. */
@@ -12,6 +13,7 @@ export function SiteHeader() {
           <span className="font-display text-[15px] font-medium tracking-tight">SEO Autopilot</span>
         </Link>
         <nav aria-label="Main" className="flex items-center gap-2">
+          <ShowcaseLink />
           <Link
             href="/tutorial"
             className="hidden rounded-full px-4 py-2 text-[13px] font-medium text-ink-soft transition-colors hover:text-ink sm:inline-flex"

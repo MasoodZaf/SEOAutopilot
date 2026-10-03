@@ -3,24 +3,50 @@ import Link from "next/link";
 import {Badge, button} from "@/app/components/ui";
 import {SiteFooter, SiteHeader} from "@/app/components/site-header";
 
-const agents = [
-  ["Technical SEO", "Crawl, indexability, canonical tags, and status code evidence.", "Rule-backed"],
-  ["Content SEO", "Deterministic checks for titles, descriptions, headings, and thin content.", "Rule-backed"],
-  ["Keyword Opportunity", "Search Console demand signals and high-impression page discovery.", "Rule-backed"],
-  ["Internal Linking", "Link graph evidence, anchor relevance, and orphan-page detection.", "Rule-backed"],
-  ["SEO Content", "Evidence-bound structured proposals with reviewable diff previews.", "Planned"],
-  ["Performance", "Repeated mobile Lighthouse lab samples and readiness summaries.", "Rule-backed"],
-  ["GEO / AI Visibility", "Entity clarity and structured-data evidence for answer visibility.", "Rule-backed"],
+/* What the product does today. Every line here is live on production; nothing
+   planned is listed, and nothing promises a ranking or an AI citation. */
+const capabilities = [
+  [
+    "Technical and content audit",
+    "A rendered crawl checks indexability, canonicals, titles, headings and thin content, then ranks the top 20 issues by evidence.",
+  ],
+  [
+    "Fixes as pull requests",
+    "Title, heading, FAQ-markup and llms.txt fixes arrive as exact diffs on your repository, checked against the live file before they are opened.",
+  ],
+  [
+    "Search Console and Analytics",
+    "One Google consent connects both. Queries are grouped into topics, and landing pages show what visitors did once they arrived.",
+  ],
+  [
+    "AI answer readiness",
+    "Flags questions on a page that have no quotable answer, answers that lack FAQ markup, and AI crawlers your robots.txt turns away.",
+  ],
+  [
+    "AI citation tracking",
+    "Asks Claude, ChatGPT and Perplexity the questions you track, every week, and shows who they cite instead of you, and what kind of source it is.",
+  ],
+  [
+    "Blog and answer drafting",
+    "Drafts from your own Search Console demand, written with your own Claude or OpenAI key. Every claim and figure is flagged for a person to check.",
+  ],
+  [
+    "Zero-click scorecard",
+    "Most searches end without a click. Track branded searches, queries answered on the results page, direct visits and AI mentions, week by week.",
+  ],
+  [
+    "Routines that run themselves",
+    "Weekly audits, data syncs, citation checks and reports on a schedule, each with a spend cap and a record of what it did.",
+  ],
 ] as const;
 
-const stages = [
-  ["Connect site & DNS", "Proven"],
-  ["Bounded crawl evidence", "Proven"],
-  ["Top 20 opportunity ranking", "In validation"],
-  ["Separation-of-duties approval", "In validation"],
-  ["Git / CMS deployment", "Certification gate"],
-  ["28-day outcome tracking", "In validation"],
-];
+/* How a site gets connected. Each step is one action. */
+const connect = [
+  ["Sign in with Google", "Your workspace, its sites and its keys belong to you alone."],
+  ["Verify your domain", "One DNS record proves the site is yours."],
+  ["Connect Google once", "Search Console and Analytics in a single consent, read-only."],
+  ["Pick a repository", "Sign in to GitHub and choose the repo the site is built from."],
+] as const;
 
 /* The lifecycle every change travels. No stage may be skipped, and that
    sentence is the product -- so it is drawn, not buried in a paragraph. */
@@ -35,38 +61,50 @@ const lifecycle = [
   "Measurement",
 ];
 
+const controls = [
+  ["Nothing changes unreviewed", "Every fix is a proposal with an exact diff. Authors cannot approve their own work, and new pages and AI-written text need two approvers."],
+  ["Publish in one click, if you allow it", "An owner can let approved changes go live from the dashboard. Only the exact reviewed content is merged, and GitHub's branch protection always applies."],
+  ["Brakes you set", "Observe, recommend or autopilot per site, a daily change budget, freeze windows, and an emergency freeze that stops everything."],
+  ["Undo and audit", "Any change can be reverted with a pull request, live pages are checked after each change, and every step is logged."],
+] as const;
+
 const faqs = [
   {
-    q: "How does SEO Autopilot prevent harmful or hallucinated changes?",
-    a: "Current findings are deterministic and retain crawl evidence references. Proposals are schema-validated and reviewable, authors cannot self-approve, and external deployment remains blocked until its connectors pass certification.",
+    q: "Will SEO Autopilot change my site on its own?",
+    a: "No. Every change is a proposal you review as an exact diff. After approval it becomes a pull request on your repository, merged by a person on GitHub, or with one click from the dashboard if an owner has turned that on. Robots, redirect, configuration and site-wide template changes are always merged on GitHub.",
   },
   {
-    q: "What does the 28-day measurement currently prove?",
-    a: "It reports a before-and-after association only after independent deployment verification and a complete follow-up window. Controlled comparisons and causal attribution remain planned work.",
+    q: "How is AI-written content kept honest?",
+    a: "Drafts use your own Claude or OpenAI key and never publish themselves. Every claim and figure is flagged for a person to verify, the post or answer becomes a high-risk proposal that needs two approvers, and only then can it reach the site.",
   },
   {
-    q: "What safety kill switches exist in Autopilot mode?",
-    a: "Fail-closed deployment flags, site freezes, daily change budgets, freeze windows, approval policy, and drift checks are implemented. External deployment and rollback connectors remain blocked until certified.",
+    q: "Can it get my site cited by ChatGPT or Perplexity?",
+    a: "Nobody can promise that. It checks whether your pages answer their questions in a way an engine can quote, whether AI crawlers can reach them, and which sources the engines cite instead of you, then proposes the fixes that are yours to make.",
+  },
+  {
+    q: "What does it connect to, and what can it touch?",
+    a: "Google Search Console and Analytics through one read-only consent, and the GitHub repositories you pick. It writes only branches and pull requests, and keeps each workspace's data and keys separate from every other.",
+  },
+  {
+    q: "Does it prove a change improved my rankings?",
+    a: "It measures the 28 days before and after a verified change and reports the association. It does not claim the change caused it: search moves for many reasons, and saying otherwise would need a controlled experiment.",
   },
 ];
 
 export default function Home() {
+  const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://seo.oryxenlabs.com";
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": [
       {
         "@type": "SoftwareApplication",
         "name": "SEO Autopilot",
+        "url": siteUrl,
         "applicationCategory": "BusinessApplication",
-        "operatingSystem": "Cloud / Web",
+        "operatingSystem": "Web",
         "description":
-          "Auditable multi-tenant SEO operations system connecting crawl evidence, Search Console metrics, reviewable proposals, and outcome tracking.",
-      },
-      {
-        "@type": "Organization",
-        "name": "SEO Autopilot",
-        "url": "https://seoautopilot.dev",
-        "logo": "https://seoautopilot.dev/icon.png",
+          "SEO and AI-search operations: audits, fixes as reviewed pull requests, Search Console and Analytics insight, AI citation tracking and drafting with your own AI key.",
+        "publisher": {"@type": "Organization", "name": "Oryxen Labs", "url": "https://oryxenlabs.com"},
       },
       {
         "@type": "FAQPage",
@@ -81,8 +119,6 @@ export default function Home() {
       },
     ],
   };
-
-  const proven = stages.filter(([, status]) => status === "Proven").length;
 
   return (
     <>
@@ -99,14 +135,15 @@ export default function Home() {
               <div>
                 <p className="eyebrow flex items-center gap-3">
                   <span aria-hidden="true" className="size-1.5 rounded-full bg-signal" />
-                  Governed SEO operations
+                  SEO and AI-search operations
                 </p>
-                <h1 className="mt-6 font-display text-[44px] leading-[1.02] font-light tracking-[-0.035em] text-balance text-ink sm:text-[68px]">
-                  Your highest&#8209;value SEO work, <span className="text-accent">explained, verified,</span> and controlled.
+                <h1 className="mt-6 font-display text-[44px] leading-[1.02] font-light tracking-[-0.035em] text-balance text-ink sm:text-[64px]">
+                  Find what holds your site back. <span className="text-accent">Fix it in a reviewed pull request.</span>
                 </h1>
                 <p className="mt-8 max-w-xl text-[16px] leading-7 text-pretty text-ink-soft">
-                  Connect crawl, Search Console, and mobile lab-performance evidence. Rank opportunities,
-                  review exact diffs, and prepare governed changes. External deployment stays blocked until each connector passes certification.
+                  SEO Autopilot audits your site, reads your Search Console and Analytics, tracks how Claude,
+                  ChatGPT and Perplexity answer your customers&rsquo; questions, and turns what it finds into
+                  exact changes you approve. Nothing reaches your site without a person saying yes.
                 </p>
                 <div className="mt-10 flex flex-wrap items-center gap-3">
                   <Link href="/pilot" className={`${button.primary} px-6 py-2.5 text-[14px]`}>
@@ -118,31 +155,22 @@ export default function Home() {
                 </div>
               </div>
 
-              <aside aria-labelledby="stages-heading" className="rounded-2xl border border-rule bg-surface p-7">
+              <aside aria-labelledby="connect-heading" className="rounded-2xl border border-rule bg-surface p-7">
                 <div className="flex items-start justify-between gap-4">
-                  <p id="stages-heading" className="eyebrow">Operation stages</p>
-                  <Badge tone="accent">Live</Badge>
+                  <p id="connect-heading" className="eyebrow">Connected in four steps</p>
+                  <Badge tone="good">Live</Badge>
                 </div>
-                <p className="mt-5 flex items-baseline gap-2">
-                  <span className="figure text-[64px] text-ink">{proven}</span>
-                  <span className="figure text-[28px] text-ink-faint">/ {stages.length}</span>
-                  <span className="ml-2 font-mono text-[12px] tracking-wider text-ink-faint uppercase">proven</span>
-                </p>
                 <ol className="relative mt-7">
-                  <span aria-hidden="true" className="absolute top-2 bottom-2 left-[5px] w-px bg-rule-strong" />
-                  {stages.map(([stage, stageStatus]) => {
-                    const done = stageStatus === "Proven";
-                    return (
-                      <li key={stage} className="relative flex items-center gap-4 py-2">
-                        <span
-                          aria-hidden="true"
-                          className={`relative size-[11px] shrink-0 rounded-full border-2 ${done ? "border-signal bg-signal" : "border-rule-strong bg-surface"}`}
-                        />
-                        <span className={`flex-1 text-[13px] ${done ? "text-ink" : "text-ink-soft"}`}>{stage}</span>
-                        <span className="font-mono text-[11px] text-ink-faint">{stageStatus}</span>
-                      </li>
-                    );
-                  })}
+                  <span aria-hidden="true" className="absolute top-3 bottom-3 left-[5px] w-px bg-rule-strong" />
+                  {connect.map(([step, detail]) => (
+                    <li key={step} className="relative flex gap-4 py-2.5">
+                      <span aria-hidden="true" className="relative mt-1.5 size-[11px] shrink-0 rounded-full border-2 border-signal bg-signal" />
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-[14px] font-medium text-ink">{step}</span>
+                        <span className="text-[12px] leading-5 text-pretty text-ink-faint">{detail}</span>
+                      </span>
+                    </li>
+                  ))}
                 </ol>
               </aside>
             </div>
@@ -168,37 +196,49 @@ export default function Home() {
             </div>
           </section>
 
-          <section aria-labelledby="workflows-heading" className="mx-auto max-w-6xl px-6 py-24">
+          <section aria-labelledby="capabilities-heading" className="mx-auto max-w-6xl px-6 py-24">
             <div className="grid gap-6 lg:grid-cols-[1fr_2fr]">
               <div>
-                <p className="eyebrow">Workflows</p>
-                <h2 id="workflows-heading" className="mt-4 font-display text-[34px] leading-[1.1] font-light tracking-tight text-balance text-ink">
-                  Seven specialist workflows, one governed lifecycle
+                <p className="eyebrow">What it does</p>
+                <h2 id="capabilities-heading" className="mt-4 font-display text-[34px] leading-[1.1] font-light tracking-tight text-balance text-ink">
+                  Search and AI answers, in one place
                 </h2>
                 <p className="mt-4 max-w-sm text-[14px] leading-6 text-pretty text-ink-soft">
-                  Six rule-backed evidence dimensions are active. The content-generation workflow is planned and remains human-reviewed.
+                  Classic SEO still decides whether you are found. AI answers increasingly decide whether you are
+                  chosen. Both are measured here, and both end in changes you can review.
                 </p>
               </div>
               <div className="grid gap-px overflow-hidden rounded-2xl border border-rule bg-rule sm:grid-cols-2">
-                {agents.map(([name, purpose, agentStatus], index) => (
+                {capabilities.map(([name, purpose], index) => (
                   <article key={name} className="flex flex-col bg-surface p-6 transition-colors hover:bg-sunk">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-mono text-[11px] text-ink-faint">{String(index + 1).padStart(2, "0")}</span>
-                      <Badge tone={agentStatus === "Planned" ? "neutral" : "good"}>{agentStatus}</Badge>
-                    </div>
+                    <span className="font-mono text-[11px] text-ink-faint">{String(index + 1).padStart(2, "0")}</span>
                     <h3 className="mt-6 font-display text-[17px] font-medium tracking-tight text-balance text-ink">{name}</h3>
                     <p className="mt-2 text-[13px] leading-6 text-pretty text-ink-soft">{purpose}</p>
                   </article>
                 ))}
-                {/* Seven items in a two-column grid leaves one cell open; it
-                    carries the call to action rather than sitting empty. */}
-                <Link href="/pilot" className="group flex flex-col justify-between bg-surface p-6 transition-colors hover:bg-sunk">
-                  <span className="font-mono text-[11px] text-ink-faint">Start</span>
-                  <span className="mt-6 font-display text-[17px] font-medium tracking-tight text-accent">
-                    Open the control plane <span aria-hidden="true">&rarr;</span>
-                  </span>
+              </div>
+            </div>
+          </section>
+
+          <section aria-labelledby="controls-heading" className="border-t border-rule bg-surface">
+            <div className="mx-auto grid max-w-6xl gap-10 px-6 py-24 lg:grid-cols-[1fr_2fr]">
+              <div>
+                <p className="eyebrow">You stay in control</p>
+                <h2 id="controls-heading" className="mt-4 font-display text-[34px] leading-[1.1] font-light tracking-tight text-balance text-ink">
+                  Fast when you want it, never unattended
+                </h2>
+                <Link href="/pilot" className="mt-6 inline-flex text-[14px] font-medium text-accent underline-offset-4 hover:underline">
+                  Open the control plane <span aria-hidden="true">&nbsp;&rarr;</span>
                 </Link>
               </div>
+              <dl className="grid gap-8 sm:grid-cols-2">
+                {controls.map(([title, body]) => (
+                  <div key={title} className="flex flex-col gap-2">
+                    <dt className="font-display text-[16px] font-medium tracking-tight text-balance text-ink">{title}</dt>
+                    <dd className="text-[13px] leading-6 text-pretty text-ink-soft">{body}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           </section>
 
