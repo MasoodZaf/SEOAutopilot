@@ -63,10 +63,10 @@ GITHUB_CONNECTOR = "github_repository"
 PROVIDER_APP = "github_app"
 PROVIDER_PAT = "github_pat"
 
-# What a deployment actually needs: write a file, open a pull request. It does
-# not need administration, workflows, or the ability to merge, and asking for
-# them would make the connector more powerful than the product's own claim that
-# it only ever proposes.
+# What a deployment actually needs: write a file, open a pull request -- and,
+# with the same two grants, merge it when a person clicks Publish on a site that
+# allows it (ADR-008). It does not need administration, workflows, or bypassing
+# branch protection, and asking for them would widen what one click can do.
 REQUIRED_PERMISSIONS = {"contents": "write", "pull_requests": "write"}
 GITHUB_SCOPES = ["contents:write", "pull_requests:write"]
 

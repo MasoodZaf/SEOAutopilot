@@ -14,7 +14,9 @@ import {
   connectDnsProvider,
   deployProposalAction,
   draftProposalAction,
+  publishProposalAction,
   setApproverCountAction,
+  setPublishFromAppAction,
   setSiteModeAction,
   withdrawProposalAction,
   connectSearchConsole,
@@ -28,9 +30,11 @@ import {
   toggleEmergencyFreezeAction,
   verifyPortfolioDns,
 } from "./actions";
+import {ConfirmSubmit} from "@/app/components/confirm-submit";
 import {advisoryFor, answersDraftable} from "./advisory.mjs";
 import {requestAnswerDraft} from "./workspace/actions";
 import {SerpPreview} from "./components/serp-preview";
+import {VisibilityPanel, type VisibilityTrend} from "./components/visibility-panel";
 import {CrawlPanel} from "./crawl-panel";
 import {challengeCookie, type CalibrationRun, type Crawl, type Site} from "./model";
 import {pilotPath, selectSite} from "./site-selection.mjs";
@@ -124,6 +128,8 @@ type GovernanceStatus = {
   today_deployments_count: number;
   freeze_window_start: string | null;
   freeze_window_end: string | null;
+  // Absent from an older API: treated as off.
+  publish_from_app?: boolean;
 };
 type Measurement = {
   id: string;
@@ -180,6 +186,20 @@ const errorMessages: Record<string, string> = {
   dns_provider_not_supported: "This DNS provider adapter is not available yet. Use the universal manual TXT path instead.",
   performance_run_already_active: "A mobile PageSpeed run is already queued or running.",
   performance_evidence_not_ready: "Complete a bounded crawl before requesting PageSpeed evidence.",
+  publishing_from_app_disabled: "Publishing from SEO Autopilot is off for this site. Turn it on under Adjust governance, or merge the pull request on GitHub.",
+  insufficient_permissions_to_publish: "Only an owner or admin can publish a change from here.",
+  publish_requires_approvals: "This change does not have all the approvals its risk needs yet.",
+  proposal_must_be_approved_before_publishing: "Approve the change before publishing it.",
+  no_pull_request_to_publish: "There is no pull request for this change to merge.",
+  publish_requires_github_merge__indexing_control_change: "This change touches canonical, robots or redirect directives. Those are always merged on GitHub, by a person.",
+  publish_requires_github_merge__indexing_control_file: "robots.txt and sitemap changes are always merged on GitHub, by a person.",
+  publish_requires_github_merge__site_configuration_file: "Site configuration and dependency files are always merged on GitHub, by a person.",
+  publish_requires_github_merge__template_wide_file: "This file is shared by many pages, so the change is always merged on GitHub, by a person.",
+  publish_refused__changed_since_review: "Not published: the pull request changed after it was reviewed. Look at it on GitHub, or close it and draft the change again.",
+  publish_refused__pull_request_holds_other_changes: "Not published: the pull request holds more than the reviewed change. Merge or close it on GitHub.",
+  publish_refused__github_refused_merge: "Not published: GitHub refused the merge (branch protection, a required check, or a conflict). The pull request is open; merge it on GitHub.",
+  publish_refused__pull_request_closed: "Not published: the pull request was closed on GitHub.",
+  publish_refused__pull_request_targets_another_branch: "Not published: the pull request targets a different branch from the site's.",
 };
 
 async function loadPilot(requestedHost: string | undefined): Promise<{
@@ -199,6 +219,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
   renderedAt?: string;
   searchPerformance?: SearchPerformance;
   engagement?: Engagement;
+  visibility?: VisibilityTrend;
   performanceRun?: PerformanceRun;
   performanceSummary?: PerformanceSummary;
 }> {
@@ -252,6 +273,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
 
     let searchPerformance: SearchPerformance | undefined;
     let engagement: Engagement | undefined;
+    let visibility: VisibilityTrend | undefined;
     let performanceRun: PerformanceRun | undefined;
     let performanceSummary: PerformanceSummary | undefined;
     const crawls = (await apiJson<{data: Crawl[]}>(`/v1/sites/${site.id}/crawls?limit=5`)).data;
@@ -266,6 +288,11 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
         engagement = (await apiJson<{data: Engagement}>(`/v1/sites/${site.id}/engagement`)).data;
       } catch {
         engagement = undefined;
+      }
+      try {
+        visibility = (await apiJson<{data: VisibilityTrend}>(`/v1/sites/${site.id}/visibility-trend?weeks=12`)).data;
+      } catch {
+        visibility = undefined;
       }
       try {
         performanceRun = (await apiJson<{data: PerformanceRun}>(`/v1/sites/${site.id}/performance-runs/latest`)).data;
@@ -301,6 +328,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
       renderedAt: new Date().toISOString(),
       searchPerformance,
       engagement,
+      visibility,
       performanceRun,
       performanceSummary,
     };
@@ -628,6 +656,28 @@ export default async function PilotPage({searchParams}: PageProps) {
                       directives. The count is frozen into a proposal when it is
                       drafted, so a change here governs the next draft only.
                     */}
+                    {/*
+                      Off by default. On, an owner or admin can merge an approved
+                      change's pull request from here; robots, redirect, config
+                      and template-wide changes still go to GitHub.
+                    */}
+                    <form action={setPublishFromAppAction} className="flex flex-col gap-2">
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="site_id" value={data.site.id} />
+                      <p className="eyebrow">Publish from SEO Autopilot</p>
+                      <label className="flex items-start gap-2 text-[13px] leading-5 text-pretty text-ink-soft">
+                        <input
+                          type="checkbox"
+                          name="publish_from_app"
+                          defaultChecked={Boolean(gov.publish_from_app)}
+                          className="mt-1"
+                        />
+                        Let owners and admins merge approved changes from here in one click. Indexing, configuration and template-wide changes are still merged on GitHub.
+                      </label>
+                      <button type="submit" className={button.secondary}>
+                        Save
+                      </button>
+                    </form>
                     <form action={setApproverCountAction} className="flex flex-col gap-2">
                       <input type="hidden" name="site_host" value={target.host} />
                       <input type="hidden" name="site_id" value={data.site.id} />
@@ -872,6 +922,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                     <p className="mt-4 text-[13px] leading-6 text-pretty text-ink-faint">No Analytics data yet. Connect Google under Settings; GA4 collects nothing from before its tag went live.</p>
                   )}
                 </Panel>
+                <VisibilityPanel trend={data.visibility} host={target.host} />
               </div>
             </section>
 
@@ -1087,10 +1138,29 @@ export default async function PilotPage({searchParams}: PageProps) {
                             </>
                           )}
                           {/*
-                            Deploying opens a pull request. It does not merge: the
-                            adapter has never had merge authority, so the change
-                            reaches the live site only when a person merges it.
+                            Deploying opens a pull request and does not merge, so the
+                            change reaches the live site when a person merges it --
+                            on GitHub, or with Publish where the site allows it.
                           */}
+                          {/*
+                            Publishing opens the pull request if needed and merges
+                            it -- only where the site allows it, only for the exact
+                            reviewed content, and never past GitHub's own rules.
+                          */}
+                          {gov?.publish_from_app && (prop.status === "approved" || prop.status === "deployed") && (
+                            <form action={publishProposalAction}>
+                              <input type="hidden" name="site_host" value={target.host} />
+                              <input type="hidden" name="proposal_id" value={prop.id} />
+                              <ConfirmSubmit
+                                label="Publish"
+                                title="Publish this change to the live site?"
+                                body={`This merges the pull request for ${prop.target_path} into the site's repository. If the site redeploys on merge, it goes live in a few minutes. Undoing it takes a revert.`}
+                                confirmLabel="Publish now"
+                                className={smallButton.secondary}
+                                confirmClassName={smallButton.primary}
+                              />
+                            </form>
+                          )}
                           {prop.status === "approved" && (
                             <form action={deployProposalAction}>
                               <input type="hidden" name="site_host" value={target.host} />

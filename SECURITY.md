@@ -156,3 +156,13 @@ Incident runbooks cover credential exposure, cross-tenant access, unauthorized p
 - Proposal and suppression actor IDs are server-derived audit UUIDs, but there is no durable
   tenant-membership table or database foreign key yet. Production OIDC plus membership resolution
   and referential proof remain an identity release gate.
+
+## Publishing from the app (2026-10-03, ADR-008)
+
+- Deploying opens a pull request; it never merges. Merging from the app ("Publish") is off per site
+  until an owner or admin turns it on, and is limited to owners and admins.
+- Publish re-checks every deployment gate and the current version's approvals, refuses indexing,
+  configuration and template-wide changes, and merges only a pull request that holds exactly the
+  reviewed file and content, pinned to the checked commit. GitHub branch protection is never bypassed.
+- Published, refused and deployed transitions are audited and emitted as versioned outbox events.
+

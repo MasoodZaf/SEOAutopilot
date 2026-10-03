@@ -2,7 +2,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -30,16 +30,26 @@ from app.domain.deployments import (
     DeploymentRequest,
     DriftDetectedError,
 )
+from app.domain.github_adapter import GitHubMergeRefused, MergeResult
 from app.domain.proposals import (
     compute_content_hash,
     evaluate_proposal_policy,
     generate_unified_diff,
     validate_proposal_content,
 )
+from app.domain.publishing import publish_blocked_reason
 
 ALLOWED_PROPOSAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR, Role.DEVELOPER}
 ALLOWED_APPROVAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
 ALLOWED_DEPLOYMENT_ROLES = {Role.OWNER, Role.ADMIN, Role.DEVELOPER}
+# Publishing both deploys and makes live, so it needs a role that may do both:
+# a developer can open a pull request and a SEO manager can approve one, but
+# neither alone puts a change on the site from here.
+ALLOWED_PUBLISH_ROLES = ALLOWED_APPROVAL_ROLES & ALLOWED_DEPLOYMENT_ROLES
+
+
+class PublishingAdapter(DeploymentAdapter, Protocol):
+    async def merge(self, number: int, target_path: str, expected_hash: str) -> MergeResult: ...
 
 
 def stable_hash(payload: dict[str, Any]) -> str:
@@ -931,3 +941,175 @@ class ProposalService:
         await self.session.flush()
         await self.session.refresh(receipt)
         return receipt
+
+    async def publish_proposal(
+        self,
+        proposal_id: UUID,
+        idempotency_key: str,
+        adapter: PublishingAdapter,
+    ) -> tuple[DeploymentReceipt, str | None]:
+        """Put an approved change live in one click: open its pull request if
+        needed, then merge it.
+
+        Every gate a deployment passes still applies -- role, global switch,
+        site mode, freezes, approvals, the daily budget -- and three more:
+        the site must allow publishing from the app, the change must not be
+        one the repository's rules keep for a merge on GitHub, and the pull
+        request must still hold exactly the reviewed content (the adapter
+        checks, and pins the merge to the commit it checked).
+
+        Returns the receipt and, when GitHub or the review check refused the
+        merge, why. A refusal is not raised: the pull request may have just
+        been opened, and its receipt must survive the request.
+        """
+        if self.context.role not in ALLOWED_PUBLISH_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="insufficient_permissions_to_publish"
+            )
+        if not self.deployments_enabled:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="deployments_disabled")
+        proposal = await self.get_proposal(proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="proposal_not_found")
+
+        now = datetime.now(UTC)
+        site = await self._deployable_site(proposal.site_id, now)
+        if not site.publish_from_app:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="publishing_from_app_disabled"
+            )
+        blocked = publish_blocked_reason(
+            proposal.target_path, proposal.before_content, proposal.after_content
+        )
+        if blocked:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=f"publish_requires_github_merge:{blocked}"
+            )
+        if proposal.risk == "prohibited":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="prohibited_proposal_cannot_be_published"
+            )
+
+        # Re-count approvals for this version rather than trusting the status:
+        # the merge is the step that makes the change real.
+        approvers = set(
+            await self.session.scalars(
+                select(ProposalApproval.approver_id).where(
+                    ProposalApproval.tenant_id == self.context.tenant_id,
+                    ProposalApproval.proposal_id == proposal.id,
+                    ProposalApproval.proposal_version == proposal.version,
+                    ProposalApproval.decision == "approved",
+                )
+            )
+        )
+        required = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
+        if len(approvers) < required:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"publish_requires_approvals:{len(approvers)}_of_{required}",
+            )
+
+        if proposal.status == "approved":
+            receipt = await self.deploy_proposal(
+                proposal_id=proposal.id,
+                command=DeploymentCreate(connector_type="github"),
+                idempotency_key=idempotency_key,
+                adapter=adapter,
+            )
+        elif proposal.status == "deployed":
+            receipt = await self.session.scalar(
+                select(DeploymentReceipt)
+                .where(
+                    DeploymentReceipt.tenant_id == self.context.tenant_id,
+                    DeploymentReceipt.proposal_id == proposal.id,
+                    DeploymentReceipt.connector_type == "github",
+                )
+                .order_by(DeploymentReceipt.deployed_at.desc())
+                .limit(1)
+            )
+            if receipt is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="no_pull_request_to_publish"
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="proposal_must_be_approved_before_publishing",
+            )
+
+        number = receipt.manifest_json.get("pull_request_number")
+        if not isinstance(number, int):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_pull_request_to_publish")
+        if receipt.manifest_json.get("published_at"):
+            return receipt, None
+
+        try:
+            merged = await adapter.merge(
+                number, proposal.target_path, compute_content_hash(proposal.after_content)
+            )
+        except GitHubMergeRefused as refused:
+            reason = str(refused)
+            refusal = {
+                "deployment_id": str(receipt.id),
+                "proposal_id": str(proposal.id),
+                "site_id": str(proposal.site_id),
+                "external_ref": receipt.external_ref,
+                "reason": reason,
+            }
+            self.session.add(
+                AuditEvent(
+                    tenant_id=self.context.tenant_id,
+                    actor_type="user",
+                    actor_id=str(self.context.actor_id),
+                    action="proposal.publish_refused",
+                    resource_type="proposal",
+                    resource_id=str(proposal.id),
+                    trace_id=self.context.trace_id,
+                    metadata_json=refusal,
+                    event_hash=stable_hash({**refusal, "actor_id": str(self.context.actor_id), "at": now.isoformat()}),
+                )
+            )
+            await self.session.flush()
+            return receipt, reason
+        receipt.manifest_json = {
+            **receipt.manifest_json,
+            "pull_request_state": "merged",
+            "merge_sha": merged.merge_sha,
+            "published_at": now.isoformat(),
+            "published_by": str(self.context.actor_id),
+            "published_from_app": not merged.already_merged,
+        }
+        payload = {
+            "deployment_id": str(receipt.id),
+            "proposal_id": str(proposal.id),
+            "site_id": str(proposal.site_id),
+            "external_ref": merged.html_url or receipt.external_ref,
+            "merge_sha": merged.merge_sha,
+            "already_merged": merged.already_merged,
+            "approver_ids": sorted(str(approver) for approver in approvers),
+        }
+        self.session.add(
+            AuditEvent(
+                tenant_id=self.context.tenant_id,
+                actor_type="user",
+                actor_id=str(self.context.actor_id),
+                action="proposal.published",
+                resource_type="proposal",
+                resource_id=str(proposal.id),
+                trace_id=self.context.trace_id,
+                metadata_json=payload,
+                event_hash=stable_hash({**payload, "actor_id": str(self.context.actor_id)}),
+            )
+        )
+        self.session.add(
+            OutboxEvent(
+                tenant_id=self.context.tenant_id,
+                event_type="proposal.published.v1",
+                event_version=1,
+                aggregate_type="proposal",
+                aggregate_id=proposal.id,
+                payload=payload,
+            )
+        )
+        await self.session.flush()
+        return receipt, None

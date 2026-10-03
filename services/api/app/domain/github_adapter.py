@@ -20,9 +20,11 @@ Three of them matter, and each is a QA scenario:
       branch, because a deployment that half happened is worse than one that did
       not, and the receipt is the only place anyone will look.
 
-Nothing here force-pushes, merges, or deletes. The adapter's whole authority is
-to propose: it writes one commit on a new branch and opens a pull request for a
-human to accept or close.
+Nothing here force-pushes or deletes. Deploying only proposes: it writes one
+commit on a new branch and opens a pull request for a human to accept or close.
+Merging (`merge`) happens only when a person clicks Publish on a site that
+allows it, and only a pull request that still holds exactly the reviewed
+change; see `app/domain/publishing.py` and the ADR on publishing.
 """
 
 import base64
@@ -52,6 +54,22 @@ BRANCH_PREFIX = "seo-autopilot"
 
 class GitHubDeploymentError(Exception):
     """A GitHub call failed in a way the caller has to see."""
+
+
+class GitHubMergeRefused(Exception):
+    """The pull request must not, or could not, be merged from the app.
+
+    Not a provider failure: the change moved since review, or GitHub's own
+    rules (branch protection, required checks, merge settings) said no. The
+    answer is to look at the pull request on GitHub.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class MergeResult:
+    merge_sha: str
+    html_url: str
+    already_merged: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,6 +486,80 @@ class GitHubDeploymentAdapter:
             external_ref=str(opened.json().get("html_url") or ""),
             restored_hash=compute_content_hash(request.before_content),
             detail="revert_pull_request_opened_not_merged",
+        )
+
+    async def merge(self, number: int, target_path: str, expected_hash: str) -> MergeResult:
+        """Merge a deployment's pull request, if it still holds only the reviewed change.
+
+        The reviewed change is one file with known content. Before merging,
+        the pull request must target the base branch, touch that file and no
+        other, and carry exactly the approved content at its head. The merge
+        is then pinned to that head commit, so a push between this check and
+        the merge makes GitHub refuse it rather than merge something unread.
+        Branch protection and required checks are GitHub's to enforce; a
+        refusal is reported, never worked around.
+        """
+        response = await self._request("GET", f"/repos/{self._target.slug}/pulls/{number}")
+        if response.status_code != 200:
+            raise GitHubDeploymentError(f"github_pull_read_failed:{response.status_code}")
+        pull = response.json()
+        url = str(pull.get("html_url") or "")
+        if pull.get("merged_at"):
+            return MergeResult(str(pull.get("merge_commit_sha") or ""), url, already_merged=True)
+        if pull.get("state") != "open":
+            raise GitHubMergeRefused("pull_request_closed")
+        if (pull.get("base") or {}).get("ref") != self._target.base_branch:
+            raise GitHubMergeRefused("pull_request_targets_another_branch")
+        head_sha = str((pull.get("head") or {}).get("sha") or "")
+        if not head_sha:
+            raise GitHubMergeRefused("pull_request_head_unknown")
+
+        files = await self._request(
+            "GET", f"/repos/{self._target.slug}/pulls/{number}/files?per_page=100"
+        )
+        if files.status_code != 200:
+            raise GitHubDeploymentError(f"github_pull_files_failed:{files.status_code}")
+        changed = [str(item.get("filename")) for item in files.json() if isinstance(item, dict)]
+        if changed != [target_path]:
+            raise GitHubMergeRefused("pull_request_holds_other_changes")
+
+        at_head = await self._request(
+            "GET", f"/repos/{self._target.slug}/contents/{target_path}?ref={head_sha}"
+        )
+        if at_head.status_code != 200:
+            raise GitHubMergeRefused("changed_since_review")
+        body = at_head.json()
+        if body.get("encoding") != "base64" or "content" not in body:
+            raise GitHubMergeRefused("changed_since_review")
+        content = base64.b64decode(body["content"]).decode("utf-8")
+        if compute_content_hash(content) != expected_hash:
+            raise GitHubMergeRefused("changed_since_review")
+
+        merged = await self._merge_request(number, head_sha, pull, "squash")
+        if merged.status_code == 405 and "merge method" in merged.text.lower():
+            # The repository allows plain merges only; squash was a preference.
+            merged = await self._merge_request(number, head_sha, pull, "merge")
+        if merged.status_code == 200:
+            return MergeResult(str(merged.json().get("sha") or ""), url, already_merged=False)
+        if merged.status_code == 409:
+            raise GitHubMergeRefused("changed_since_review")
+        if merged.status_code in (403, 405, 422):
+            # Branch protection, a required check or review, or a conflict.
+            raise GitHubMergeRefused("github_refused_merge")
+        raise GitHubDeploymentError(f"github_merge_failed:{merged.status_code}:{number}")
+
+    async def _merge_request(
+        self, number: int, head_sha: str, pull: dict[str, Any], method: str
+    ) -> httpx.Response:
+        return await self._request(
+            "PUT",
+            f"/repos/{self._target.slug}/pulls/{number}/merge",
+            json={
+                "sha": head_sha,
+                "merge_method": method,
+                "commit_title": f"{pull.get('title') or 'SEO change'} (#{number})",
+                "commit_message": "Published from SEO Autopilot after review.",
+            },
         )
 
     def _result(self, request: DeploymentRequest, pull: dict[str, Any]) -> DeploymentResult:

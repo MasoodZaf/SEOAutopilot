@@ -15,7 +15,7 @@ import {
   trackCitationPrompt,
   untrackCitationPrompt,
 } from "./actions";
-import {citationGrid, citationShare, formatMicros} from "./citations.mjs";
+import {SOURCE_ADVICE, citationGrid, citationShare, formatMicros} from "./citations.mjs";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {readinessBreakdown} from "./readiness.mjs";
 import {
@@ -60,6 +60,15 @@ async function maybe<T>(path: string): Promise<T | null> {
 const panel = "rounded-2xl border border-rule bg-surface p-6";
 const heading = "font-display text-[17px] font-medium tracking-tight text-ink";
 const muted = "text-xs text-ink-faint";
+const SOURCE_LABELS: Record<string, string> = {
+  yours: "This site",
+  competitor: "Tracked competitor",
+  forum: "Forum",
+  video: "Video",
+  review: "Review or directory",
+  reference: "Reference",
+  other: "Other",
+};
 const chip = "rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-medium tracking-wider uppercase";
 
 function Empty({children}: {children: React.ReactNode}) {
@@ -681,11 +690,11 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                     Every source cited across the <span className="tabular">{share.answers}</span> answers in the latest run, counted once per answer.
                     A share of this sample, not a ranking.
                   </p>
-                  <table className="mt-2 w-full max-w-xl text-left text-sm">
+                  <table className="mt-2 w-full max-w-3xl text-left text-sm">
                     <thead>
                       <tr className="border-b border-rule text-xs text-ink-faint">
                         <th className="py-1.5 pr-3 font-medium">Source</th>
-                        <th className="py-1.5 pr-3 font-medium">Whose</th>
+                        <th className="py-1.5 pr-3 font-medium">Kind, and what to do</th>
                         <th className="py-1.5 text-right font-medium">Cited in</th>
                       </tr>
                     </thead>
@@ -694,7 +703,8 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                         <tr key={row.host} className="border-b border-rule last:border-0">
                           <td className={row.kind === "yours" ? "py-1.5 pr-3 font-medium text-ink" : "py-1.5 pr-3 text-ink-soft"}>{row.host}</td>
                           <td className="py-1.5 pr-3 text-xs text-ink-faint">
-                            {row.kind === "yours" ? "This site" : row.kind === "competitor" ? "Tracked competitor" : "Other"}
+                            <span className="block text-ink-soft">{SOURCE_LABELS[row.kind] ?? "Other"}</span>
+                            <span className="text-pretty">{SOURCE_ADVICE[row.kind as keyof typeof SOURCE_ADVICE] ?? SOURCE_ADVICE.other}</span>
                           </td>
                           <td className="tabular py-1.5 text-right text-ink-soft">
                             {row.answers} of {share.answers}

@@ -509,3 +509,70 @@ export async function withdrawProposalAction(formData: FormData): Promise<never>
   }
   redirectFresh(pilotPath(host, {proposal: "withdrawn"}));
 }
+
+export async function saveBrandTerms(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  try {
+    const site = await ownedSite(host);
+    if (!site) redirectFresh(pilotPath(host));
+    const terms = String(formData.get("brand_terms") ?? "")
+      .split(",")
+      .map((term) => term.trim())
+      .filter(Boolean)
+      .slice(0, 10);
+    await apiJson(`/v1/sites/${site.id}/brand-terms`, {method: "PUT", body: JSON.stringify({terms})});
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirectFresh(pilotPath(host));
+}
+
+/** API refusal codes as a single URL-safe token the page can explain. */
+function publishErrorCode(code: string): string {
+  if (code.startsWith("publish_requires_github_merge:")) {
+    return `publish_requires_github_merge__${code.split(":")[1] ?? ""}`;
+  }
+  return code.split(":")[0] ?? code;
+}
+
+/**
+ * Put an approved change live: open its pull request if needed, then merge it.
+ *
+ * Only on a site that allows publishing from the app. When GitHub or the
+ * review check refuses the merge, the pull request stays open for a person to
+ * merge on GitHub, and the page says why.
+ */
+export async function publishProposalAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const proposalId = String(formData.get("proposal_id") ?? "");
+  let refusal: string | undefined;
+  try {
+    const result = await apiJson<{meta: {published?: string; refusal?: string}}>(
+      `/v1/proposals/${proposalId}/publish`,
+      {method: "POST", headers: {"Idempotency-Key": `publish-${proposalId}`}, body: "{}"},
+    );
+    refusal = result.meta.published === "true" ? undefined : (result.meta.refusal ?? "github_refused_merge");
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectFresh(errorUrl(host, error instanceof ApiError ? publishErrorCode(error.code) : "unexpected-error"));
+  }
+  if (refusal) redirectFresh(errorUrl(host, `publish_refused__${refusal}`));
+  redirectFresh(pilotPath(host, {proposal: "published"}));
+}
+
+export async function setPublishFromAppAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const siteId = String(formData.get("site_id") ?? "");
+  const enabled = formData.get("publish_from_app") === "on";
+  try {
+    await apiJson(`/v1/sites/${siteId}/governance`, {
+      method: "PATCH",
+      body: JSON.stringify({publish_from_app: enabled}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirectFresh(pilotPath(host, {governance: enabled ? "publish-on" : "publish-off"}));
+}

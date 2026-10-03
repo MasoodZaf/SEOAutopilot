@@ -77,3 +77,24 @@ test("the site stays on the share table when it falls outside the top", () => {
 test("a run with no answers has an empty share", () => {
   assert.deepEqual(citationShare([], "calc.example"), {answers: 0, hosts: [], cited: 0});
 });
+
+test("cited sources are sorted by what reaching them takes", async () => {
+  const {sourceKind, SOURCE_ADVICE} = await import("./citations.mjs");
+  assert.equal(sourceKind("www.reddit.com"), "forum");
+  assert.equal(sourceKind("en.wikipedia.org"), "reference");
+  assert.equal(sourceKind("youtube.com"), "video");
+  assert.equal(sourceKind("g2.com"), "review");
+  // A lookalike is not the site it imitates.
+  assert.equal(sourceKind("notreddit.com"), "other");
+  assert.equal(sourceKind(""), "other");
+  for (const kind of ["forum", "reference", "video", "review", "other", "yours", "competitor"]) {
+    assert.ok(SOURCE_ADVICE[kind]);
+  }
+});
+
+test("the share table tags a forum but keeps a tracked competitor a competitor", () => {
+  const share = citationShare([
+    {...base, prompt_id: "p1", prompt: "q1", provider: "openai", cited_hosts: ["www.reddit.com", "g2.com"], competitor_hosts: ["g2.com"]},
+  ], "calc.example");
+  assert.deepEqual(share.hosts.map((row) => [row.host, row.kind]), [["g2.com", "competitor"], ["reddit.com", "forum"]]);
+});
