@@ -11,6 +11,7 @@ hand-written hero headline with the brand name.
 """
 
 from hashlib import sha256
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -45,6 +46,21 @@ REPOSITORY = {
     "CalcHive/emi-calculator.html": document("EMI Calculator"),
     "CalcHive/index.html": document("CalcHive"),
     "CalcHive/bmi-calculator.html": document("BMI Calculator"),
+    "CalcHive/bmi-calculator-faq.html": "<html><head></head><body><h2>What is BMI?</h2><p>Short.</p></body></html>",
+    # Shaped like TheCalcHive's real calculator pages: styled question headings,
+    # each followed directly by its answer paragraph.
+    "CalcHive/compound-calculator.html": (
+        "<!doctype html><html><head><title>Compound Interest Calculator</title>\n</head><body>\n"
+        "<h2 style=\"font-size: 24px\">What is compound interest?</h2>\n"
+        "<p style=\"margin-bottom: 1.5rem;\">Compound interest is interest earned on both the original "
+        "deposit and the interest already added to it, so the balance grows faster each period than "
+        "simple interest would.</p>\n"
+        "<h2>How often is interest compounded?</h2>\n"
+        "<p>That depends on the account. Banks commonly compound daily, monthly or yearly, and the more "
+        "often it is compounded the more the balance grows over the same time.</p>\n"
+        "<h2>Formula</h2><p>A = P(1 + r/n)^nt, with each symbol explained in the table below this line.</p>\n"
+        "</body></html>"
+    ),
 }
 
 
@@ -104,6 +120,10 @@ async def _seed(session, ids: dict[str, UUID]) -> None:
          "content.thin", "open"),
         ("suppressed", "/love-calculator", "Love Calculator — Free Online Tool | CalcHive",
          "h1.duplicate_across_site", "suppressed"),
+        ("faq", "/compound-calculator", "Compound Interest Calculator",
+         "geo.qa_content_without_schema", "open"),
+        ("faq_thin", "/bmi-calculator-faq", "BMI FAQ",
+         "geo.qa_content_without_schema", "open"),
     )
     for name, path, title, rule_key, status in pages:
         url = f"https://calc.example{path}"
@@ -399,3 +419,86 @@ async def test_a_rejected_proposal_does_not_block_a_new_one(app_engine, evidence
         )
 
     assert again.target_path == "CalcHive/emi-calculator.html"
+
+
+async def test_answered_questions_become_faq_markup_and_nothing_else(app_engine, evidence) -> None:
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        _, command = await drafts(session, evidence).draft_from_opportunity(
+            evidence["opportunity_faq"], read_repository
+        )
+        proposal = await proposals(session, evidence).create_proposal(evidence["site_id"], command)
+
+    before = REPOSITORY["CalcHive/compound-calculator.html"]
+    assert command.target_path == "CalcHive/compound-calculator.html"
+    added = [line for line in command.after_content.splitlines() if line not in before.splitlines()]
+    # One line: the JSON-LD in <head>. No copy on the page changes.
+    assert len(added) == 1 and '"@type":"FAQPage"' in added[0]
+    assert '"name":"What is compound interest?"' in added[0]
+    assert '"name":"How often is interest compounded?"' in added[0]
+    assert "Formula" not in added[0]  # not a question
+    assert "geo.qa_content_without_schema" in command.rationale
+    assert proposal.status in {"validated", "review_required"}
+
+
+async def test_faq_markup_needs_two_answered_questions(app_engine, evidence) -> None:
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        with pytest.raises(HTTPException) as raised:
+            await drafts(session, evidence).draft_from_opportunity(
+                evidence["opportunity_faq_thin"], read_repository
+            )
+    assert raised.value.detail == "page_has_too_few_answered_questions"
+
+
+async def test_only_opportunities_with_a_repair_are_offered_as_draftable(
+    app_engine, evidence
+) -> None:
+    # The queue offered "Draft proposal" on a thin-content page, and the click
+    # came back as opportunity_has_no_deterministic_repair.
+    from app.services.opportunities import OpportunityService
+
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        service = OpportunityService(
+            session,
+            TenantContext(
+                tenant_id=evidence["tenant_id"],
+                actor_id=evidence["actor_id"],
+                role=Role.OWNER,
+                trace_id="integration",
+            ),
+        )
+        listed = await service.list_top(evidence["site_id"], 50, "open", scope="all")
+        assert listed is not None
+        draftable = await service.draftable_ids(listed)
+
+    assert evidence["opportunity_thin"] not in draftable
+    assert evidence["opportunity_calculator"] in draftable
+    assert evidence["opportunity_faq"] in draftable
+
+
+async def test_draftable_does_not_reach_another_tenants_opportunities(
+    app_engine, evidence
+) -> None:
+    from app.services.opportunities import OpportunityService
+
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        listed = await OpportunityService(
+            session,
+            TenantContext(
+                tenant_id=evidence["tenant_id"], actor_id=evidence["actor_id"],
+                role=Role.OWNER, trace_id="integration",
+            ),
+        ).list_top(evidence["site_id"], 50, "open", scope="all")
+        assert listed
+        # The ids only: the session's rollback expires the loaded rows.
+        listed = [SimpleNamespace(id=item.id) for item in listed]
+
+    other = uuid4()
+    async with scoped(app_engine, other) as session:
+        draftable = await OpportunityService(
+            session,
+            TenantContext(
+                tenant_id=other, actor_id=evidence["actor_id"],
+                role=Role.OWNER, trace_id="integration",
+            ),
+        ).draftable_ids(listed)
+    assert draftable == set()

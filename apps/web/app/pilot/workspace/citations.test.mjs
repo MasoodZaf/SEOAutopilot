@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {citationGrid, formatMicros} from "./citations.mjs";
+import {citationGrid, citationShare, formatMicros} from "./citations.mjs";
 
 const base = {
   model: "m", status: "answered", error_code: null, site_cited: false, site_mentioned: false,
@@ -48,4 +48,32 @@ test("an engine with no key is not a column", () => {
 test("spend reads in dollars", () => {
   assert.equal(formatMicros(420_000), "$0.42");
   assert.equal(formatMicros(12_300_000), "$12");
+});
+
+test("citation share counts each host once per answer and tags whose it is", () => {
+  const share = citationShare([
+    {...base, prompt_id: "p1", prompt: "q1", provider: "anthropic", site_cited: true, own_citation_rank: 2, cited_hosts: ["bank.example", "www.calc.example", "bank.example"], competitor_hosts: ["bank.example"]},
+    {...base, prompt_id: "p1", prompt: "q1", provider: "openai", cited_hosts: ["bank.example", "wiki.example"]},
+    {...base, prompt_id: "p2", prompt: "q2", provider: "anthropic", cited_hosts: ["wiki.example"]},
+    {...base, prompt_id: "p2", prompt: "q2", provider: "openai", status: "failed", error_code: "provider_rate_limited", cited_hosts: ["bank.example"]},
+  ], "calc.example");
+  assert.equal(share.answers, 3);
+  assert.equal(share.cited, 1);
+  assert.deepEqual(share.hosts, [
+    {host: "bank.example", kind: "competitor", answers: 2},
+    {host: "wiki.example", kind: "other", answers: 2},
+    {host: "calc.example", kind: "yours", answers: 1},
+  ]);
+});
+
+test("the site stays on the share table when it falls outside the top", () => {
+  const rows = ["a", "b", "c"].map((host) => ({...base, prompt_id: host, prompt: host, provider: "anthropic", cited_hosts: [`${host}.example`, `${host}2.example`]}));
+  rows.push({...base, prompt_id: "z", prompt: "z", provider: "openai", site_cited: true, own_citation_rank: 1, cited_hosts: ["calc.example"]});
+  const share = citationShare(rows, "calc.example", 2);
+  assert.equal(share.hosts.length, 3);
+  assert.deepEqual(share.hosts.at(-1), {host: "calc.example", kind: "yours", answers: 1});
+});
+
+test("a run with no answers has an empty share", () => {
+  assert.deepEqual(citationShare([], "calc.example"), {answers: 0, hosts: [], cited: 0});
 });

@@ -190,7 +190,7 @@ const aiSearchSteps: {title: string; where: {label: string; href?: string}; body
     title: "Track the questions your customers ask",
     where: {label: "Reports → AI answer citations", href: "/pilot/workspace?tab=reports"},
     body:
-      "Add up to eight questions, typed in or picked from the questions people already search to find you. Keep them the way a customer would ask; the question is sent exactly as written and never names your site.",
+      "Add up to eight questions, typed in or picked from the suggestions. Questions people actually searched in Google come first, with the impressions your site earned for each; question-shaped topics follow. Keep them the way a customer would ask; the question is sent exactly as written and never names your site.",
   },
   {
     title: "Bring your own key",
@@ -202,7 +202,13 @@ const aiSearchSteps: {title: string; where: {label: string; href?: string}; body
     title: "Run it weekly and read the grid",
     where: {label: "Skills → ai_citation_scan", href: "/pilot/workspace?tab=skills"},
     body:
-      "Enable the routine (weekly; daily is refused) or run it once. Each question gets a verdict per engine: cited, with your place among the sources; named but not linked; or not cited, with the sites cited instead. Compare runs over weeks rather than trusting any single one.",
+      "Enable the routine (weekly; daily is refused) or run it once. Each question gets a verdict per engine: cited, with your place among the sources; named but not linked; or not cited, with the sites cited instead. Under the grid, Who gets cited counts every source across the run's answers, with your site and your tracked competitors marked. Compare runs over weeks rather than trusting any single one.",
+  },
+  {
+    title: "Make your answers quotable",
+    where: {label: "Dashboard → Opportunities", href: "/pilot"},
+    body:
+      "Answer engines quote the passage directly under a question. Each crawl flags question headings with no 15–100 word answer beneath them, answered questions with no FAQ markup, and FAQ markup that lists questions the page does not show. For answered questions without markup, Draft proposal builds FAQ markup from the page's own headings and paragraphs, with no AI, as a pull request. For questions without an answer, Draft direct answers has your own Claude or OpenAI key write one answer per question; you check every claim and figure, then send it for approval. It becomes a high-risk edit to that page's source file, with each answer placed under its heading and FAQ markup built from them, and it goes live only when a person merges the pull request.",
   },
 ];
 

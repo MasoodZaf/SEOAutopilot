@@ -50,7 +50,7 @@ from app.domain.github_adapter import GitHubDeploymentError
 from app.services.github_connector import GitHubConnectorError, credential_for_opportunity
 from app.services.proposal_drafts import (
     LIVE_PROPOSAL_STATUSES,
-    REPAIRABLE_RULES,
+    SWEPT_RULES,
     ProposalDraftService,
 )
 from app.services.proposals import ProposalService
@@ -221,7 +221,7 @@ async def draft_once(
     *,
     limit: int = DEFAULT_BATCH,
 ) -> DraftReport:
-    candidates = await draftable(connection, sorted(REPAIRABLE_RULES), limit)
+    candidates = await draftable(connection, sorted(SWEPT_RULES), limit)
     report = DraftReport(considered=len(candidates))
     for candidate in candidates:
         trace_id = f"drafter-{candidate.opportunity_id.hex[:12]}"

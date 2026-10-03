@@ -18,6 +18,7 @@ const observation = (contentHash: string, status = 200): PageObservation => ({
   canonicalUrl: null,
   robotsDirectives: [],
   structuredData: [],
+  answerOutline: {schema_version: 1, headings: [], headings_truncated: false, faq_schema: {questions: 0, visible: 0}},
   links: [],
   linkCountTotal: 0,
   linksTruncated: false,

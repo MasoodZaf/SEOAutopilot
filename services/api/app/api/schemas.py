@@ -287,6 +287,9 @@ class OpportunityRead(BaseModel):
     type: str
     title: str
     status: str
+    # Whether "Draft proposal" can build a change for it. Most rules have no
+    # deterministic repair; offering the action there only produces a refusal.
+    draftable: bool = False
     impact: float
     confidence: float
     urgency: float
@@ -1365,6 +1368,8 @@ class AiVisibilityRead(BaseModel):
 class AiCitationPromptCreate(BaseModel):
     prompt: str = Field(min_length=8, max_length=300)
     keyword_cluster_id: UUID | None = None
+    # From a Search Console suggestion; checked against the site's own queries.
+    query_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class AiCitationPromptRead(BaseModel):
@@ -1384,12 +1389,16 @@ class AiCitationPromptEnvelope(BaseModel):
 
 class AiCitationPromptSuggestion(BaseModel):
     prompt: str
-    keyword_cluster_id: UUID
+    source: Literal["search_console", "question_cluster"]
+    keyword_cluster_id: UUID | None = None
+    query_hash: str | None = None
+    # Search Console impressions in the latest keyword window; None for a topic.
+    impressions: int | None = None
 
 
 class AiCitationPromptCollection(BaseModel):
     data: list[AiCitationPromptRead]
-    # Question-shaped topics from the latest keyword analysis, not yet tracked.
+    # Questions people searched, then question-shaped topics, not yet tracked.
     suggestions: list[AiCitationPromptSuggestion]
     meta: dict[str, object]
 
@@ -1661,8 +1670,17 @@ class ContentDraftCreate(BaseModel):
     author_name: str = Field(default="", max_length=120)
 
 
+class AnswerDraftCreate(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    # Which of the workspace's own keys writes the answers.
+    provider: Literal["anthropic", "openai"] = "anthropic"
+
+
 class ContentDraftUpdate(BaseModel):
     version: int = Field(ge=1)
+    # Answer blocks: question heading -> the reviewer's answer. Headings are
+    # fixed by the server; an unknown one is refused.
+    answers: dict[str, str] | None = Field(default=None, max_length=5)
     title: str | None = Field(default=None, max_length=200)
     slug: str | None = Field(default=None, max_length=80)
     meta_description: str | None = Field(default=None, max_length=320)
@@ -1676,7 +1694,9 @@ class ContentDraftSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     site_id: UUID
-    content_brief_id: UUID
+    kind: str = "blog_post"
+    content_brief_id: UUID | None
+    page_id: UUID | None = None
     status: str
     title: str | None
     slug: str | None
@@ -1691,6 +1711,7 @@ class ContentDraftRead(ContentDraftSummary):
     body_markdown: str | None
     author_name: str | None
     flags_json: list[dict[str, Any]]
+    answer_items_json: list[dict[str, Any]] = Field(default_factory=list)
     generated_json: dict[str, Any] | None
     model: str | None
     prompt_version: str | None

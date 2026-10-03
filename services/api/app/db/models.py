@@ -179,6 +179,8 @@ class PageObservation(Base):
     structured_data_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     link_count_total: Mapped[int] = mapped_column(Integer, default=0)
     links_truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Question headings and the copy under them; None before migration 0047.
+    answer_outline_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class ScoringVersion(Base):
@@ -963,7 +965,8 @@ class ContentBrief(Base):
 
 
 class ContentDraft(Base):
-    """An AI-written blog post awaiting a person's review. See migration 0044."""
+    """AI-written copy awaiting a person's review: a new blog post (migration
+    0044) or direct answers for an existing page's questions (migration 0049)."""
 
     __tablename__ = "content_draft"
     __table_args__ = (
@@ -974,7 +977,9 @@ class ContentDraft(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
     site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
-    content_brief_id: Mapped[UUID] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), default="blog_post")
+    content_brief_id: Mapped[UUID | None] = mapped_column()
+    page_id: Mapped[UUID | None] = mapped_column()
     requested_by: Mapped[UUID] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="queued")
     idempotency_key: Mapped[str] = mapped_column(String(128))
@@ -997,6 +1002,8 @@ class ContentDraft(Base):
     body_markdown: Mapped[str | None] = mapped_column(Text)
     author_name: Mapped[str | None] = mapped_column(String(120))
     flags_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # Answer blocks only: [{heading, answer}], answer null until written.
+    answer_items_json: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

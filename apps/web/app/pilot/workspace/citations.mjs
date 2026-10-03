@@ -67,6 +67,48 @@ export function citationGrid(observations) {
   return {engines, rows: [...rows.values()]};
 }
 
+const bareHost = (host) => String(host ?? "").toLowerCase().replace(/^www\./, "");
+
+/**
+ * Who the answer engines cite, across every answer in one run.
+ *
+ * A host counts once per answer that cites it, so the figure reads "cited in
+ * N of M answers" -- a share of a sample, not a rank. The site's own host is
+ * taken from where an answer placed it (its citation rank), with the site's
+ * host as a fallback; competitors are the hosts the scan matched to the
+ * workspace's tracked competitors. Answers that failed are not in M.
+ *
+ * @param {import("./model").AiCitationObservation[]} observations
+ * @param {string} siteHost
+ * @param {number} limit
+ */
+export function citationShare(observations, siteHost, limit = 8) {
+  const answered = observations.filter((row) => row.status === "answered");
+  const own = new Set([bareHost(siteHost)]);
+  const competitors = new Set();
+  for (const row of answered) {
+    if (row.site_cited && row.own_citation_rank) own.add(bareHost(row.cited_hosts[row.own_citation_rank - 1]));
+    for (const host of row.competitor_hosts) competitors.add(bareHost(host));
+  }
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const row of answered) {
+    for (const host of new Set(row.cited_hosts.map(bareHost))) {
+      if (host) counts.set(host, (counts.get(host) ?? 0) + 1);
+    }
+  }
+  const kindOf = (host) => (own.has(host) ? "yours" : competitors.has(host) ? "competitor" : "other");
+  const ranked = [...counts.entries()]
+    .map(([host, answers]) => ({host, kind: kindOf(host), answers}))
+    .sort((a, b) => b.answers - a.answers || a.host.localeCompare(b.host));
+  const shown = ranked.slice(0, limit);
+  // The site stays on the table even when it falls outside the top, so the
+  // comparison is always against something.
+  const yours = ranked.find((row) => row.kind === "yours");
+  if (yours && !shown.includes(yours)) shown.push(yours);
+  return {answers: answered.length, hosts: shown, cited: yours?.answers ?? 0};
+}
+
 /** "$0.42", from integer micro-dollars. */
 export function formatMicros(micros) {
   const dollars = Math.max(0, Number(micros) || 0) / 1_000_000;

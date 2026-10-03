@@ -1,6 +1,7 @@
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urlsplit
 
 from app.keywords.cluster import similarity_tokens
@@ -23,6 +24,10 @@ class PageEvidence:
     # Words in the server's HTML before any script ran, when the crawler had to
     # render the page to see it. None means it was not rendered.
     server_word_count: int | None = None
+    # The crawler's answer outline (services/crawler/src/answer-outline.ts):
+    # H2/H3 headings with the size and shape of the copy under each, and the
+    # page's FAQ markup against its visible text. None on crawls before it.
+    answer_outline: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +152,54 @@ MIN_URL_TOPIC_LENGTH = 4
 # HTML carries the substance and whose scripts only add to it.
 JS_ONLY_MIN_RENDERED_WORDS = 100
 JS_ONLY_MAX_SERVER_SHARE = 0.2
+
+
+# A passage an answer engine can quote whole: long enough to answer, short
+# enough to lift. Lists and tables under a question are answers in their own
+# right and are not held to a word count.
+DIRECT_ANSWER_MIN_WORDS = 15
+DIRECT_ANSWER_MAX_WORDS = 100
+# One answered question is a section; two or more is question-and-answer content.
+QA_CONTENT_MIN_QUESTIONS = 2
+ANSWER_ENGINE_TYPES = frozenset({"FAQPage", "QAPage", "HowTo"})
+
+
+def structured_data_types(data: Sequence[object]) -> set[str]:
+    """Every @type a page declares in JSON-LD, including inside @graph."""
+    found: set[str] = set()
+
+    def visit(value: object, depth: int) -> None:
+        if depth > 6:
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item, depth + 1)
+        elif isinstance(value, dict):
+            declared = value.get("@type")
+            for item in declared if isinstance(declared, list) else [declared]:
+                if isinstance(item, str):
+                    found.add(item)
+            visit(value.get("@graph"), depth + 1)
+
+    visit(list(data), 0)
+    return found
+
+
+def question_headings(outline: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    headings = outline.get("headings")
+    if not isinstance(headings, list):
+        return []
+    return [item for item in headings if isinstance(item, Mapping) and item.get("question") is True]
+
+
+def lacks_direct_answer(heading: Mapping[str, Any]) -> bool:
+    kind = heading.get("answer_kind")
+    words = heading.get("answer_words")
+    if kind in ("list", "table"):
+        return False
+    if kind == "none" or not isinstance(words, int):
+        return True
+    return not DIRECT_ANSWER_MIN_WORDS <= words <= DIRECT_ANSWER_MAX_WORDS
 
 
 def content_requires_javascript(page: PageEvidence) -> bool:
@@ -372,6 +425,42 @@ def evaluate_multiagent_page(evidence: MultiAgentPageEvidence) -> tuple[int, lis
     has_structured_data = bool(page.structured_data)
     if not has_structured_data and (page.status == 200 or page.status is None) and "noindex" not in page.robots_directives:
         add("geo.missing_structured_data", "medium", "Page has no JSON-LD structured data for entity and citation discovery.", (0.50, 0.92, 0.55, 0.25, "low"), "geo_visibility")
+
+    outline = page.answer_outline
+    if outline is not None and (page.status == 200 or page.status is None) and "noindex" not in page.robots_directives:
+        questions = question_headings(outline)
+        unanswered = [item for item in questions if lacks_direct_answer(item)]
+        if unanswered:
+            add(
+                "geo.question_without_direct_answer",
+                "medium",
+                f"{len(unanswered)} of {len(questions)} question headings are not followed by a "
+                f"{DIRECT_ANSWER_MIN_WORDS}–{DIRECT_ANSWER_MAX_WORDS} word answer an AI engine could quote.",
+                (0.45, 0.85, 0.45, 0.35, "medium"),
+                "geo_visibility",
+            )
+        answered = len(questions) - len(unanswered)
+        if answered >= QA_CONTENT_MIN_QUESTIONS and not structured_data_types(page.structured_data) & ANSWER_ENGINE_TYPES:
+            add(
+                "geo.qa_content_without_schema",
+                "medium",
+                f"{answered} questions are answered on the page but no FAQPage, QAPage or HowTo markup "
+                "declares them; the markup helps answer engines parse them (Google shows FAQ results for few sites).",
+                (0.35, 0.85, 0.40, 0.30, "medium"),
+                "geo_visibility",
+            )
+        faq = outline.get("faq_schema")
+        if isinstance(faq, Mapping):
+            declared, visible = faq.get("questions"), faq.get("visible")
+            if isinstance(declared, int) and isinstance(visible, int) and visible < declared:
+                add(
+                    "geo.faq_schema_not_visible",
+                    "high",
+                    f"{declared - visible} of {declared} questions in the page's FAQ markup do not appear "
+                    "in its visible text; markup must describe what readers see.",
+                    (0.55, 0.90, 0.60, 0.25, "medium"),
+                    "geo_visibility",
+                )
 
     score = max(0, 100 - sum(DEDUCTIONS[finding.severity] for finding in findings))
     return score, findings

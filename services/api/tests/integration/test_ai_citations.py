@@ -1,18 +1,22 @@
 """Tracking questions for observed AI citations, and reading the results,
 on the application role under RLS."""
 
+import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.context import Role, TenantContext
 from app.services.ai_citations import MAX_TRACKED, AiCitationService, as_question
+from app.services.keywords import query_aad
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.asyncio, requires_database]
@@ -45,7 +49,7 @@ async def workspace(engine):
     yield ids
     async with factory() as session, session.begin():
         for table in ("outbox_event", "routine", "tenant_credential", "ai_citation_observation", "ai_citation_run", "ai_citation_prompt", "audit_event",
-                      "keyword_cluster", "keyword_analysis_run", "site"):
+                      "keyword_cluster_member", "search_query", "keyword_cluster", "keyword_analysis_run", "site"):
             await session.execute(text(f"DELETE FROM {table} WHERE tenant_id=:t"), {"t": ids["tenant"]})
         await session.execute(text("DELETE FROM tenant WHERE id=:t"), {"t": ids["tenant"]})
 
@@ -64,7 +68,10 @@ async def test_question_clusters_are_suggested_until_tracked(tenant_session_fact
         service = AiCitationService(session, ctx(workspace))
         tracked, suggestions = await service.prompts(workspace["site"])
         assert tracked == []
-        assert suggestions == [{"prompt": "How is emi calculated?", "keyword_cluster_id": workspace["cluster"]}]
+        assert suggestions == [{
+            "prompt": "How is emi calculated?", "source": "question_cluster",
+            "keyword_cluster_id": workspace["cluster"], "query_hash": None, "impressions": None,
+        }]
 
         prompt = await service.track(workspace["site"], "How is emi calculated?", workspace["cluster"])
         assert prompt.source == "question_cluster"
@@ -179,7 +186,11 @@ async def test_a_perplexity_key_is_checked_and_kept_only_by_its_suffix(tenant_se
     from pydantic import SecretStr
 
     from app.core.config import Settings
-    from app.services.tenant_credentials import PERPLEXITY_API_KEY, TenantCredentialService, store_for
+    from app.services.tenant_credentials import (
+        PERPLEXITY_API_KEY,
+        TenantCredentialService,
+        store_for,
+    )
 
     settings = Settings(
         connector_secret_backend="database_envelope",
@@ -194,3 +205,80 @@ async def test_a_perplexity_key_is_checked_and_kept_only_by_its_suffix(tenant_se
             assert refused.value.detail == "perplexity_api_key_invalid"
         stored = await service.upsert_ai_key(store, PERPLEXITY_API_KEY, "pplx-abcdefghijklmnopqrs9z")
         assert stored.config_json == {"key_suffix": "rs9z"}
+
+
+KEY = bytes(range(32))
+OTHER_KEY = bytes(reversed(range(32)))
+
+
+async def seal_query(session, ids, site, term, *, impressions, question=True, key=KEY, cluster="cluster"):
+    """Store a search term the way the worker does, and list it in a cluster."""
+    query_hash = hashlib.sha256(term.encode()).hexdigest()
+    aad = query_aad(ids["tenant"], ids[site], "v1")
+    nonce = os.urandom(12)
+    await session.execute(
+        text("INSERT INTO search_query(tenant_id,site_id,query_hash,ciphertext,nonce,aad_hash,key_version,term_length,token_count,is_question)"
+             " VALUES(:t,:s,:h,:c,:n,:a,'v1',:l,:k,:q)"),
+        {"t": ids["tenant"], "s": ids[site], "h": query_hash, "c": AESGCM(key).encrypt(nonce, term.encode(), aad),
+         "n": nonce, "a": hashlib.sha256(aad).hexdigest(), "l": len(term), "k": len(term.split()), "q": question},
+    )
+    await session.execute(
+        text("INSERT INTO keyword_cluster_member(tenant_id,cluster_id,site_id,query_hash,impressions) VALUES(:t,:c,:s,:h,:i)"),
+        {"t": ids["tenant"], "c": ids[cluster], "s": ids[site], "h": query_hash, "i": impressions},
+    )
+    return query_hash
+
+
+@pytest_asyncio.fixture
+async def searched(engine, workspace):
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session, session.begin():
+        hashes = {
+            "emi": await seal_query(session, workspace, "site", "how do i calculate emi on a car loan", impressions=500),
+            "bmi": await seal_query(session, workspace, "site", "what is a healthy bmi", impressions=900, cluster="foreign_cluster"),
+            "plain": await seal_query(session, workspace, "site", "emi calculator", impressions=4000, question=False),
+            "rotated": await seal_query(session, workspace, "site", "why is my emi so high", impressions=700, key=OTHER_KEY),
+        }
+    return hashes
+
+
+async def test_questions_people_searched_are_suggested_first_by_impressions(tenant_session_factory, workspace, searched):
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service = AiCitationService(session, ctx(workspace, Role.EDITOR), encryption_key=KEY)
+        _, suggestions = await service.prompts(workspace["site"])
+        assert [(item["prompt"], item["source"], item["impressions"]) for item in suggestions] == [
+            ("What is a healthy bmi?", "search_console", 900),
+            ("How do i calculate emi on a car loan?", "search_console", 500),
+            ("How is emi calculated?", "question_cluster", None),
+        ]
+        assert suggestions[0]["query_hash"] == searched["bmi"]
+        audit = await session.execute(text("SELECT metadata FROM audit_event WHERE action='keyword_terms.read' AND tenant_id=:t"), {"t": workspace["tenant"]})
+        metadata = audit.scalar_one()
+        # One term was sealed under a rotated key: counted, skipped, never echoed.
+        assert metadata["revealed_terms"] == 2 and metadata["unreadable_terms"] == 1
+        assert "bmi" not in json.dumps(metadata)
+
+
+async def test_roles_that_cannot_read_terms_get_topic_suggestions_only(tenant_session_factory, workspace, searched):
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        for service in (
+            AiCitationService(session, ctx(workspace, Role.VIEWER), encryption_key=KEY),
+            AiCitationService(session, ctx(workspace)),  # no key configured
+        ):
+            _, suggestions = await service.prompts(workspace["site"])
+            assert [item["source"] for item in suggestions] == ["question_cluster"]
+        audit = await session.execute(text("SELECT count(*) FROM audit_event WHERE action='keyword_terms.read' AND tenant_id=:t"), {"t": workspace["tenant"]})
+        assert audit.scalar_one() == 0
+
+
+async def test_a_searched_question_is_tracked_with_its_provenance_checked(tenant_session_factory, workspace, searched):
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service = AiCitationService(session, ctx(workspace), encryption_key=KEY)
+        tracked = await service.track(workspace["site"], "What is a healthy bmi?", None, searched["bmi"])
+        assert tracked.source == "search_console"
+        # A hash this site does not have on record as a question is only a label: dropped.
+        for site, query_hash in (("other_site", searched["emi"]), ("site", searched["plain"]), ("site", "f" * 64)):
+            prompt = await service.track(workspace[site], f"Some question about {query_hash[:6]} loans", None, query_hash)
+            assert prompt.source == "manual"
+        _, suggestions = await service.prompts(workspace["site"])
+        assert "What is a healthy bmi?" not in [item["prompt"] for item in suggestions]

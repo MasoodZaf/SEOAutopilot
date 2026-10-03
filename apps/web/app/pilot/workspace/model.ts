@@ -135,6 +135,8 @@ export type AiVisibility = {
   factors_json: Record<string, unknown>;
 };
 
+export type AnswerItem = {heading: string; answer: string | null};
+
 export type DraftFlag = {
   id: string;
   kind: "claim" | "figure" | "link" | "overlap" | string;
@@ -147,7 +149,10 @@ export type DraftFlag = {
 export type ContentDraftSummary = {
   id: string;
   site_id: string;
-  content_brief_id: string;
+  /** A new blog post written from a brief, or direct answers for an existing page. */
+  kind?: "blog_post" | "answer_block";
+  content_brief_id: string | null;
+  page_id?: string | null;
   status: "queued" | "running" | "ready" | "failed" | "submitted" | "withdrawn";
   title: string | null;
   slug: string | null;
@@ -162,7 +167,13 @@ export type ContentDraftDetail = ContentDraftSummary & {
   body_markdown: string | null;
   author_name: string | null;
   flags_json: DraftFlag[];
-  generated_json: {title?: string; meta_description?: string; body_markdown?: string} | null;
+  answer_items_json?: AnswerItem[];
+  generated_json: {
+    title?: string;
+    meta_description?: string;
+    body_markdown?: string;
+    items?: AnswerItem[];
+  } | null;
   provider: "anthropic" | "openai";
   model: string | null;
   input_tokens: number;
@@ -180,7 +191,14 @@ export type AiCitationPrompt = {
   created_at: string;
 };
 
-export type AiCitationSuggestion = {prompt: string; keyword_cluster_id: string};
+export type AiCitationSuggestion = {
+  prompt: string;
+  /** A question people searched (with its impressions), or a question-shaped topic. */
+  source: "search_console" | "question_cluster";
+  keyword_cluster_id: string | null;
+  query_hash: string | null;
+  impressions: number | null;
+};
 
 export type AiCitationObservation = {
   prompt_id: string;

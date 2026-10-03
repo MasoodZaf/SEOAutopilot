@@ -38,6 +38,8 @@ PRICES_PER_MILLION: dict[str, tuple[int, int]] = {
     "claude-sonnet-5": (2_000_000, 10_000_000),
     "claude-fable-5-1": (10_000_000, 50_000_000),
     "gpt-5": (1_250_000, 10_000_000),
+    # For keys whose organization is not verified for gpt-5.
+    "gpt-4.1": (2_000_000, 8_000_000),
 }
 MOST_EXPENSIVE = (10_000_000, 50_000_000)
 
@@ -75,7 +77,16 @@ class ModelAnswer:
 
 
 class DraftModel(Protocol):
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer: ...
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer: ...
 
 
 class AnthropicDraftModel:
@@ -85,7 +96,16 @@ class AnthropicDraftModel:
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
 
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer:
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
         client = anthropic.AsyncAnthropic(
             api_key=api_key, timeout=self.timeout_seconds, max_retries=2
         )
@@ -98,7 +118,7 @@ class AnthropicDraftModel:
                 thinking={"type": "adaptive"},
                 output_config={
                     "effort": "high",
-                    "format": {"type": "json_schema", "schema": DRAFT_SCHEMA},
+                    "format": {"type": "json_schema", "schema": schema or DRAFT_SCHEMA},
                 },
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": user}],
@@ -110,6 +130,9 @@ class AnthropicDraftModel:
             raise DraftModelError("anthropic_key_forbidden") from error
         except anthropic.BadRequestError as error:
             raise DraftModelError("provider_request_rejected") from error
+        except anthropic.NotFoundError as error:
+            # The model named in the worker's settings is not one this key can use.
+            raise DraftModelError("anthropic_model_unavailable") from error
         except anthropic.RateLimitError as error:
             raise DraftModelError("provider_rate_limited", retryable=True) from error
         except anthropic.APIStatusError as error:
@@ -171,7 +194,16 @@ class OpenAIDraftModel:
         self.timeout_seconds = timeout_seconds
         self.transport = transport
 
-    async def draft(self, *, api_key: str, model: str, system: str, user: str) -> ModelAnswer:
+    async def draft(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
         body = {
             "model": model,
             "max_completion_tokens": self.max_tokens,
@@ -181,7 +213,7 @@ class OpenAIDraftModel:
             ],
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": "blog_draft", "strict": True, "schema": DRAFT_SCHEMA},
+                "json_schema": {"name": schema_name, "strict": True, "schema": schema or DRAFT_SCHEMA},
             },
         }
         try:
@@ -200,6 +232,11 @@ class OpenAIDraftModel:
             raise DraftModelError("openai_key_rejected")
         if code == 403:
             raise DraftModelError("openai_key_forbidden")
+        if code == 404:
+            # OpenAI answers 404 for a model this key's organization may not use
+            # (gpt-5 needs a verified organization), which is a settings problem,
+            # not a bad request: say so, or every draft fails with no clue why.
+            raise DraftModelError("openai_model_unavailable")
         if code == 429:
             raise DraftModelError("provider_rate_limited", retryable=True)
         if code >= 500:

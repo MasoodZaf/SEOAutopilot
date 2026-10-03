@@ -196,8 +196,14 @@ def evaluate_proposal_policy(
     author_id: UUID | None = None,
     tenant_mode: str = "recommend",
     site_required_approver_count: int | None = None,
+    claim_changing: bool = False,
 ) -> PolicyDecision:
-    """Evaluates risk classification, approver rules, and deployment eligibility."""
+    """Evaluates risk classification, approver rules, and deployment eligibility.
+
+    `claim_changing` marks a change that adds statements a reader will rely
+    on -- reviewed AI-written answers, for instance. Those are never less than
+    high risk, however few characters they add.
+    """
     rejection_reasons: list[str] = []
 
     for val in validations:
@@ -208,7 +214,7 @@ def evaluate_proposal_policy(
 
     if any(val.name == "prohibited_claim_safety" and not val.passed for val in validations):
         risk = "prohibited"
-    elif "robots.txt" in target_path.lower() or "sitemap" in target_path.lower():
+    elif claim_changing or "robots.txt" in target_path.lower() or "sitemap" in target_path.lower():
         risk = "high"
     elif directive_changes:
         # Canonical, robots, and redirect directives are never a low-risk edit.

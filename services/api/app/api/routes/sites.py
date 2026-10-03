@@ -155,6 +155,7 @@ async def list_opportunities(
     if opportunities is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
     page_urls = await opportunity_service.page_urls(site_id, opportunities)
+    draftable = await opportunity_service.draftable_ids(opportunities)
     meta: dict[str, str | int] = {
         "trace_id": context.trace_id,
         "count": len(opportunities),
@@ -172,7 +173,7 @@ async def list_opportunities(
     return OpportunityCollection(
         data=[
             OpportunityRead.model_validate(item).model_copy(
-                update={"page_url": page_urls.get(item.page_id)}
+                update={"page_url": page_urls.get(item.page_id), "draftable": item.id in draftable}
             )
             for item in opportunities
         ],

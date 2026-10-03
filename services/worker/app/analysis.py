@@ -51,6 +51,13 @@ def parse_list(value: object) -> list[Any]:
     return []
 
 
+def parse_mapping(value: object) -> dict[str, Any] | None:
+    """A JSON object column, or None when the observation predates it."""
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value if isinstance(value, dict) else None
+
+
 def normalize_heading(text: str) -> str:
     """Compare headings by the words a reader sees, not by their whitespace."""
     return " ".join(text.split()).casefold()
@@ -86,7 +93,7 @@ async def analyze_crawl(
             """
             SELECT o.id,o.page_id,o.observed_at,o.http_status,o.title,o.meta_description,
                    o.h1_json,o.word_count,o.canonical_url,o.robots_directives,o.content_hash,
-                   o.structured_data_json,o.server_word_count,p.normalized_url
+                   o.structured_data_json,o.server_word_count,o.answer_outline_json,p.normalized_url
             FROM page_observation o
             JOIN page p ON p.id=o.page_id AND p.tenant_id=o.tenant_id
             WHERE o.tenant_id=$1 AND o.crawl_job_id=$2
@@ -254,6 +261,7 @@ async def analyze_crawl(
                 structured_data=parse_list(row.get("structured_data_json", [])),
                 pages_sharing_h1=_pages_sharing_h1(row, h1_page_counts),
                 server_word_count=row.get("server_word_count"),
+                answer_outline=parse_mapping(row.get("answer_outline_json")),
             )
 
             if active_version_code == "multiagent-v1":

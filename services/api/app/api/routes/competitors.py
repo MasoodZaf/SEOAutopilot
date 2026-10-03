@@ -33,6 +33,7 @@ from app.core.config import get_settings
 from app.db.session import TenantSession
 from app.services.ai_citations import AiCitationService
 from app.services.competitors import CompetitorService
+from app.services.keywords import term_encryption_key
 from app.services.llms_txt import LlmsTxtService
 
 router = APIRouter(prefix="/v1", tags=["competitors"])
@@ -168,7 +169,10 @@ async def list_ai_citation_prompts(
     site_id: UUID, context: TenantContextDependency, session: TenantSession
 ) -> AiCitationPromptCollection:
     """The questions tracked for observed AI citations, plus untracked suggestions."""
-    tracked, suggestions = await AiCitationService(session, context).prompts(site_id)
+    service = AiCitationService(
+        session, context, encryption_key=term_encryption_key(get_settings())
+    )
+    tracked, suggestions = await service.prompts(site_id)
     return AiCitationPromptCollection(
         data=[AiCitationPromptRead.model_validate(item) for item in tracked],
         suggestions=[AiCitationPromptSuggestion(**item) for item in suggestions],
@@ -188,7 +192,7 @@ async def track_ai_citation_prompt(
     session: TenantSession,
 ) -> AiCitationPromptEnvelope:
     prompt = await AiCitationService(session, context).track(
-        site_id, command.prompt, command.keyword_cluster_id
+        site_id, command.prompt, command.keyword_cluster_id, command.query_hash
     )
     return AiCitationPromptEnvelope(
         data=AiCitationPromptRead.model_validate(prompt), meta={"trace_id": context.trace_id}

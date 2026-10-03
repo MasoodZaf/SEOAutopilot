@@ -33,6 +33,7 @@ from app.db.models import (
     PageObservation,
     Proposal,
 )
+from app.domain.answer_block import AnswerBlockError, faq_from_page
 from app.domain.h1_repair import H1Repair, H1RepairError, is_site_root, plan_repair
 from app.domain.title_repair import TitleRepair
 from app.domain.title_repair import repair_document as repair_title
@@ -47,11 +48,24 @@ HEADING_RULES = frozenset({"content.title_h1_mismatch", "h1.duplicate_across_sit
 # A different repair with a different shape: the title itself is what is wrong,
 # so deriving a heading from it would only propagate the omission.
 TITLE_RULES = frozenset({"content.title_omits_url_topic"})
-REPAIRABLE_RULES = HEADING_RULES | TITLE_RULES
+# FAQ markup built from the questions and answers the page already shows.
+FAQ_RULES = frozenset({"geo.qa_content_without_schema"})
+REPAIRABLE_RULES = HEADING_RULES | TITLE_RULES | FAQ_RULES
+# What the unattended sweep drafts by itself. FAQ markup is drafted only when a
+# person asks: the rule fires on most content pages of a site at once, and a
+# site should not wake up to a proposal per page it never asked for.
+SWEPT_RULES = HEADING_RULES | TITLE_RULES
 
 # A proposal in any of these is still on its way somewhere, so a second one for
 # the same opportunity would be a duplicate rather than a replacement.
 LIVE_PROPOSAL_STATUSES = ("draft", "validated", "review_required", "approved", "deployed")
+
+FAQ_RATIONALE = (
+    "Adds FAQPage JSON-LD built from the page's own question headings and the "
+    "answers already under them, so answer engines can parse them. No copy on "
+    "the page changes and nothing is written by a model; Google shows FAQ "
+    "results for few sites, so this is for answer engines, not rich results."
+)
 
 RATIONALE = (
     "The heading is taken from this page's own <title>, so it names the page's "
@@ -65,6 +79,12 @@ TITLE_RATIONALE = (
     "and the site's title suffix is kept verbatim. Nothing else in the file "
     "changes."
 )
+
+
+def target_path_for(path_template: str, normalized_url: str) -> str:
+    """The repository file a crawled page is built from, per the site's connector."""
+    path = urlsplit(normalized_url).path.strip("/") or "index"
+    return path_template.format(path=path)
 
 
 class ProposalDraftService:
@@ -86,6 +106,11 @@ class ProposalDraftService:
         await self._refuse_if_already_proposed(opportunity_id)
         page = await self._load_page(opportunity.page_id)
         rule_key = await self._repairable_rule(opportunity_id)
+
+        if rule_key in FAQ_RULES:
+            return opportunity.site_id, await self._faq_proposal(
+                opportunity_id, page, rule_key, read_file
+            )
 
         if is_site_root(page.normalized_url):
             # The rules are right that the front page shares the heading; both
@@ -122,6 +147,35 @@ class ProposalDraftService:
             target_path=target_path,
             before_content=repair.before_content,
             after_content=repair.after_content,
+        )
+
+    async def _faq_proposal(
+        self, opportunity_id: UUID, page: Any, rule_key: str, read_file: ReadFile
+    ) -> ProposalCreate:
+        """FAQPage markup for the answers already on the page, or a named refusal."""
+        target_path = self._target_path(page.normalized_url)
+        document = await read_file(target_path)
+        if document is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"draft_target_not_found:{target_path}",
+            )
+        try:
+            edit = faq_from_page(document, target_path)
+        except AnswerBlockError as error:
+            raise self._refuse(str(error)) from error
+        return ProposalCreate(
+            opportunity_id=opportunity_id,
+            page_id=page.id,
+            title=f"Declare the {edit.placed} answered questions on {self._display_path(page.normalized_url)} as FAQ markup",
+            rationale=(
+                f"{FAQ_RATIONALE} Rule: {rule_key}. {edit.placed} question(s), each with the "
+                "paragraph directly under it, copied as the page shows them."
+            ),
+            target_type="github_file",
+            target_path=target_path,
+            before_content=edit.before,
+            after_content=edit.after,
         )
 
     def _title_proposal(
@@ -187,8 +241,7 @@ class ProposalDraftService:
             raise self._refuse(str(error)) from error
 
     def _target_path(self, normalized_url: str) -> str:
-        path = urlsplit(normalized_url).path.strip("/") or "index"
-        return self.path_template.format(path=path)
+        return target_path_for(self.path_template, normalized_url)
 
     def _display_path(self, normalized_url: str) -> str:
         return urlsplit(normalized_url).path or "/"

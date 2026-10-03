@@ -8,10 +8,10 @@ import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {LiveRefresh} from "../../../live-refresh";
 import {saveDraft, submitDraft, withdrawDraft} from "../../actions";
-import type {ContentDraftDetail, DraftFlag} from "../../model";
+import type {AnswerItem, ContentDraftDetail, DraftFlag} from "../../model";
 
 export const metadata: Metadata = {
-  title: "Blog draft",
+  title: "AI draft",
   robots: {index: false, follow: false},
 };
 
@@ -39,6 +39,8 @@ const FAILURES: Record<string, string> = {
   anthropic_key_rejected: "Anthropic rejected the stored key. Replace it under Settings → Keys.",
   openai_key_rejected: "OpenAI rejected the stored key. Replace it under Settings → Keys.",
   anthropic_key_forbidden: "The Anthropic key is not allowed to use this model.",
+  anthropic_model_unavailable: "The configured Claude model is not available to this key. Ask an operator to set CONTENT_DRAFT_ANTHROPIC_MODEL to one it can use.",
+  openai_model_unavailable: "The configured OpenAI model is not available to this key. gpt-5 needs a verified OpenAI organization; verify it, or ask an operator to set CONTENT_DRAFT_OPENAI_MODEL to one the key can use.",
   openai_key_forbidden: "The OpenAI key is not allowed to use this model.",
   content_draft_budget_exhausted: "This month's drafting budget is spent. It resets on the 1st.",
   model_refused: "The model declined to write this post.",
@@ -49,6 +51,8 @@ const FAILURES: Record<string, string> = {
   provider_rate_limited: "The provider was rate-limiting this key. It will be retried.",
   lease_expired: "The draft was abandoned after three attempts.",
   content_brief_not_new_post: "Only new-post briefs can be drafted.",
+  answers_missing: "The model returned no usable answer for any of the questions.",
+  page_not_found: "The page this draft answers no longer exists.",
 };
 
 const ERRORS: Record<string, string> = {
@@ -63,6 +67,14 @@ const ERRORS: Record<string, string> = {
   blog_path_template_invalid: "This site's blog path setting is not usable. It must contain {slug} and stay inside the repository.",
   content_draft_already_submitted: "This draft has already been sent for approval.",
   insufficient_permissions_to_create_proposal: "Your role cannot send changes for approval.",
+  answer_heading_unknown: "That answer is for a question this draft was not asked. Reload and edit again.",
+  answer_draft_empty: "Write at least one answer before sending for approval.",
+  draft_target_not_found: "The page's source file was not found in the repository. Check the site's path setting under Settings → Connectors.",
+  answer_heading_not_found: "A question heading could not be found in the page's source file, so nothing was placed. It may be built from code or data; add that answer by hand.",
+  answer_heading_ambiguous: "A question heading appears more than once in the source file, so where its answer belongs is unclear. Nothing was placed.",
+  page_already_has_faq_markup: "The page's source already declares FAQ markup. Add the answers by hand so the two stay consistent.",
+  answer_block_unsupported_file: "The page's source file is not HTML or JSX, so answers cannot be placed in it safely.",
+  answer_block_no_head_or_body: "The source file has no <head> or <body> to hold the FAQ markup.",
 };
 
 const FLAG_LABEL: Record<string, string> = {
@@ -70,7 +82,52 @@ const FLAG_LABEL: Record<string, string> = {
   figure: "Undeclared figure",
   link: "Link",
   overlap: "Overlap",
+  missing: "No answer",
+  length: "Length",
 };
+
+function words(text: string | null | undefined): number {
+  const trimmed = (text ?? "").trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
+/** The answers, one editable field per question heading. */
+function AnswerFields({items, generated}: {items: AnswerItem[]; generated: AnswerItem[]}) {
+  return (
+    <ol className="flex flex-col gap-5">
+      {items.map((item, index) => {
+        const original = generated.find((candidate) => candidate.heading === item.heading)?.answer ?? null;
+        const count = words(item.answer);
+        return (
+          <li key={item.heading} className="flex flex-col gap-1.5">
+            <input type="hidden" name={`answer_heading:${index}`} value={item.heading} />
+            <label htmlFor={`answer-${index}`} className="text-[14px] font-medium text-balance text-ink">
+              {item.heading}
+            </label>
+            <textarea
+              id={`answer-${index}`}
+              name={`answer:${index}`}
+              defaultValue={item.answer ?? ""}
+              maxLength={600}
+              rows={4}
+              placeholder="Leave empty to skip this question."
+              className={field}
+            />
+            <span className="text-[12px] text-ink-faint tabular">
+              {count} words; 15–100 can be quoted whole, 40–60 reads best
+            </span>
+            {original && original !== item.answer ? (
+              <details className="text-[12px] text-ink-soft">
+                <summary>What the model wrote</summary>
+                <p className="mt-1 text-pretty">{original}</p>
+              </details>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 const field =
   "w-full rounded-xl border border-rule-strong bg-paper px-3.5 py-2 text-[14px] text-ink placeholder:text-ink-faint";
@@ -143,6 +200,10 @@ export default async function DraftPage({params, searchParams}: PageProps) {
       : [];
   const changed = diff.some((line) => line.kind !== "same");
   const provider = draft.provider === "openai" ? "OpenAI" : "Claude";
+  const answering = draft.kind === "answer_block";
+  const answerItems = draft.answer_items_json ?? [];
+  const backHref = answering || !draft.content_brief_id ? "/pilot" : `/pilot/workspace/briefs/${draft.content_brief_id}`;
+  const backLabel = answering ? "The dashboard" : "The brief";
 
   return (
     <main className="bg-paper text-ink">
@@ -150,14 +211,16 @@ export default async function DraftPage({params, searchParams}: PageProps) {
       <header className="dot-field border-b border-rule">
         <div className="mx-auto max-w-6xl px-6 pt-10 pb-8">
           <Link
-            href={`/pilot/workspace/briefs/${draft.content_brief_id}`}
+            href={backHref}
             className="inline-flex items-center gap-2 text-[13px] font-medium text-ink-soft transition-colors hover:text-ink"
           >
-            <span aria-hidden="true">&larr;</span> The brief
+            <span aria-hidden="true">&larr;</span> {backLabel}
           </Link>
-          <p className="eyebrow mt-8">Blog draft · written with {provider}</p>
+          <p className="eyebrow mt-8">{answering ? "Direct answers" : "Blog draft"} · written with {provider}</p>
           <h1 className="mt-3 font-display text-[32px] leading-tight font-light tracking-tight text-balance text-ink sm:text-[44px]">
-            {draft.title ?? "Untitled draft"}
+            {answering
+              ? `Answers for ${answerItems.length} ${answerItems.length === 1 ? "question" : "questions"} on this page`
+              : (draft.title ?? "Untitled draft")}
           </h1>
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <Badge tone={status.tone}>{status.label}</Badge>
@@ -174,10 +237,17 @@ export default async function DraftPage({params, searchParams}: PageProps) {
         <div className="flex min-w-0 flex-col gap-6">
           {error ? <Note tone="stop" role="alert">{ERRORS[error] ?? "That did not work. Try again."}</Note> : null}
           {saved ? <Note tone="good" role="status">Saved.</Note> : null}
-          {withdrawn ? <Note tone="neutral" role="status">Withdrawn. The brief can be drafted again.</Note> : null}
+          {withdrawn ? (
+            <Note tone="neutral" role="status">
+              Withdrawn. {answering ? "The page's answers can be drafted again." : "The brief can be drafted again."}
+            </Note>
+          ) : null}
           {submitted || draft.status === "submitted" ? (
             <Note tone="good" role="status" label="Sent for approval">
-              The post is now a proposal to add a new page. Two people other than you must approve it on the{" "}
+              {answering
+                ? "The answers are now a proposal to edit the page's source file: each placed under its heading, with FAQ markup built from them."
+                : "The post is now a proposal to add a new page."}{" "}
+              Two people other than you must approve it on the{" "}
               <Link href="/pilot" className="underline underline-offset-4">dashboard</Link>, under Proposals; then deploying
               it opens a pull request that a person merges to publish.
             </Note>
@@ -186,7 +256,7 @@ export default async function DraftPage({params, searchParams}: PageProps) {
           {working ? (
             <Panel className="px-6 py-14 text-center">
               <p className="font-display text-[20px] font-light text-ink">
-                {draft.status === "queued" ? "Waiting for a writer…" : `${provider} is writing the draft…`}
+                {draft.status === "queued" ? "Waiting for a writer…" : `${provider} is writing the ${answering ? "answers" : "draft"}…`}
               </p>
               <p className="mt-2 text-[13px] text-ink-faint">
                 This usually takes one to three minutes. The page updates by itself.
@@ -197,8 +267,8 @@ export default async function DraftPage({params, searchParams}: PageProps) {
           {draft.status === "failed" ? (
             <Note tone="stop" label="The draft could not be written">
               {FAILURES[draft.error_code ?? ""] ?? "Something went wrong writing this draft."}{" "}
-              <Link href={`/pilot/workspace/briefs/${draft.content_brief_id}`} className="underline underline-offset-4">
-                Back to the brief
+              <Link href={backHref} className="underline underline-offset-4">
+                {answering ? "Back to the dashboard" : "Back to the brief"}
               </Link>{" "}
               to try again.
             </Note>
@@ -229,6 +299,18 @@ export default async function DraftPage({params, searchParams}: PageProps) {
                 </section>
               ) : null}
 
+              {answering ? (
+                <section aria-labelledby="edit-heading" className="flex flex-col gap-4">
+                  <h2 id="edit-heading" className="font-display text-[22px] font-light tracking-tight text-ink">
+                    The answers
+                  </h2>
+                  <p className="max-w-2xl text-[13px] leading-6 text-pretty text-ink-soft">
+                    Each answer goes directly under its question on the live page, where people and AI answer engines read it
+                    first. Make each one correct and complete on its own.
+                  </p>
+                  <AnswerFields items={answerItems} generated={draft.generated_json?.items ?? []} />
+                </section>
+              ) : (
               <section aria-labelledby="edit-heading" className="flex flex-col gap-4">
                 <h2 id="edit-heading" className="font-display text-[22px] font-light tracking-tight text-ink">
                   The post
@@ -262,12 +344,26 @@ export default async function DraftPage({params, searchParams}: PageProps) {
                   />
                 </label>
               </section>
+              )}
 
               <div className="flex flex-wrap items-center gap-3">
                 <button type="submit" className={button.primary}>Save changes</button>
                 <span className="text-[13px] text-ink-faint">Saving records your edits and resolved flags in the audit trail.</span>
               </div>
             </form>
+          ) : null}
+
+          {answering && (draft.status === "submitted" || draft.status === "withdrawn") ? (
+            <Panel as="div" className="p-6">
+              <dl className="flex flex-col gap-4">
+                {answerItems.map((item) => (
+                  <div key={item.heading}>
+                    <dt className="text-[14px] font-medium text-ink">{item.heading}</dt>
+                    <dd className="mt-1 text-[14px] leading-6 text-pretty text-ink-soft">{item.answer ?? "Skipped"}</dd>
+                  </div>
+                ))}
+              </dl>
+            </Panel>
           ) : null}
 
           {draft.status !== "queued" && draft.status !== "running" && draft.body_markdown && draft.status !== "ready" ? (
@@ -328,7 +424,9 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               <p className="mt-2 text-[13px] leading-6 text-pretty text-ink-soft">
                 {unresolved.length
                   ? `Resolve the ${unresolved.length} remaining ${unresolved.length === 1 ? "flag" : "flags"} and save first.`
-                  : "Creates a proposal to add this post as a new page. Two people other than the author must approve it; deploying then opens a pull request a person merges."}
+                  : answering
+                    ? "Reads the page's source file and creates a proposal that places each answer under its heading, with FAQ markup built from them. High risk: two people other than the author must approve it; deploying then opens a pull request a person merges."
+                    : "Creates a proposal to add this post as a new page. Two people other than the author must approve it; deploying then opens a pull request a person merges."}
               </p>
               <form action={submitDraft} className="mt-4">
                 <input type="hidden" name="draft_id" value={draft.id} />
@@ -349,7 +447,8 @@ export default async function DraftPage({params, searchParams}: PageProps) {
             <details className="rounded-2xl border border-rule bg-surface p-6">
               <summary className="text-[13px] font-medium text-stop">Withdraw this draft</summary>
               <p className="mt-3 text-[13px] leading-6 text-pretty text-ink-soft">
-                The draft is kept for the record but can no longer be edited or submitted. The brief can be drafted again.
+                The draft is kept for the record but can no longer be edited or submitted.{" "}
+                {answering ? "The page's answers can be drafted again." : "The brief can be drafted again."}
               </p>
               <form action={withdrawDraft} className="mt-3">
                 <input type="hidden" name="draft_id" value={draft.id} />
