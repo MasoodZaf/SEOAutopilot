@@ -9,6 +9,11 @@ import redis.asyncio as redis
 
 from app.analysis_consumer import AnalysisPool, AnalysisStream, run_analysis_consumer
 from app.analytics.consumer import run_analytics_consumer
+from app.citations.models import (
+    AnthropicCitationModel,
+    OpenAICitationModel,
+    PerplexityCitationModel,
+)
 from app.connectors.google_oauth import GoogleTokenHttpRefresher, TokenRefresher
 from app.connectors.grant_check import run_grant_checker
 from app.connectors.runtime import (
@@ -29,9 +34,9 @@ from app.pagespeed.consumer import Stream as PageSpeedStream
 from app.pagespeed.consumer import run_pagespeed_consumer
 from app.reaper import Pool as ReaperPool
 from app.reaper import run_reaper
+from app.routines.runner import CitationSettings, run_routine_consumer
 from app.routines.runner import Pool as RoutinePool
 from app.routines.runner import Stream as RoutineStream
-from app.routines.runner import run_routine_consumer
 from app.routines.scheduler import Pool as SchedulerPool
 from app.routines.scheduler import run_scheduler
 
@@ -213,6 +218,27 @@ async def run() -> None:
                 f"routine-worker-{os.getpid()}",
                 connector_key,
                 competitor_client,
+                # Observed AI citations: each workspace's own Anthropic or
+                # OpenAI key, capped per workspace per month.
+                CitationSettings(
+                    models={
+                        "anthropic": (
+                            AnthropicCitationModel(),
+                            os.environ.get("AI_CITATION_ANTHROPIC_MODEL", "claude-opus-5"),
+                        ),
+                        "openai": (
+                            OpenAICitationModel(),
+                            os.environ.get("AI_CITATION_OPENAI_MODEL", "gpt-5"),
+                        ),
+                        "perplexity": (
+                            PerplexityCitationModel(),
+                            os.environ.get("AI_CITATION_PERPLEXITY_MODEL", "sonar"),
+                        ),
+                    },
+                    monthly_budget_micros=int(
+                        os.environ.get("AI_CITATION_MONTHLY_BUDGET_MICROS", "10000000")
+                    ),
+                ),
             )
         )
     if notifications_enabled:

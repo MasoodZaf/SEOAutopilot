@@ -61,7 +61,7 @@ def _json(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
-async def _tenant_key(
+async def tenant_key(
     connection: Any, tenant_id: UUID, credential: str, encryption_key: bytes
 ) -> str | None:
     row = await connection.fetchrow(
@@ -214,7 +214,7 @@ async def process_draft(
         await _fail(connection, draft_id, tenant_id, "provider_not_supported")
         return
     model, model_name = models[provider]
-    api_key = await _tenant_key(connection, tenant_id, CREDENTIALS[provider], encryption_key)
+    api_key = await tenant_key(connection, tenant_id, CREDENTIALS[provider], encryption_key)
     if not api_key:
         await _fail(connection, draft_id, tenant_id, f"{provider}_key_not_configured")
         return

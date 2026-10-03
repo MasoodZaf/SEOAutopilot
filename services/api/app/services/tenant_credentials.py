@@ -48,9 +48,17 @@ GOOGLE_OAUTH_CLIENT = "google_oauth_client"
 GITHUB_APP = "github_app"
 ANTHROPIC_API_KEY = "anthropic_api_key"
 OPENAI_API_KEY = "openai_api_key"
-SUPPORTED_PROVIDERS = frozenset({GOOGLE_OAUTH_CLIENT, GITHUB_APP, ANTHROPIC_API_KEY, OPENAI_API_KEY})
+PERPLEXITY_API_KEY = "perplexity_api_key"
+SUPPORTED_PROVIDERS = frozenset(
+    {GOOGLE_OAUTH_CLIENT, GITHUB_APP, ANTHROPIC_API_KEY, OPENAI_API_KEY, PERPLEXITY_API_KEY}
+)
 # The AI keys a workspace can bring, by the prefix a real key starts with.
-AI_KEY_PREFIXES = {ANTHROPIC_API_KEY: "sk-ant-", OPENAI_API_KEY: "sk-"}
+AI_KEY_PREFIXES = {
+    ANTHROPIC_API_KEY: "sk-ant-",
+    OPENAI_API_KEY: "sk-",
+    # Perplexity is used only for observed citations, never for drafting.
+    PERPLEXITY_API_KEY: "pplx-",
+}
 
 
 def credential_aad(tenant_id: UUID, provider: str, key_version: str) -> bytes:

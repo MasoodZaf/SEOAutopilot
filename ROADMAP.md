@@ -176,6 +176,31 @@ every other recurring capability depends on it.
   and evidence-validation controls. It is not required and is not wired in: the deterministic
   router is the shipped behaviour.
 
+## AI search checkpoint (2026-09-24)
+
+Built for the first paying customer's question, "what about LLM ranking?". Three parts, each on the
+existing gates:
+
+- **Crawler access.** Every crawl evaluates its robots.txt against 13 AI user agents over up to 200
+  reached URLs, and checks `/llms.txt`. Readiness gains `ai_crawler_access`, scored from retrieval
+  bots only (OAI-SearchBot, ChatGPT-User, Claude-SearchBot, Claude-User, PerplexityBot,
+  Perplexity-User, Googlebot, Bingbot). Training-bot refusals and llms.txt are reported, never
+  scored. Firewall or CDN blocks by user agent are not observable, and we do not impersonate a bot.
+- **llms.txt.** Generated deterministically from the last crawl's indexable pages and proposed as
+  a new file: high risk, two approvers, a pull request a person merges. Only when the crawl saw the
+  file missing. Migration 0045.
+- **Observed citations.** Up to 8 tracked questions per site, asked weekly (never daily; the API
+  refuses it) of Claude and ChatGPT through their APIs with web search, on the workspace's own
+  keys, capped at `AI_CITATION_MONTHLY_BUDGET_MICROS` (default $10) before any call. The question
+  never names the site. Records cited / named / rank among cited hosts / tracked competitors cited,
+  and a bounded excerpt that is never passed to a model or tool. Reported as "cited in N of M
+  answers", not a ranking: the API is not the consumer app, and answers vary. Migration 0046.
+
+Perplexity (Sonar, `pplx-` keys, citations only) joined Claude and ChatGPT the same day.
+
+Not done: Google AI Overviews (no API), and any claim that a change caused
+a citation, which needs the same experimental design as ranking claims.
+
 ## Delivery principles
 
 - Ship vertical slices: evidence -> opportunity -> proposal -> deploy -> measure.

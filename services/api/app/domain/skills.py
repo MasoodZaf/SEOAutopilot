@@ -222,8 +222,29 @@ SKILLS: tuple[Skill, ...] = (
         strong_triggers=frozenset(
             {"visibility", "answer engine", "aeo", "geo", "llm", "chatgpt"}
         ),
-        weak_triggers=frozenset({"ai", "citation", "citations", "readiness"}),
+        weak_triggers=frozenset({"ai", "readiness"}),
         example="What is our AI search visibility readiness?",
+    ),
+    Skill(
+        key="ai_citations",
+        name="Observed AI answer citations",
+        description=(
+            "Report whether Claude, ChatGPT and Perplexity cited or named the site when asked its "
+            "tracked questions, observed through each provider's API with web search."
+        ),
+        effect=SkillEffect.READ,
+        allowed_roles=ALL_ROLES,
+        strong_triggers=frozenset({"cited", "citation", "citations", "cite"}),
+        weak_triggers=frozenset({"chatgpt", "claude", "perplexity", "ai", "answers"}),
+        example="Did ChatGPT or Claude cite us?",
+    ),
+    scheduling(
+        "run_ai_citation_scan", "Ask the tracked questions",
+        "Ask each tracked question of Claude, ChatGPT and Perplexity with the workspace's own keys, "
+        "and record whether the answers cite the site.",
+        "ai_citation_scan", {"cite", "cited", "citation", "citations"},
+        {"ask", "track"}, ACTING_ROLES,
+        "Check whether AI answers cite us every week.",
     ),
     scheduling(
         "run_ai_visibility_scan", "Recheck answer-engine readiness",

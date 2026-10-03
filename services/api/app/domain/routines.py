@@ -26,6 +26,13 @@ class RoutineKind(StrEnum):
     WEEKLY_REPORT = "weekly_report"
     SEARCH_CONSOLE_SYNC = "search_console_sync"
     ANALYTICS_SYNC = "analytics_sync"
+    AI_CITATION_SCAN = "ai_citation_scan"
+
+
+# Routines that spend a workspace's own AI key. Never daily: a daily run costs
+# thirty times a weekly one and a daily sample of the same questions adds noise,
+# not evidence.
+PAID_ROUTINE_KINDS = frozenset({"ai_citation_scan"})
 
 
 class Cadence(StrEnum):

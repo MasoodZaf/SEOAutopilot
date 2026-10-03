@@ -121,6 +121,10 @@ class Settings(BaseSettings):
     github_blog_path_template: str = "content/blog/{slug}.md"
     # Public URL path of a published post, used to name the page it creates.
     blog_url_template: str = "/blog/{slug}"
+    # Repository path that a site serves at /llms.txt. `public/` suits Next.js,
+    # Vite and Create React App; a connector overrides it (`llms_txt_path`),
+    # e.g. `static/llms.txt` for Hugo or `llms.txt` for a plain static site.
+    github_llms_txt_path: str = "public/llms.txt"
     # AI drafting, for blog posts only. Bring-your-own-key: a workspace's
     # drafts use the Anthropic or OpenAI key it stored under Settings -> Keys,
     # never a deployment key. These name the model each provider uses.

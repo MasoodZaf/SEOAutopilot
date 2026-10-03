@@ -697,6 +697,7 @@ class ProposalRead(BaseModel):
     # Null for a new blog post, which comes from a reviewed content draft.
     opportunity_id: UUID | None
     content_draft_id: UUID | None = None
+    generator: str | None = None
     page_id: UUID
     # The public URL the change affects. For a new post this is where it will
     # be published, which is not derivable from its repository path.
@@ -919,6 +920,7 @@ class RoutineKindName(StrEnum):
     WEEKLY_REPORT = "weekly_report"
     SEARCH_CONSOLE_SYNC = "search_console_sync"
     ANALYTICS_SYNC = "analytics_sync"
+    AI_CITATION_SCAN = "ai_citation_scan"
 
 
 class CadenceName(StrEnum):
@@ -1360,6 +1362,81 @@ class AiVisibilityRead(BaseModel):
     created_at: datetime
 
 
+class AiCitationPromptCreate(BaseModel):
+    prompt: str = Field(min_length=8, max_length=300)
+    keyword_cluster_id: UUID | None = None
+
+
+class AiCitationPromptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    prompt: str
+    source: str
+    active: bool
+    created_at: datetime
+
+
+class AiCitationPromptEnvelope(BaseModel):
+    data: AiCitationPromptRead
+    meta: dict[str, str]
+
+
+class AiCitationPromptSuggestion(BaseModel):
+    prompt: str
+    keyword_cluster_id: UUID
+
+
+class AiCitationPromptCollection(BaseModel):
+    data: list[AiCitationPromptRead]
+    # Question-shaped topics from the latest keyword analysis, not yet tracked.
+    suggestions: list[AiCitationPromptSuggestion]
+    meta: dict[str, object]
+
+
+class AiCitationObservationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    prompt_id: UUID
+    prompt: str
+    provider: str
+    model: str
+    status: str
+    error_code: str | None
+    site_cited: bool
+    site_mentioned: bool
+    own_citation_rank: int | None
+    cited_hosts: list[str]
+    own_urls: list[str]
+    competitor_hosts: list[str]
+    # Third-party model output, bounded; display as plain text only.
+    answer_excerpt: str | None
+    observed_at: datetime
+
+
+class AiCitationRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    started_at: datetime
+    finished_at: datetime | None
+    prompts_asked: int
+    answers: int
+    cited: int
+    mentioned: int
+    cost_micros: int
+    summary_json: dict[str, object]
+
+
+class AiCitationReport(BaseModel):
+    latest: AiCitationRunRead | None
+    observations: list[AiCitationObservationRead]
+    history: list[AiCitationRunRead]
+
+
+class AiCitationEnvelope(BaseModel):
+    data: AiCitationReport
+    meta: dict[str, str]
+
+
 class AiVisibilityEnvelope(BaseModel):
     data: AiVisibilityRead
     meta: dict[str, str]
@@ -1637,6 +1714,12 @@ class ContentDraftCollection(BaseModel):
 
 class AnthropicKeyCreate(BaseModel):
     """The workspace's own Anthropic API key, which pays for its AI drafts."""
+
+    api_key: SecretStr = Field(min_length=20, max_length=300)
+
+
+class PerplexityKeyCreate(BaseModel):
+    """The workspace's own Perplexity API key, which pays for its citation checks."""
 
     api_key: SecretStr = Field(min_length=20, max_length=300)
 

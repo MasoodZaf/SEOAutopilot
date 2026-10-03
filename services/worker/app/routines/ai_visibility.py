@@ -15,7 +15,7 @@ import json
 from typing import Any
 from uuid import UUID
 
-READINESS_SCHEMA_VERSION = 1
+READINESS_SCHEMA_VERSION = 2
 
 # Structured data types answer surfaces read for direct question answering.
 ANSWER_ENGINE_TYPES = ("FAQPage", "QAPage", "HowTo")
@@ -24,11 +24,20 @@ ENTITY_TYPES = ("Organization", "Person", "WebSite", "Article", "BreadcrumbList"
 
 # Factor weights. They sum to 1.0; each is measured, none is assumed.
 FACTOR_WEIGHTS = {
-    "crawlable_indexable": 0.30,
-    "entity_markup": 0.20,
-    "question_answer_markup": 0.25,
-    "question_topic_coverage": 0.25,
+    "crawlable_indexable": 0.25,
+    "entity_markup": 0.15,
+    "question_answer_markup": 0.20,
+    "question_topic_coverage": 0.20,
+    "ai_crawler_access": 0.20,
 }
+
+# The crawler records the site's robots.txt policy per AI user agent. Only
+# retrieval bots -- the ones that fetch a page to answer and cite -- are scored;
+# refusing training bots is a legitimate choice with no bearing on citation.
+CRAWL_ACCESS_SQL = """
+SELECT result_summary->'ai_access' AS ai_access
+FROM crawl_job WHERE tenant_id=$1 AND id=$2
+"""
 
 PAGE_EVIDENCE_SQL = """
 WITH latest AS (
@@ -65,6 +74,50 @@ def _ratio(part: int, whole: int) -> float:
     return round(part / whole, 4) if whole > 0 else 0.0
 
 
+def crawler_access_factor(ai_access: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Score retrieval-bot access and describe llms.txt, from the crawl summary.
+
+    Crawls recorded before the crawler measured this carry no report; the
+    factor is then unmeasured rather than scored as blocked.
+    """
+    if isinstance(ai_access, str):
+        ai_access = json.loads(ai_access)
+    crawlers = ai_access.get("crawlers") if isinstance(ai_access, dict) else None
+    if not isinstance(crawlers, list) or ai_access.get("robots_txt") == "unreachable":
+        return {"value": 0.0, "measured": False, "detail": {}}, None
+
+    def share(row: dict[str, Any]) -> float:
+        sampled = int(row.get("sampled_urls") or 0)
+        return int(row.get("allowed_urls") or 0) / sampled if sampled else 1.0
+
+    def summary(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "token": str(row.get("token")),
+            "operator": str(row.get("operator")),
+            "allowed_share": round(share(row), 4),
+            "homepage_allowed": bool(row.get("homepage_allowed")),
+        }
+
+    rows = [row for row in crawlers if isinstance(row, dict)]
+    retrieval = [row for row in rows if row.get("purpose") == "retrieval"]
+    training = [row for row in rows if row.get("purpose") == "training"]
+    value = round(sum(share(row) for row in retrieval) / len(retrieval), 4) if retrieval else 0.0
+    factor = {
+        "value": value,
+        "measured": bool(retrieval),
+        "detail": {
+            "robots_txt": ai_access.get("robots_txt"),
+            "retrieval_blocked": [summary(row) for row in retrieval if share(row) < 1.0],
+            "retrieval_checked": len(retrieval),
+            # Reported so the choice is visible; never part of the score.
+            "training_blocked": [summary(row) for row in training if share(row) < 1.0],
+            "source": "robots.txt policy; firewall or CDN blocks are not observable",
+        },
+    }
+    llms = ai_access.get("llms_txt")
+    return factor, llms if isinstance(llms, dict) else None
+
+
 async def build_ai_visibility_snapshot(
     connection: Any, tenant_id: UUID, site_id: UUID, crawl_job_id: UUID
 ) -> dict[str, Any]:
@@ -98,6 +151,11 @@ async def build_ai_visibility_snapshot(
         """,
         tenant_id, site_id,
     )
+    access_row = await connection.fetchrow(CRAWL_ACCESS_SQL, tenant_id, crawl_job_id)
+    access_factor, llms_txt = crawler_access_factor(
+        access_row["ai_access"] if access_row else None
+    )
+
     question_clusters = int(clusters["question_clusters"]) if clusters else 0
     answered_clusters = int(clusters["answered_clusters"]) if clusters else 0
 
@@ -129,6 +187,7 @@ async def build_ai_visibility_snapshot(
                 "clusters_with_answering_page": answered_clusters,
             },
         },
+        "ai_crawler_access": access_factor,
     }
 
     # Only measured factors contribute, and the weights are renormalised over
@@ -157,6 +216,8 @@ async def build_ai_visibility_snapshot(
         "measured_weight": round(measured_weight, 4),
         "factors": factors,
         "weights": FACTOR_WEIGHTS,
+        # Reported, not scored: no answer engine has said it reads llms.txt.
+        "llms_txt": llms_txt,
         # Stated on every snapshot so readiness is never read as observed
         # answer-engine visibility.
         "citation_source": "none",
