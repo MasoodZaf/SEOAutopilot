@@ -29,3 +29,10 @@ test("a working key is good news and a rejected one is not", () => {
   assert.equal(explainCheck("anthropic_api_key", [{model: "claude-opus-5", status: "key_rejected"}]).tone, "stop");
   assert.equal(explainCheck("perplexity_api_key", [{model: "x", status: "available"}]), null);
 });
+
+test("a deployment set to gpt-4.1 says whether the key could use gpt-5", () => {
+  const could = explainCheck("openai_api_key", decodeCheck("gpt-4.1:available,gpt-5:available"));
+  assert.match(could.text, /drafts are written with gpt-4\.1\. The key could also use gpt-5; this deployment is set to gpt-4\.1\./);
+  const cannot = explainCheck("openai_api_key", decodeCheck("gpt-4.1:available,gpt-5:model_unavailable"));
+  assert.match(cannot.text, /It cannot use gpt-5 yet\./);
+});

@@ -47,9 +47,16 @@ const NAME = {openai_api_key: "OpenAI", anthropic_api_key: "Anthropic"};
 export function explainCheck(provider, models) {
   const name = NAME[provider];
   if (!name || models.length === 0) return null;
-  const [primary, fallback] = models;
+  const [primary, ...others] = models;
+  const fallback = others.find((item) => item.model !== primary.model && item.status === "available" && item.model.startsWith("gpt-4"));
   if (primary.status === "available") {
-    return {tone: "good", text: `${name} accepts this key for ${primary.model}, so drafts are written with ${primary.model}.`};
+    const better = others.filter((item) => item.model.startsWith("gpt-5") && item.model !== primary.model);
+    const note = better.length
+      ? better[0].status === "available"
+        ? ` The key could also use ${better[0].model}; this deployment is set to ${primary.model}.`
+        : ` It cannot use ${better[0].model} yet.`
+      : "";
+    return {tone: "good", text: `${name} accepts this key for ${primary.model}, so drafts are written with ${primary.model}.${note}`};
   }
   if (primary.status === "model_unavailable") {
     const steps =
@@ -57,7 +64,7 @@ export function explainCheck(provider, models) {
         ? ` In ${CONSOLE[provider]}, check Settings → Organization → General → Verifications says Verified (access can take a while to switch on after verifying), and that Settings → Project → Limits does not block ${primary.model} for the key's project.`
         : ` Check in ${CONSOLE[provider]} that your account has access to ${primary.model}.`;
     const lead =
-      fallback?.status === "available"
+      fallback
         ? `The key works, but ${name} won't let it use ${primary.model}, so drafts fall back to ${fallback.model}.`
         : `The key works, but ${name} won't let it use ${primary.model}.`;
     return {tone: "warn", text: lead + steps};

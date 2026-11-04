@@ -268,9 +268,9 @@ async def check_ai_key(
     settings = get_settings()
     if provider == OPENAI_API_KEY:
         name = "openai"
-        models = [settings.content_draft_openai_model]
-        if OPENAI_DRAFT_FALLBACK_MODEL not in models:
-            models.append(OPENAI_DRAFT_FALLBACK_MODEL)
+        # The configured model first; then gpt-5 and the fallback, so the answer
+        # also says whether switching this deployment to gpt-5 would work.
+        models = list(dict.fromkeys([settings.content_draft_openai_model, "gpt-5", OPENAI_DRAFT_FALLBACK_MODEL]))
     elif provider == ANTHROPIC_API_KEY:
         name, models = "anthropic", [settings.content_draft_anthropic_model]
     else:
