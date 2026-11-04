@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,14 @@ from app.services.verification import DnsTxtVerifier
 # checked against a record only the domain's controller can publish. A longer
 # window costs nothing it was protecting.
 VERIFICATION_CHALLENGE_LIFETIME = timedelta(hours=24)
+# A site that has not proved ownership may still be read: a small, robots-honouring
+# crawl of public pages, so the first result arrives in minutes instead of after
+# DNS propagates. Everything that changes a site still requires verification.
+PREVIEW_MAX_PAGES = 25
+PREVIEW_MAX_DEPTH = 3
+PREVIEW_WINDOW = timedelta(days=1)
+PREVIEW_PER_SITE = 1
+PREVIEW_PER_TENANT = 5
 
 
 def stable_hash(value: dict[str, object]) -> str:
@@ -153,13 +161,46 @@ class SiteService:
         )
         return site
 
+    async def _check_preview_allowance(self, site: Site) -> None:
+        """Bound how much of the web an unverified site lets a workspace read."""
+        since = datetime.now(UTC) - PREVIEW_WINDOW
+        here = await self.session.scalar(
+            select(func.count(CrawlJob.id)).where(
+                CrawlJob.tenant_id == self.context.tenant_id,
+                CrawlJob.site_id == site.id,
+                CrawlJob.created_at >= since,
+            )
+        )
+        if int(here or 0) >= PREVIEW_PER_SITE:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="preview_crawl_daily_limit")
+        across = await self.session.scalar(
+            select(func.count(CrawlJob.id))
+            .join(Site, (Site.id == CrawlJob.site_id) & (Site.tenant_id == CrawlJob.tenant_id))
+            .where(
+                CrawlJob.tenant_id == self.context.tenant_id,
+                CrawlJob.created_at >= since,
+                Site.verified_at.is_(None),
+            )
+        )
+        if int(across or 0) >= PREVIEW_PER_TENANT:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="preview_crawl_workspace_limit")
+
     async def create_crawl(self, site_id: UUID, command: CrawlCreate) -> CrawlJob:
         self.context.require(Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.DEVELOPER)
         site = await self.get_site(site_id)
         if site is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="site_not_found")
-        if site.verified_at is None or site.status != "active":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="site_not_verified")
+        preview = site.verified_at is None or site.status != "active"
+        if preview:
+            if site.status != "pending_verification":
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="site_not_verified")
+            await self._check_preview_allowance(site)
+            command = CrawlCreate(
+                kind="full",
+                max_pages=min(command.max_pages, PREVIEW_MAX_PAGES),
+                max_depth=min(command.max_depth, PREVIEW_MAX_DEPTH),
+                render_policy=command.render_policy,
+            )
         active_crawl = await self.session.scalar(
             select(CrawlJob).where(
                 CrawlJob.tenant_id == self.context.tenant_id,
@@ -180,6 +221,7 @@ class SiteService:
                 "max_depth": command.max_depth,
                 "render_policy": command.render_policy,
                 "canonical_origin": site.canonical_origin,
+                "preview": preview,
             },
         )
         try:
