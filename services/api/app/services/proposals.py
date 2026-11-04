@@ -175,6 +175,45 @@ class ProposalService:
             expires_in_days=14,
         )
 
+    async def create_generated_edit(
+        self,
+        site: Site,
+        *,
+        page_id: UUID,
+        generator: str,
+        title: str,
+        rationale: str,
+        target_path: str,
+        before_content: str,
+        after_content: str,
+        evidence_refs: dict[str, Any],
+    ) -> Proposal:
+        """An edit to an existing file that the product wrote from its own records.
+
+        No model wrote it. `before_content` is the file as read, so the
+        deployment's drift check refuses it if the file changed meanwhile.
+        """
+        if self.context.role not in ALLOWED_PROPOSAL_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_create_proposal",
+            )
+        return await self._create(
+            site,
+            opportunity_id=None,
+            page_id=page_id,
+            content_draft_id=None,
+            generator=generator,
+            title=title,
+            rationale=rationale,
+            target_type="github_file",
+            target_path=target_path,
+            before_content=before_content,
+            after_content=after_content,
+            evidence_refs=evidence_refs,
+            expires_in_days=14,
+        )
+
     async def create_page_edit(
         self,
         site: Site,

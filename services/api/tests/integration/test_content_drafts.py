@@ -302,9 +302,14 @@ async def test_on_a_plain_html_site_the_post_is_a_page_in_the_site_shell(tenant_
     )
     asked: list[str] = []
 
+    sitemap = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        "  <url><loc>https://w.example/emi-calculator</loc></url>\n</urlset>\n"
+    )
+
     async def read_file(path: str) -> str | None:
         asked.append(path)
-        return shell if path == "CalcHive/emi-calculator.html" else None
+        return {"CalcHive/emi-calculator.html": shell, "CalcHive/sitemap.xml": sitemap}.get(path)
 
     async with tenant_session_factory(workspace["tenant"]) as session:
         await session.execute(
@@ -317,8 +322,18 @@ async def test_on_a_plain_html_site_the_post_is_a_page_in_the_site_shell(tenant_
         assert caught.value.detail == "github_not_connected"
 
         proposal = await service.submit(draft.id, read_file, "CalcHive/{path}.html")
+        listed = (
+            await session.execute(
+                text("SELECT target_path, risk, status, after_content FROM proposal"
+                     " WHERE site_id=:s AND generator='sitemap_entry'"),
+                {"s": workspace["site"]},
+            )
+        ).one()
 
-    assert asked == ["CalcHive/emi-calculator.html"]
+    assert asked == ["CalcHive/emi-calculator.html", "CalcHive/sitemap.xml"]
+    # The sitemap is its own proposal: high risk, merged on GitHub by a person.
+    assert (listed.target_path, listed.risk) == ("CalcHive/sitemap.xml", "high")
+    assert "<loc>https://w.example/blog/how-emi-is-calculated</loc>" in listed.after_content
     assert proposal.target_path == "CalcHive/blog/how-emi-is-calculated.html"
     assert proposal.before_content == ""
     assert "<nav>Home</nav>" in proposal.after_content
@@ -329,3 +344,33 @@ async def test_on_a_plain_html_site_the_post_is_a_page_in_the_site_shell(tenant_
     # Still a new page: high risk, and its only approver may self-review it.
     assert proposal.risk == "high"
     assert ProposalRead.model_validate(proposal).self_review_scope == "new_post"
+
+
+async def test_a_second_post_supersedes_the_unapproved_sitemap_entry(tenant_session_factory, workspace):
+    shell = "<html><head><title>T</title></head><body><main>x</main></body></html>"
+    sitemap = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n</urlset>\n'
+
+    async def read_file(path: str) -> str | None:
+        return {"CalcHive/emi-calculator.html": shell, "CalcHive/sitemap.xml": sitemap}.get(path)
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        await session.execute(
+            text("UPDATE site SET blog_template_path='/emi-calculator' WHERE id=:s"), {"s": workspace["site"]}
+        )
+        service, first = await _ready_draft(session, workspace, resolved=True, connected=True)
+        await service.submit(first.id, read_file, "CalcHive/{path}.html")
+        _, second = await _ready_draft(session, workspace, resolved=True, connected=False)
+        second.slug = "emi-vs-interest"
+        await session.flush()
+        await service.submit(second.id, read_file, "CalcHive/{path}.html")
+        rows = (
+            await session.execute(
+                text("SELECT status, after_content FROM proposal WHERE site_id=:s AND generator='sitemap_entry'"
+                     " ORDER BY created_at"),
+                {"s": workspace["site"]},
+            )
+        ).all()
+
+    assert [row.status for row in rows] == ["expired", "review_required"]
+    assert "/blog/how-emi-is-calculated</loc>" in rows[1].after_content
+    assert "/blog/emi-vs-interest</loc>" in rows[1].after_content

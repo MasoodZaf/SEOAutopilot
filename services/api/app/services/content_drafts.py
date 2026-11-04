@@ -50,6 +50,7 @@ from app.db.models import (
 )
 from app.domain.answer_block import AnswerBlockError, AnswerItem, place_answers
 from app.domain.blog_html import BlogTemplateError, build_post_page
+from app.domain.sitemap_entry import add_sitemap_urls
 from app.services.proposal_drafts import target_path_for
 from app.services.proposals import ProposalService
 from app.services.tenant_credentials import ANTHROPIC_API_KEY, OPENAI_API_KEY, store_for
@@ -561,16 +562,120 @@ class ContentDraftService:
                 status_code=status.HTTP_409_CONFLICT, detail="content_draft_already_submitted"
             ) from error
 
+        sitemap_proposal: Proposal | None = None
+        if site.blog_template_path and read_file is not None and path_template is not None:
+            sitemap_proposal = await self._propose_sitemap_entry(
+                site, page.id, url, path_template, read_file, published_on
+            )
+
         draft.status = "submitted"
         draft.version += 1
         draft.updated_at = datetime.now(UTC)
         self.session.add(
             self._audit_event(
-                "content_draft.submitted", draft.id, {"proposal_id": str(proposal.id), "target_path": target_path}
+                "content_draft.submitted",
+                draft.id,
+                {
+                    "proposal_id": str(proposal.id),
+                    "target_path": target_path,
+                    "sitemap_proposal_id": str(sitemap_proposal.id) if sitemap_proposal else None,
+                },
             )
         )
         await self.session.flush()
         return proposal
+
+    async def _propose_sitemap_entry(
+        self,
+        site: Site,
+        page_id: UUID,
+        post_url: str,
+        path_template: str,
+        read_file: ReadFile,
+        published_on: str,
+    ) -> Proposal | None:
+        """A second proposal listing the site's pending posts in its sitemap.xml.
+
+        Separate from the post because a sitemap edit is always merged on
+        GitHub by a person, and the post should not wait on that. One live per
+        site: an older entry nobody approved yet is superseded by this one,
+        which lists every pending post. Best effort -- a site without a plain
+        sitemap.xml next to its pages simply gets no entry.
+        """
+        sitemap_path = path_template.split("{path}", 1)[0] + "sitemap.xml"
+        sitemap = await read_file(sitemap_path)
+        if sitemap is None:
+            return None
+        pending = list(
+            await self.session.scalars(
+                select(Page.normalized_url)
+                .join(Proposal, (Proposal.page_id == Page.id) & (Proposal.tenant_id == Page.tenant_id))
+                .where(
+                    Page.tenant_id == self.context.tenant_id,
+                    Page.site_id == site.id,
+                    Proposal.content_draft_id.is_not(None),
+                    Proposal.before_content == "",
+                    Proposal.status.not_in(("rejected", "expired", "failed")),
+                )
+            )
+        )
+        urls = sorted({*pending, post_url})
+        result = add_sitemap_urls(sitemap, urls, published_on)
+        if result is None:
+            return None
+        after, added = result
+
+        earlier = await self.session.scalar(
+            select(Proposal).where(
+                Proposal.tenant_id == self.context.tenant_id,
+                Proposal.site_id == site.id,
+                Proposal.generator == "sitemap_entry",
+                Proposal.status.not_in(("rejected", "expired", "failed")),
+            )
+        )
+        if earlier is not None:
+            if earlier.status in ("approved", "deployed"):
+                # Someone already approved the earlier list; this post joins
+                # the next one rather than undoing that review.
+                return None
+            earlier.status = "expired"
+            earlier.updated_at = datetime.now(UTC)
+            body = {"proposal_id": str(earlier.id), "reason": "superseded_by_newer_sitemap_entry"}
+            self.session.add(
+                AuditEvent(
+                    tenant_id=self.context.tenant_id,
+                    actor_type="user",
+                    actor_id=str(self.context.actor_id),
+                    action="proposal.superseded",
+                    resource_type="proposal",
+                    resource_id=str(earlier.id),
+                    trace_id=self.context.trace_id,
+                    metadata_json=body,
+                    event_hash=_hash({**body, "actor_id": str(self.context.actor_id)}),
+                )
+            )
+            await self.session.flush()
+
+        try:
+            async with self.session.begin_nested():
+                return await ProposalService(self.session, self.context).create_generated_edit(
+                    site,
+                    page_id=page_id,
+                    generator="sitemap_entry",
+                    title=f"List {len(added)} new post(s) in sitemap.xml",
+                    rationale=(
+                        "Adds the site's new blog post URLs to its sitemap.xml so search engines "
+                        "find them. Merge it after the posts themselves are live: until then the "
+                        "sitemap would list pages that do not exist yet. Nothing else in the "
+                        "file changes."
+                    ),
+                    target_path=sitemap_path,
+                    before_content=sitemap,
+                    after_content=after,
+                    evidence_refs={"urls_added": added, "generator_version": "sitemap_entry.v1"},
+                )
+        except (IntegrityError, HTTPException):
+            return None
 
     async def _submit_answers(
         self, draft: ContentDraft, read_file: ReadFile, path_template: str
