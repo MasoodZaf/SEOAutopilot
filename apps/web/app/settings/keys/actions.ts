@@ -5,6 +5,8 @@ import {redirect, unstable_rethrow} from "next/navigation";
 
 import {ApiError, apiJson} from "@/lib/server-api";
 
+import {encodeCheck} from "./key-check.mjs";
+
 const PAGE = "/settings/keys";
 
 function redirectFresh(path: string): never {
@@ -108,4 +110,28 @@ export async function saveAiKeyAction(formData: FormData): Promise<never> {
     failure(error);
   }
   redirectFresh(`${PAGE}?saved=${provider}`);
+}
+
+const CHECKABLE = new Set(["anthropic_api_key", "openai_api_key"]);
+
+/**
+ * Ask the provider, with the stored key, whether drafts can use their model.
+ *
+ * The key never leaves the server: the API makes the call and returns only
+ * a status per model, which comes back here as a short query string.
+ */
+export async function checkAiKeyAction(formData: FormData): Promise<never> {
+  const provider = String(formData.get("provider") ?? "");
+  if (!CHECKABLE.has(provider)) redirectFresh(`${PAGE}?error=unexpected-error`);
+  let result = "";
+  try {
+    const body = await apiJson<{configured: boolean; models: {model: string; status: string}[]}>(
+      `/v1/tenant/credentials/${provider}/check`,
+    );
+    if (!body.configured) redirectFresh(`${PAGE}?error=tenant_credential_not_found`);
+    result = encodeCheck(body.models);
+  } catch (error) {
+    failure(error);
+  }
+  redirectFresh(`${PAGE}?checked=${provider}&result=${encodeURIComponent(result)}#${provider}-input`);
 }

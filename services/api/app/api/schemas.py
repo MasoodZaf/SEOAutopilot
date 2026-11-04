@@ -1847,6 +1847,24 @@ class TenantCredentialCollection(BaseModel):
     meta: dict[str, str | int]
 
 
+class AiModelCheckRead(BaseModel):
+    model: str
+    status: str
+
+
+class AiKeyCheckRead(BaseModel):
+    """What the provider says today about the stored key and the drafting models.
+
+    Asked live, like the Google client check: access to a model is decided in
+    the customer's provider account and can change at any time.
+    """
+
+    provider: str
+    configured: bool
+    key_suffix: str | None = None
+    models: list[AiModelCheckRead] = []
+
+
 class GoogleClientCheckRead(BaseModel):
     """What Google says today about the client this workspace would consent on.
 

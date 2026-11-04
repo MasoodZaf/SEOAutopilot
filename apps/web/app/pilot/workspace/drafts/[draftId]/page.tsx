@@ -420,6 +420,15 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               Billed to your workspace&rsquo;s own {provider} key. Costs are estimated from list prices;
               your provider&rsquo;s invoice is the final figure.
             </p>
+            {draft.provider === "openai" && draft.model?.startsWith("gpt-4.1") ? (
+              <p className="mt-3 text-[12px] leading-5 text-pretty text-ink-soft">
+                Written with gpt-4.1 because OpenAI would not let your key use gpt-5. To see why,{" "}
+                <Link href="/settings/keys#openai_api_key-input" className="font-medium text-accent underline underline-offset-2">
+                  check the key
+                </Link>
+                .
+              </p>
+            ) : null}
           </Panel>
 
           {draft.status === "ready" ? (
