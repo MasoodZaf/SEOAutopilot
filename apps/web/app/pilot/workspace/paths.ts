@@ -1,6 +1,6 @@
 import {safeHost} from "../site-selection.mjs";
 
-export const workspaceTabs = ["chat", "tasks", "skills", "reports"] as const;
+export const workspaceTabs = ["chat", "reddit", "tasks", "skills", "reports"] as const;
 export type WorkspaceTab = (typeof workspaceTabs)[number];
 
 export function resolveTab(value: unknown): WorkspaceTab {

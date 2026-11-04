@@ -16,6 +16,7 @@ import {
   untrackCitationPrompt,
 } from "./actions";
 import {SOURCE_ADVICE, citationGrid, citationShare, formatMicros} from "./citations.mjs";
+import {RedditTab, type RedditDraft, type RedditThread} from "./reddit-tab";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {readinessBreakdown} from "./readiness.mjs";
 import {
@@ -188,6 +189,10 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
     ? await maybe<{data: AiCitationPrompt[]; suggestions: AiCitationSuggestion[]}>(`/v1/sites/${site.id}/ai-citation-prompts`)
     : null;
   const citations = site ? ((await maybe<{data: AiCitationReport}>(`/v1/sites/${site.id}/ai-citations`))?.data ?? null) : null;
+  const redditThreads =
+    site && tab === "reddit" ? ((await maybe<{data: RedditThread[]}>(`/v1/sites/${site.id}/reddit/threads`))?.data ?? []) : [];
+  const redditDrafts =
+    site && tab === "reddit" ? ((await maybe<{data: RedditDraft[]}>(`/v1/sites/${site.id}/reddit/drafts`))?.data ?? []) : [];
   const tracked = citationPrompts?.data ?? [];
   const suggestions = citationPrompts?.suggestions ?? [];
   const grid = citationGrid(citations?.observations ?? []);
@@ -369,6 +374,10 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               )}
             </div>
           </section>
+        )}
+
+        {tab === "reddit" && target && (
+          <RedditTab host={target.host} siteName={target.name} threads={redditThreads} drafts={redditDrafts} />
         )}
 
         {tab === "tasks" && (

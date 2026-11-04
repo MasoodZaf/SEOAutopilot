@@ -1846,3 +1846,88 @@ class BrandTermsUpdate(BaseModel):
 class BrandTermsEnvelope(BaseModel):
     data: list[str]
     meta: dict[str, str]
+
+
+class RedditDraftCreate(BaseModel):
+    """A reply to `thread_url`, or a new post in `subreddit`: exactly one of the two."""
+
+    thread_url: str | None = Field(default=None, max_length=2000)
+    subreddit: str | None = Field(default=None, max_length=40)
+    question: str = Field(min_length=1, max_length=500)
+    context: str = Field(default="", max_length=6000)
+    page_url: str | None = Field(default=None, max_length=2000)
+    provider: str | None = Field(default=None, pattern="^(anthropic|openai)$")
+
+    @model_validator(mode="after")
+    def one_target(self) -> "RedditDraftCreate":
+        if bool(self.thread_url) == bool(self.subreddit):
+            raise ValueError("give a thread_url to reply to, or a subreddit to post in")
+        return self
+
+
+class RedditDraftUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+    body: str | None = Field(default=None, max_length=10000)
+
+
+class RedditPosted(BaseModel):
+    posted_url: str = Field(min_length=1, max_length=2000)
+
+
+class RedditDraftRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    kind: str
+    subreddit: str
+    thread_url: str | None
+    question: str
+    page_url: str | None
+    title: str
+    body: str
+    status: str
+    provider: str
+    model: str
+    cost_micros: int
+    approved_at: datetime | None
+    handed_off_at: datetime | None
+    posted_url: str | None
+    created_at: datetime
+
+
+class RedditDraftEnvelope(BaseModel):
+    data: RedditDraftRead
+    meta: dict[str, str]
+
+
+class RedditDraftCollection(BaseModel):
+    data: list[RedditDraftRead]
+    meta: dict[str, str | int]
+
+
+class RedditThreadRead(BaseModel):
+    url: str
+    subreddit: str
+    title: str
+    questions: list[str]
+    providers: list[str]
+    citations: int
+    site_also_cited: bool
+    last_seen_at: datetime
+    drafted: bool
+
+
+class RedditThreadCollection(BaseModel):
+    data: list[RedditThreadRead]
+    meta: dict[str, str | int]
+
+
+class RedditHandOff(BaseModel):
+    open_url: str
+    copy_text: str
+
+
+class RedditHandOffEnvelope(BaseModel):
+    data: RedditHandOff
+    draft: RedditDraftRead
+    meta: dict[str, str]

@@ -1100,6 +1100,7 @@ class AiCitationObservation(Base):
     answer_excerpt: Mapped[str | None] = mapped_column(Text)
     web_searches: Mapped[int] = mapped_column(Integer, default=0)
     cost_micros: Mapped[int] = mapped_column(BigInteger, default=0)
+    thread_urls: Mapped[list[str]] = mapped_column(JSONB, default=list)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -1320,3 +1321,41 @@ class TenantInvitation(Base):
     accepted_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("app_user.id"))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RedditDraft(Base):
+    """A Reddit post or reply a person approves and then posts on Reddit themselves.
+
+    Nothing here holds a Reddit credential: Reddit closed new Data API access in
+    October 2026, so the product drafts and hands off, and the person posts.
+    """
+
+    __tablename__ = "reddit_draft"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id"),
+        Index("reddit_draft_site_idx", "tenant_id", "site_id", "created_at"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    site_id: Mapped[UUID] = mapped_column(ForeignKey("site.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8))
+    subreddit: Mapped[str] = mapped_column(String(21))
+    thread_url: Mapped[str | None] = mapped_column(Text)
+    question: Mapped[str] = mapped_column(Text)
+    context: Mapped[str] = mapped_column(Text, default="")
+    page_url: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    provider: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(120))
+    cost_micros: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_by: Mapped[UUID]
+    approved_by: Mapped[UUID | None] = mapped_column()
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    handed_off_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    posted_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

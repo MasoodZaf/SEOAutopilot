@@ -407,3 +407,86 @@ export async function untrackCitationPrompt(formData: FormData): Promise<never> 
   }
   redirectFresh(back());
 }
+
+// Reddit. Nothing here posts: a draft is approved, then handed off to the
+// person, who presses Post on Reddit themselves.
+
+function redditBack(host: string, error?: string): never {
+  redirectFresh(workspacePath(host, {tab: "reddit", error}));
+}
+
+async function redditCall(host: string, path: string, body: unknown, method = "POST"): Promise<never> {
+  try {
+    await apiJson(path, {method, body: JSON.stringify(body)});
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) redditBack(host, safeCode(error.code));
+    throw error;
+  }
+  redditBack(host);
+}
+
+export async function draftRedditReply(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  const siteId = await siteIdFor(host);
+  if (!siteId) redditBack(host, "site_not_found");
+  const thread = String(formData.get("thread_url") ?? "").trim();
+  const subreddit = String(formData.get("subreddit") ?? "").trim();
+  const pageUrl = String(formData.get("page_url") ?? "").trim();
+  return redditCall(host, `/v1/sites/${siteId}/reddit/drafts`, {
+    thread_url: thread || null,
+    subreddit: thread ? null : subreddit || null,
+    question: String(formData.get("question") ?? "").trim().slice(0, 500),
+    context: String(formData.get("context") ?? "").slice(0, 6000),
+    page_url: pageUrl || null,
+  });
+}
+
+export async function saveRedditDraft(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  const id = String(formData.get("draft_id") ?? "");
+  const title = formData.get("title");
+  return redditCall(
+    host,
+    `/v1/reddit-drafts/${encodeURIComponent(id)}`,
+    {title: typeof title === "string" ? title : null, body: String(formData.get("body") ?? "")},
+    "PATCH",
+  );
+}
+
+export async function approveRedditDraft(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  return redditCall(host, `/v1/reddit-drafts/${encodeURIComponent(String(formData.get("draft_id") ?? ""))}/approve`, {});
+}
+
+export async function dismissRedditDraft(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  return redditCall(host, `/v1/reddit-drafts/${encodeURIComponent(String(formData.get("draft_id") ?? ""))}/dismiss`, {});
+}
+
+export async function markRedditPosted(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  return redditCall(host, `/v1/reddit-drafts/${encodeURIComponent(String(formData.get("draft_id") ?? ""))}/posted`, {
+    posted_url: String(formData.get("posted_url") ?? "").trim(),
+  });
+}
+
+/** Called from the hand-off button; returns where to go and what to paste. */
+export async function handOffRedditDraft(
+  draftId: string,
+): Promise<{openUrl: string; copyText: string} | {error: string}> {
+  try {
+    const result = await apiJson<{data: {open_url: string; copy_text: string}}>(
+      `/v1/reddit-drafts/${encodeURIComponent(draftId)}/hand-off`,
+      {method: "POST", body: "{}"},
+    );
+    revalidatePath("/pilot/workspace", "layout");
+    const openUrl = result.data.open_url;
+    // Only ever Reddit: the URL comes from the API, but this is the last line.
+    if (!openUrl.startsWith("https://www.reddit.com/r/")) return {error: "unexpected-error"};
+    return {openUrl, copyText: result.data.copy_text};
+  } catch (error) {
+    if (error instanceof ApiError) return {error: safeCode(error.code)};
+    return {error: "unexpected-error"};
+  }
+}

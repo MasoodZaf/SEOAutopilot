@@ -45,6 +45,7 @@ from app.db.models import (
     Page,
     PageObservation,
     Proposal,
+    RedditDraft,
     Site,
 )
 from app.domain.answer_block import AnswerBlockError, AnswerItem, place_answers
@@ -95,7 +96,7 @@ def _hash(payload: dict[str, Any]) -> str:
 
 
 async def workspace_model_spend(session: AsyncSession, tenant_id: UUID) -> int:
-    """This month's spend on the workspace's own keys: drafts plus chat answers.
+    """This month's spend on the workspace's own keys: drafts, chat answers and Reddit drafts.
 
     One budget, so a busy chat cannot leave nothing for drafting unnoticed and
     the other way round.
@@ -111,7 +112,12 @@ async def workspace_model_spend(session: AsyncSession, tenant_id: UUID) -> int:
             AgentMessage.tenant_id == tenant_id, AgentMessage.created_at >= since
         )
     )
-    return int(drafts or 0) + int(chat or 0)
+    reddit = await session.scalar(
+        select(func.coalesce(func.sum(RedditDraft.cost_micros), 0)).where(
+            RedditDraft.tenant_id == tenant_id, RedditDraft.created_at >= since
+        )
+    )
+    return int(drafts or 0) + int(chat or 0) + int(reddit or 0)
 
 
 def month_start(now: datetime) -> datetime:
