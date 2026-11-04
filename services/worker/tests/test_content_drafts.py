@@ -148,5 +148,31 @@ async def test_openai_failures_have_stable_codes(status, payload, code, retryabl
     assert caught.value.retryable is retryable
 
 
+@pytest.mark.asyncio
+async def test_an_unverified_openai_organization_drafts_on_gpt_4_1():
+    """gpt-5 answers 404 for an organization OpenAI has not verified."""
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        asked.append(model)
+        if model == "gpt-5":
+            return httpx.Response(404, json={"error": {"code": "model_not_found"}})
+        return httpx.Response(
+            200,
+            json={
+                "model": "gpt-4.1-2025-04-14",
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer()), "refusal": None}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            },
+        )
+
+    result = await OpenAIDraftModel(transport=httpx.MockTransport(handler)).draft(
+        api_key="sk-test", model="gpt-5", system="s", user="u"
+    )
+    assert asked == ["gpt-5", "gpt-4.1"]
+    assert result.model == "gpt-4.1-2025-04-14"
+
+
 def test_slugify_never_returns_empty():
     assert slugify("!!!") == "post"

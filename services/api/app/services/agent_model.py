@@ -24,6 +24,7 @@ import anthropic
 import httpx
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+OPENAI_FALLBACK_MODEL = "gpt-4.1"
 
 # Integer micro-dollars per million tokens (input, output), from list prices.
 # An unlisted model is charged at the most expensive rate, so an unrecognised
@@ -202,7 +203,26 @@ class OpenAIChatModel:
         schema: dict[str, Any],
         schema_name: str,
     ) -> ChatTurn:
-        body = {
+        """Answer, stepping down to gpt-4.1 when the key's organization may not use gpt-5."""
+        try:
+            return await self._complete_once(api_key, model, system, messages, schema, schema_name)
+        except ChatModelError as error:
+            if error.code != "openai_model_unavailable" or not model.startswith("gpt-5"):
+                raise
+        return await self._complete_once(
+            api_key, OPENAI_FALLBACK_MODEL, system, messages, schema, schema_name
+        )
+
+    async def _complete_once(
+        self,
+        api_key: str,
+        model: str,
+        system: str,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any],
+        schema_name: str,
+    ) -> ChatTurn:
+        body: dict[str, Any] = {
             "model": model,
             "max_completion_tokens": self.max_tokens,
             "messages": [{"role": "system", "content": system}, *messages],
