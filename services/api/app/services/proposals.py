@@ -14,6 +14,7 @@ from app.api.schemas import DeploymentCreate, ProposalApprovalCreate, ProposalCr
 from app.core.context import Role, TenantContext
 from app.db.models import (
     AuditEvent,
+    ContentDraft,
     DeploymentReceipt,
     Opportunity,
     OutboxEvent,
@@ -429,6 +430,41 @@ class ProposalService:
         )
         return set(approvers) == {self.context.actor_id}
 
+    async def _reopen_draft(self, proposal: Proposal, now: datetime) -> None:
+        """A withdrawn or rejected post sends its draft back for review.
+
+        Otherwise the draft stays "submitted" with no live proposal: it can be
+        neither edited nor sent again, and the only way to fix a mistake found
+        at approval is to draft the post from scratch and pay for it twice.
+        """
+        if proposal.content_draft_id is None:
+            return
+        draft = await self.session.scalar(
+            select(ContentDraft).where(
+                ContentDraft.tenant_id == self.context.tenant_id,
+                ContentDraft.id == proposal.content_draft_id,
+            )
+        )
+        if draft is None or draft.status != "submitted":
+            return
+        draft.status = "ready"
+        draft.version += 1
+        draft.updated_at = now
+        payload = {"content_draft_id": str(draft.id), "proposal_id": str(proposal.id)}
+        self.session.add(
+            AuditEvent(
+                tenant_id=self.context.tenant_id,
+                actor_type="user",
+                actor_id=str(self.context.actor_id),
+                action="content_draft.reopened",
+                resource_type="content_draft",
+                resource_id=str(draft.id),
+                trace_id=self.context.trace_id,
+                metadata_json=payload,
+                event_hash=stable_hash({**payload, "actor_id": str(self.context.actor_id)}),
+            )
+        )
+
     async def approve_proposal(
         self,
         proposal_id: UUID,
@@ -528,6 +564,7 @@ class ProposalService:
 
         if command.decision == "rejected":
             proposal.status = "rejected"
+            await self._reopen_draft(proposal, now)
         else:
             # A proposal whose policy record lost this key fails closed to the
             # two-person rule rather than to a single approver.

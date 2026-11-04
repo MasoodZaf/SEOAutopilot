@@ -134,3 +134,39 @@ def test_a_page_with_no_main_uses_what_lies_between_its_nav_and_footer():
     assert "<footer><p>(c) CalcHive</p></footer>" in page
     assert '<script src="/app.js"></script>' in page
     assert 'openCalc("emi")' not in page
+
+
+def test_a_fenced_block_is_preformatted_and_escaped():
+    assert render_markdown("Formula:\n\n```\nEMI = [P × r] / <x>\n```\n\nDone.") == (
+        "<p>Formula:</p>\n<pre><code>EMI = [P × r] / &lt;x&gt;</code></pre>\n<p>Done.</p>"
+    )
+    # An unclosed fence still ends as a code block, not as stray backticks.
+    assert render_markdown("```\nx = 1") == "<pre><code>x = 1</code></pre>"
+
+
+def test_bullets_under_a_numbered_step_nest_and_the_count_continues():
+    markdown = (
+        "1. **Monthly rate:**\n   - Annual rate = 12%\n   - r = 0.01\n"
+        "2. **Payments:**\n   - n = 24\n3. **Plug in.**"
+    )
+    assert render_markdown(markdown) == (
+        "<ol><li><strong>Monthly rate:</strong><ul><li>Annual rate = 12%</li><li>r = 0.01</li></ul></li>"
+        "<li><strong>Payments:</strong><ul><li>n = 24</li></ul></li>"
+        "<li><strong>Plug in.</strong></li></ol>"
+    )
+
+
+def test_the_byline_author_replaces_the_template_pages_author():
+    page = build_post_page(
+        TEMPLATE.replace("<title>", '<meta name="author" content="CalcHive"><meta name="keywords" content="x"><title>'),
+        template_url="https://calc.example/emi-calculator",
+        post_url="https://calc.example/blog/p",
+        title="T",
+        description="D",
+        author="Masood Zafar",
+        published_on="2026-11-04",
+        body_markdown="Body.",
+    )
+    assert '<meta name="author" content="Masood Zafar">' in page
+    assert "CalcHive\"" not in page.split("</head>")[0]
+    assert 'name="keywords"' not in page

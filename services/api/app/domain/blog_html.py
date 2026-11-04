@@ -30,7 +30,10 @@ JSON_LD = re.compile(
 PAGE_SPECIFIC = [
     re.compile(r"<link\b[^>]*\brel\s*=\s*[\"']?\s*canonical\b[^>]*>", re.IGNORECASE),
     re.compile(r"<link\b[^>]*\brel\s*=\s*[\"']?\s*alternate\b[^>]*>", re.IGNORECASE),
-    re.compile(r"<meta\b[^>]*\bname\s*=\s*[\"']?\s*(?:robots|googlebot|description)\b[^>]*>", re.IGNORECASE),
+    re.compile(
+        r"<meta\b[^>]*\bname\s*=\s*[\"']?\s*(?:robots|googlebot|description|author|keywords)\b[^>]*>",
+        re.IGNORECASE,
+    ),
     re.compile(r"<meta\b[^>]*\bhttp-equiv\s*=\s*[\"']?\s*refresh\b[^>]*>", re.IGNORECASE),
     re.compile(r"<meta\b[^>]*\b(?:property|name)\s*=\s*[\"']?\s*(?:og|twitter|article):[^>]*>", re.IGNORECASE),
 ]
@@ -91,6 +94,7 @@ def build_post_page(
     ).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     head = (
         f'<meta name="description" content="{html.escape(description, quote=True)}">\n'
+        f'<meta name="author" content="{html.escape(author, quote=True)}">\n'
         f'<meta property="og:type" content="article">\n'
         f'<meta property="og:title" content="{html.escape(title, quote=True)}">\n'
         f'<meta property="og:url" content="{html.escape(post_url, quote=True)}">\n'
@@ -164,14 +168,25 @@ ITALIC = re.compile(r"(?<![*\w])\*(?!\s)(.+?)(?<!\s)\*(?![*\w])")
 CODE = re.compile(r"`([^`]+)`")
 
 
+FENCE = re.compile(r"^(```|~~~)")
+INDENT = re.compile(r"^(\s{2,}|\t)")
+
+
 def render_markdown(markdown: str) -> str:
-    """Headings, paragraphs, lists, quotes, links, bold, italic and code. Nothing else."""
+    """Headings, paragraphs, lists, quotes, code blocks, links, bold, italic and code.
+
+    A list item may carry bullets indented under it ("1. Step" then "   - detail");
+    they nest inside that item, so a numbered list keeps counting across them.
+    Nothing else: no raw HTML, tables or images, and everything is escaped.
+    """
     blocks: list[str] = []
     lines = markdown.replace("\r\n", "\n").split("\n")
     paragraph: list[str] = []
-    items: list[str] = []
+    # Each item: its text, and any bullets nested under it.
+    items: list[tuple[str, list[str]]] = []
     list_tag = ""
     quote: list[str] = []
+    fence: list[str] | None = None
 
     def flush() -> None:
         nonlocal paragraph, items, list_tag, quote
@@ -179,31 +194,62 @@ def render_markdown(markdown: str) -> str:
             blocks.append(f"<p>{_inline(' '.join(paragraph))}</p>")
             paragraph = []
         if items:
-            blocks.append(f"<{list_tag}>" + "".join(f"<li>{_inline(item)}</li>" for item in items) + f"</{list_tag}>")
+            rendered = []
+            for text, children in items:
+                nested = (
+                    "<ul>" + "".join(f"<li>{_inline(child)}</li>" for child in children) + "</ul>"
+                    if children
+                    else ""
+                )
+                rendered.append(f"<li>{_inline(text)}{nested}</li>")
+            blocks.append(f"<{list_tag}>" + "".join(rendered) + f"</{list_tag}>")
             items, list_tag = [], ""
         if quote:
             blocks.append(f"<blockquote><p>{_inline(' '.join(quote))}</p></blockquote>")
             quote = []
 
     for raw in lines:
+        if fence is not None:
+            if FENCE.match(raw.strip()):
+                blocks.append("<pre><code>" + html.escape("\n".join(fence)) + "</code></pre>")
+                fence = None
+            else:
+                fence.append(raw)
+            continue
         line = raw.strip()
-        if not line:
+        if FENCE.match(line):
             flush()
+            fence = []
+            continue
+        if not line:
+            # A blank line ends a paragraph or quote; a list survives one, so
+            # "1. a" / blank / "2. b" stays one list.
+            if paragraph or quote:
+                flush()
             continue
         heading = HEADING.match(line)
         bullet = BULLET.match(line)
         numbered = NUMBERED.match(line)
+        indented = bool(INDENT.match(raw))
         if heading:
             flush()
             # The post title is the page's only h1.
             level = min(max(len(heading.group(1)), 2), 4)
             blocks.append(f"<h{level}>{_inline(heading.group(2).strip('# '))}</h{level}>")
+        elif items and indented and (bullet or numbered):
+            items[-1][1].append((bullet or numbered).group(1))  # type: ignore[union-attr]
         elif bullet or numbered:
             tag = "ul" if bullet else "ol"
             if paragraph or quote or (items and list_tag != tag):
                 flush()
             list_tag = tag
-            items.append((bullet or numbered).group(1))  # type: ignore[union-attr]
+            items.append(((bullet or numbered).group(1), []))  # type: ignore[union-attr]
+        elif items and indented:
+            text, children = items[-1]
+            if children:
+                children[-1] = f"{children[-1]} {line}"
+            else:
+                items[-1] = (f"{text} {line}", children)
         elif line.startswith(">"):
             if paragraph or items:
                 flush()
@@ -212,6 +258,8 @@ def render_markdown(markdown: str) -> str:
             if items or quote:
                 flush()
             paragraph.append(line)
+    if fence is not None:
+        blocks.append("<pre><code>" + html.escape("\n".join(fence)) + "</code></pre>")
     flush()
     return "\n".join(blocks)
 

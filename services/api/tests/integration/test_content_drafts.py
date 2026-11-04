@@ -77,7 +77,7 @@ async def workspace(engine):
             )
     yield ids
     async with factory() as session, session.begin():
-        for table in ("outbox_event", "audit_event", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
+        for table in ("outbox_event", "audit_event", "proposal_approval", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
             await session.execute(text(f"DELETE FROM {table} WHERE tenant_id=:t"), {"t": ids["tenant"]})
         await session.execute(text("DELETE FROM tenant WHERE id=:t"), {"t": ids["tenant"]})
 
@@ -381,3 +381,29 @@ async def test_a_second_post_supersedes_the_unapproved_sitemap_entry(tenant_sess
     assert [row.status for row in rows] == ["expired", "review_required"]
     assert "/blog/how-emi-is-calculated</loc>" in rows[1].after_content
     assert "/blog/emi-vs-interest</loc>" in rows[1].after_content
+
+
+async def test_withdrawing_a_post_sends_its_draft_back_for_review(tenant_session_factory, workspace):
+    from app.api.schemas import ProposalApprovalCreate
+    from app.services.proposals import ProposalService
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+        first = await service.submit(draft.id)
+
+        await ProposalService(session, ctx(workspace)).approve_proposal(
+            first.id, ProposalApprovalCreate(decision="rejected", notes="Renderer bug; rebuilding")
+        )
+        reopened = await service.get(draft.id)
+        assert reopened is not None and reopened.status == "ready"
+        audit = await session.scalar(
+            text("SELECT count(*) FROM audit_event WHERE resource_id=:d AND action='content_draft.reopened'"),
+            {"d": str(draft.id)},
+        )
+        assert audit == 1
+
+        # It can be sent again, as a new proposal; the withdrawn one stays withdrawn.
+        second = await service.submit(draft.id)
+        assert second.id != first.id
+        assert second.status == "review_required"
+        await session.commit()
