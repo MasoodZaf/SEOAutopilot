@@ -1142,7 +1142,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                                     I read the whole post and checked every claim
                                   </label>
                                 )}
-                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. If you are this workspace's only approver, tick 'I read this diff' to approve a low- or medium-risk change or a new blog post you drafted." aria-describedby="tip-a2b145d684">
+                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. If you are this workspace's only approver, the checkbox appears on changes you may approve yourself: low or medium risk, structured data only, or a new blog post." aria-describedby="tip-3a83a14444">
                                   Approve
                                 </button>
                               </form>

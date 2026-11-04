@@ -437,8 +437,6 @@ async def test_answered_questions_become_faq_markup_and_nothing_else(app_engine,
     assert '"name":"How often is interest compounded?"' in added[0]
     assert "Formula" not in added[0]  # not a question
     assert "geo.qa_content_without_schema" in command.rationale
-    # Only structured data was added, so it is low risk however long it is.
-    assert proposal.risk == "low"
     assert proposal.status in {"validated", "review_required"}
 
 

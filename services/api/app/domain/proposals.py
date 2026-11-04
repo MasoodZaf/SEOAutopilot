@@ -240,15 +240,29 @@ def self_review_scope(
 ) -> str | None:
     """What a workspace's only approver may approve alone.
 
-    "change": a low or medium risk edit. "new_post": a new blog post from a
-    reviewed content draft, high risk only because it adds a page, so it takes
-    a second, explicit confirmation. Every other high-risk change (canonical,
-    robots, redirect, sitemap, claim-changing, template-wide) needs a second
-    person. Recomputed from the content, never read from a stored flag.
+    "change": a low or medium risk edit, or one that only adds JSON-LD to an
+    existing file (FAQ markup copied from the page, high by length alone).
+    "new_post": a new blog post from a reviewed content draft, high risk only
+    because it adds a page, so it takes a second, explicit confirmation. Every
+    other high-risk change (canonical, robots, redirect, sitemap,
+    claim-changing, template-wide) needs a second person.
+
+    This widens nothing but self-review: the risk tier, and with it approver
+    count, approver roles and autopilot eligibility, is unchanged for every
+    workspace. Recomputed from the content, never read from a stored flag.
     """
     if risk in SELF_REVIEW_RISKS:
         return "change"
     path = (target_path or "").lower()
+    if "robots.txt" in path or "sitemap" in path:
+        return None
+    if (
+        risk == "high"
+        and target_type in {"content_edit", "github_file"}
+        and only_adds_json_ld(before_content or "", after_content or "")
+        and not detect_control_directive_changes(before_content or "", after_content or "")
+    ):
+        return "change"
     if (
         risk == "high"
         and content_draft_id is not None
@@ -299,10 +313,6 @@ def evaluate_proposal_policy(
         # however short: never less than high.
         risk = "high"
     elif target_type in {"html_meta", "json_ld_schema", "link_insertion"}:
-        risk = "low"
-    elif target_type in {"content_edit", "github_file"} and only_adds_json_ld(before_content, after_content):
-        # FAQ markup built from the page's own questions and answers: as low
-        # as any other structured data, however many characters it adds.
         risk = "low"
     elif target_type in {"content_edit", "github_file"}:
         risk = "medium" if abs(len(after_content) - len(before_content)) < 300 else "high"

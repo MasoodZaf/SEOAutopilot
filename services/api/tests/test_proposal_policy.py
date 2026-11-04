@@ -15,7 +15,9 @@ from app.domain.proposals import (
     detect_control_directive_changes,
     evaluate_proposal_policy,
     generate_unified_diff,
+    only_adds_json_ld,
     resolve_required_approver_count,
+    self_review_scope,
     validate_proposal_content,
 )
 
@@ -252,11 +254,20 @@ FAQ_BLOCK = (
 )
 
 
-def test_adding_only_faq_markup_is_low_risk_however_long() -> None:
+def test_long_faq_markup_keeps_its_risk_but_a_solo_approver_may_self_review_it() -> None:
+    """Risk is shared by every workspace; only self-review is widened."""
     after = FAQ_PAGE.replace("</head>", FAQ_BLOCK + "\n</head>")
     assert len(after) - len(FAQ_PAGE) > 300
     _, policy = policy_for("github_file", "TheCalcHive/emi.html", FAQ_PAGE, after)
-    assert policy.risk == "low"
+    assert policy.risk == "high"
+    assert policy.can_auto_deploy is False
+    assert policy.required_approver_count == 2
+    assert "editor" not in policy.allowed_roles
+    scope = self_review_scope(
+        risk=policy.risk, content_draft_id=None, target_type="github_file",
+        target_path="TheCalcHive/emi.html", before_content=FAQ_PAGE, after_content=after,
+    )
+    assert scope == "change"
 
 
 @pytest.mark.parametrize(
@@ -270,9 +281,13 @@ def test_adding_only_faq_markup_is_low_risk_however_long() -> None:
         FAQ_PAGE.replace("</head>", FAQ_BLOCK + "</head>"),
     ],
 )
-def test_anything_beyond_adding_json_ld_keeps_its_risk(after: str) -> None:
+def test_anything_beyond_adding_json_ld_is_not_self_reviewable(after: str) -> None:
     before = FAQ_PAGE
     if after.count("application/ld+json") == 1 and "A new claim" not in after and "{not json" not in after:
         before = FAQ_PAGE.replace("</head>", '<script type="application/ld+json">{"@type":"WebPage"}</script></head>')
-    _, policy = policy_for("github_file", "TheCalcHive/emi.html", before, after)
-    assert policy.risk != "low"
+    assert not only_adds_json_ld(before, after)
+    scope = self_review_scope(
+        risk="high", content_draft_id=None, target_type="github_file",
+        target_path="TheCalcHive/emi.html", before_content=before, after_content=after,
+    )
+    assert scope is None

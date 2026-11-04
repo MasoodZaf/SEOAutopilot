@@ -375,3 +375,23 @@ async def test_other_high_risk_changes_still_need_a_second_person(change: dict[s
             ProposalApprovalCreate(decision="approved", self_review=True, self_review_post=True),
         )
     assert exc.value.detail == "self_review_not_allowed_for_risk"
+
+
+@pytest.mark.asyncio
+async def test_the_only_approver_may_self_review_faq_markup_that_kept_its_high_risk() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    proposal.risk = "high"
+    proposal.target_type = "github_file"
+    proposal.target_path = "TheCalcHive/emi.html"
+    proposal.before_content = "<html><head></head><body><p>Hi</p></body></html>"
+    proposal.after_content = proposal.before_content.replace(
+        "</head>", '<script type="application/ld+json">{"@type":"FAQPage"}</script></head>'
+    )
+    session = MembershipAwareSession(proposal, [author_id])
+
+    approval = await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+        proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+    )
+    assert proposal.status == "approved"
+    assert approval.self_reviewed is True
