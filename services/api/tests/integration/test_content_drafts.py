@@ -292,3 +292,40 @@ def test_front_matter_escapes_quotes_and_flattens_lines():
     assert 'title: "The \\"EMI\\" rule"' in rendered
     assert 'description: "line one line two"' in rendered
     assert "\r" not in rendered
+
+
+async def test_on_a_plain_html_site_the_post_is_a_page_in_the_site_shell(tenant_session_factory, workspace):
+    shell = (
+        "<html><head><title>EMI Calculator</title><link rel=\"stylesheet\" href=\"styles.css\">"
+        "<link rel=\"canonical\" href=\"https://w.example/emi-calculator\"></head>"
+        "<body><nav>Home</nav><main><h1>EMI Calculator</h1></main></body></html>"
+    )
+    asked: list[str] = []
+
+    async def read_file(path: str) -> str | None:
+        asked.append(path)
+        return shell if path == "CalcHive/emi-calculator.html" else None
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        await session.execute(
+            text("UPDATE site SET blog_template_path='/emi-calculator' WHERE id=:s"), {"s": workspace["site"]}
+        )
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+
+        with pytest.raises(HTTPException) as caught:
+            await service.submit(draft.id)
+        assert caught.value.detail == "github_not_connected"
+
+        proposal = await service.submit(draft.id, read_file, "CalcHive/{path}.html")
+
+    assert asked == ["CalcHive/emi-calculator.html"]
+    assert proposal.target_path == "CalcHive/blog/how-emi-is-calculated.html"
+    assert proposal.before_content == ""
+    assert "<nav>Home</nav>" in proposal.after_content
+    assert '<link rel="stylesheet" href="/styles.css">' in proposal.after_content
+    assert "<h1>How EMI is calculated</h1>" in proposal.after_content
+    assert "EMI Calculator</h1>" not in proposal.after_content
+    assert "canonical" not in proposal.after_content
+    # Still a new page: high risk, and its only approver may self-review it.
+    assert proposal.risk == "high"
+    assert ProposalRead.model_validate(proposal).self_review_scope == "new_post"

@@ -15,7 +15,7 @@ from app.api.schemas import (
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
-from app.db.models import ContentDraft, Proposal
+from app.db.models import ContentDraft, Proposal, Site
 from app.db.session import TenantSession
 from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
 from app.services.content_drafts import ContentDraftService
@@ -142,9 +142,13 @@ async def submit_content_draft(
     draft = await service.get(draft_id)
     if draft is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="content_draft_not_found")
-    if draft.kind == "answer_block":
-        # The answers edit a file that exists, so it is read through the
-        # page's own site connector -- never another site's.
+    site = await session.scalar(
+        select(Site).where(Site.id == draft.site_id, Site.tenant_id == context.tenant_id)
+    )
+    if draft.kind == "answer_block" or (site is not None and site.blog_template_path):
+        # The answers edit a file that exists, and an HTML post copies one,
+        # so it is read through the page's own site connector -- never
+        # another site's.
         async with httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(20.0)) as client:
             credential = await credential_for_site(session, context, draft.site_id, settings, client)
             adapter = GitHubDeploymentAdapter(client, credential.target, credential.token)

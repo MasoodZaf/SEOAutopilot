@@ -16,6 +16,7 @@ import {
   draftProposalAction,
   publishProposalAction,
   setApproverCountAction,
+  setBlogTemplateAction,
   setPublishFromAppAction,
   setSiteModeAction,
   withdrawProposalAction,
@@ -132,6 +133,8 @@ type GovernanceStatus = {
   freeze_window_end: string | null;
   // Absent from an older API: treated as off.
   publish_from_app?: boolean;
+  // A page whose layout blog posts reuse, for plain-HTML sites. Null: Markdown files.
+  blog_template_path?: string | null;
 };
 type Measurement = {
   id: string;
@@ -191,6 +194,7 @@ const errorMessages: Record<string, string> = {
   publishing_from_app_disabled: "Publishing from SEO Autopilot is off for this site. Turn it on under Adjust governance, or merge the pull request on GitHub.",
   insufficient_permissions_to_publish: "Only an owner or admin can publish a change from here.",
   publish_requires_approvals: "This change does not have all the approvals its risk needs yet.",
+  "blog-template-invalid": "Enter a path on this site, like /emi-calculator.",
   author_cannot_approve_own_proposal: "You drafted this change, so someone else in the workspace has to approve it.",
   self_review_confirmation_required: "You drafted this change and are the only approver here. Tick “I read this diff” to approve it yourself.",
   self_review_not_allowed_for_risk: "This change needs a second person, even in a one-person workspace. Invite a reviewer under Members.",
@@ -679,6 +683,29 @@ export default async function PilotPage({searchParams}: PageProps) {
                           className="mt-1"
                         />
                         Let owners and admins merge approved changes from here in one click. Indexing, configuration and template-wide changes are still merged on GitHub.
+                      </label>
+                      <button type="submit" className={button.secondary}>
+                        Save
+                      </button>
+                    </form>
+                    {/*
+                      Plain-HTML sites serve no Markdown. Naming one of the
+                      site's pages makes each post a copy of it with only
+                      <main> replaced, at /blog/{slug}.
+                    */}
+                    <form action={setBlogTemplateAction} className="flex flex-col gap-2">
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="site_id" value={data.site.id} />
+                      <p className="eyebrow">Blog posts</p>
+                      <label className="flex flex-col gap-1 text-[13px] leading-5 text-pretty text-ink-soft">
+                        For a site of plain HTML pages, the page whose layout posts reuse. Leave blank to publish Markdown files for a static-site generator.
+                        <input
+                          name="blog_template_path"
+                          defaultValue={gov.blog_template_path ?? ""}
+                          placeholder="/emi-calculator"
+                          pattern="/[A-Za-z0-9._~/-]*"
+                          className={inputMono}
+                        />
                       </label>
                       <button type="submit" className={button.secondary}>
                         Save

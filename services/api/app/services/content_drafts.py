@@ -49,6 +49,7 @@ from app.db.models import (
     Site,
 )
 from app.domain.answer_block import AnswerBlockError, AnswerItem, place_answers
+from app.domain.blog_html import BlogTemplateError, build_post_page
 from app.services.proposal_drafts import target_path_for
 from app.services.proposals import ProposalService
 from app.services.tenant_credentials import ANTHROPIC_API_KEY, OPENAI_API_KEY, store_for
@@ -474,17 +475,49 @@ class ContentDraftService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="github_not_connected"
             )
-        template = str(
-            (connector.config_json or {}).get("blog_path_template")
-            or self.settings.github_blog_path_template
-        )
-        target_path = blog_target_path(template, draft.slug)
-
         # The page the post will become, named the way the crawler names it
         # (origin + path, no trailing slash) so its first crawl finds this row
         # instead of creating a second. `planned` until that crawl sees it.
         path = "/" + self.settings.blog_url_template.replace("{slug}", draft.slug).strip("/")
         url = site.canonical_origin.rstrip("/") + path
+        published_on = datetime.now(UTC).date().isoformat()
+
+        if site.blog_template_path:
+            # A plain-HTML site: the post is one of its own pages with the
+            # main content replaced, at the file its URL maps to.
+            if read_file is None or path_template is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="github_not_connected"
+                )
+            template_url = site.canonical_origin.rstrip("/") + site.blog_template_path
+            template_file = target_path_for(path_template, template_url)
+            template_html = await read_file(template_file)
+            if template_html is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"blog_template_not_found:{template_file}",
+                )
+            target_path = target_path_for(path_template, url)
+            try:
+                post_content = build_post_page(
+                    template_html,
+                    template_url=template_url,
+                    post_url=url,
+                    title=draft.title or "",
+                    description=draft.meta_description or "",
+                    author=draft.author_name or "",
+                    published_on=published_on,
+                    body_markdown=draft.body_markdown or "",
+                )
+            except BlogTemplateError as error:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
+        else:
+            template = str(
+                (connector.config_json or {}).get("blog_path_template")
+                or self.settings.github_blog_path_template
+            )
+            target_path = blog_target_path(template, draft.slug)
+            post_content = render_post(draft, published_on)
         url_hash = hashlib.sha256(url.encode()).hexdigest()
         page = await self.session.scalar(
             select(Page).where(Page.site_id == site.id, Page.url_hash == url_hash)
@@ -514,7 +547,7 @@ class ContentDraftService:
                     title=f"New post: {draft.title}"[:240],
                     rationale=rationale,
                     target_path=target_path,
-                    after_content=render_post(draft, datetime.now(UTC).date().isoformat()),
+                    after_content=post_content,
                     evidence_refs={
                         "content_draft_id": str(draft.id),
                         "content_brief_id": str(draft.content_brief_id),

@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -884,6 +885,26 @@ class GovernanceSettingsUpdate(BaseModel):
     freeze_window_start: datetime | None = None
     freeze_window_end: datetime | None = None
     publish_from_app: bool | None = None
+    # A page of the site, by URL path, whose layout blog posts reuse. Blank
+    # clears it, so posts go back to Markdown files.
+    blog_template_path: str | None = Field(default=None, max_length=300)
+
+    @field_validator("blog_template_path")
+    @classmethod
+    def site_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return ""
+        path = urlsplit(text).path if "://" in text else text
+        if (
+            not re.fullmatch(r"/[A-Za-z0-9._~/-]{0,300}", path)
+            or "//" in path
+            or any(segment == ".." for segment in path.split("/"))
+        ):
+            raise ValueError("blog_template_path must be a path on this site, like /emi-calculator")
+        return path.rstrip("/") or "/"
 
 
 class SiteModeUpdate(BaseModel):
@@ -902,6 +923,7 @@ class GovernanceStatusRead(BaseModel):
     freeze_window_start: datetime | None
     freeze_window_end: datetime | None
     publish_from_app: bool = False
+    blog_template_path: str | None = None
 
 
 class GovernanceStatusEnvelope(BaseModel):

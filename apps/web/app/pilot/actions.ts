@@ -566,6 +566,23 @@ export async function publishProposalAction(formData: FormData): Promise<never> 
   redirectFresh(pilotPath(host, {proposal: "published"}));
 }
 
+export async function setBlogTemplateAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const siteId = String(formData.get("site_id") ?? "");
+  const path = String(formData.get("blog_template_path") ?? "").trim();
+  if (path && !/^\/[A-Za-z0-9._~/-]{0,300}$/.test(path)) redirectFresh(errorUrl(host, "blog-template-invalid"));
+  try {
+    await apiJson(`/v1/sites/${siteId}/governance`, {
+      method: "PATCH",
+      body: JSON.stringify({blog_template_path: path}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirectFresh(pilotPath(host, {governance: "blog-template-saved"}));
+}
+
 export async function setPublishFromAppAction(formData: FormData): Promise<never> {
   const host = actionHost(formData);
   const siteId = String(formData.get("site_id") ?? "");

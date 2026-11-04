@@ -78,6 +78,7 @@ class GovernanceService:
             freeze_window_start=site.freeze_window_start,
             freeze_window_end=site.freeze_window_end,
             publish_from_app=bool(site.publish_from_app),
+            blog_template_path=site.blog_template_path,
         )
 
     async def update_governance_settings(
@@ -109,6 +110,8 @@ class GovernanceService:
             site.freeze_window_end = command.freeze_window_end
         if command.publish_from_app is not None:
             site.publish_from_app = command.publish_from_app
+        if command.blog_template_path is not None:
+            site.blog_template_path = command.blog_template_path or None
 
         event_payload = {
             "site_id": str(site_id),
@@ -116,6 +119,7 @@ class GovernanceService:
             "daily_change_budget": site.daily_change_budget,
             "required_approver_count": site.required_approver_count,
             "publish_from_app": site.publish_from_app,
+            "blog_template_path": site.blog_template_path,
         }
         self.session.add(
             AuditEvent(

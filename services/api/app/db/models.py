@@ -91,6 +91,9 @@ class Site(Base):
     brand_terms: Mapped[list[str]] = mapped_column(JSONB, default=list)
     # Off by default: approved changes are merged on GitHub by a person.
     publish_from_app: Mapped[bool] = mapped_column(Boolean, default=False)
+    # A plain-HTML site's page, by URL path, whose layout blog posts reuse.
+    # None publishes posts as Markdown for a static-site generator.
+    blog_template_path: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
