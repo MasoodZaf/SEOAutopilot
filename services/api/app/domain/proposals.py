@@ -227,6 +227,34 @@ def only_adds_json_ld(before_content: str, after_content: str) -> bool:
 
 
 SELF_REVIEW_RISKS = frozenset({"low", "medium"})
+SITEMAP_URL_BLOCK = re.compile(r"<url>\s*<loc>\s*https?://[^<\s]+\s*</loc>.*?</url>", re.IGNORECASE | re.DOTALL)
+
+
+def only_adds_sitemap_urls(before_content: str, after_content: str) -> bool:
+    """Whether a sitemap edit does nothing but add <url> entries.
+
+    With every <url> entry removed, both sides must read the same; every
+    entry the file had must still be there, unchanged; and at least one must
+    be added. Removing or rewriting an entry is never this.
+    """
+    if not before_content or before_content == after_content:
+        return False
+    if "<urlset" not in before_content.lower():
+        return False
+    before_blocks = SITEMAP_URL_BLOCK.findall(before_content)
+    after_blocks = SITEMAP_URL_BLOCK.findall(after_content)
+    if len(after_blocks) <= len(before_blocks):
+        return False
+    remaining = list(after_blocks)
+    for block in before_blocks:
+        if block not in remaining:
+            return False
+        remaining.remove(block)
+
+    def rest(text: str) -> str:
+        return "".join(SITEMAP_URL_BLOCK.sub("", text).split())
+
+    return rest(before_content) == rest(after_content)
 
 
 def self_review_scope(
@@ -240,8 +268,9 @@ def self_review_scope(
 ) -> str | None:
     """What a workspace's only approver may approve alone.
 
-    "change": a low or medium risk edit, or one that only adds JSON-LD to an
-    existing file (FAQ markup copied from the page, high by length alone).
+    "change": a low or medium risk edit, one that only adds JSON-LD to an
+    existing file (FAQ markup copied from the page, high by length alone), or
+    one that only adds <url> entries to a sitemap.xml.
     "new_post": a new blog post from a reviewed content draft, high risk only
     because it adds a page, so it takes a second, explicit confirmation. Every
     other high-risk change (canonical, robots, redirect, sitemap,
@@ -254,7 +283,18 @@ def self_review_scope(
     if risk in SELF_REVIEW_RISKS:
         return "change"
     path = (target_path or "").lower()
-    if "robots.txt" in path or "sitemap" in path:
+    if "robots.txt" in path:
+        return None
+    if "sitemap" in path:
+        # Listing new pages is the one sitemap edit a sole approver may
+        # review alone; it is still merged on GitHub, by a person.
+        if (
+            risk == "high"
+            and target_type == "github_file"
+            and path.endswith(".xml")
+            and only_adds_sitemap_urls(before_content or "", after_content or "")
+        ):
+            return "change"
         return None
     if (
         risk == "high"

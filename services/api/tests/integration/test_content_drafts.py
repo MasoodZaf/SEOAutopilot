@@ -334,6 +334,13 @@ async def test_on_a_plain_html_site_the_post_is_a_page_in_the_site_shell(tenant_
     # The sitemap is its own proposal: high risk, merged on GitHub by a person.
     assert (listed.target_path, listed.risk) == ("CalcHive/sitemap.xml", "high")
     assert "<loc>https://w.example/blog/how-emi-is-calculated</loc>" in listed.after_content
+    # A one-person workspace can approve it, and then merges it on GitHub.
+    from app.domain.proposals import self_review_scope
+
+    assert self_review_scope(
+        risk=listed.risk, content_draft_id=None, target_type="github_file",
+        target_path=listed.target_path, before_content=sitemap, after_content=listed.after_content,
+    ) == "change"
     assert proposal.target_path == "CalcHive/blog/how-emi-is-calculated.html"
     assert proposal.before_content == ""
     assert "<nav>Home</nav>" in proposal.after_content

@@ -40,3 +40,38 @@ def test_urls_are_escaped():
 def test_lastmod_must_be_a_date():
     with pytest.raises(ValueError):
         add_sitemap_urls(SITEMAP, ["https://a.example/b"], "</lastmod><x>")
+
+
+def scope_for(before: str, after: str, path: str = "CalcHive/sitemap.xml"):
+    from app.domain.proposals import self_review_scope
+
+    return self_review_scope(
+        risk="high", content_draft_id=None, target_type="github_file",
+        target_path=path, before_content=before, after_content=after,
+    )
+
+
+def test_a_sole_approver_may_self_review_listing_new_pages():
+    after, _ = add_sitemap_urls(SITEMAP, ["https://thecalchive.com/blog/a"], "2026-11-04") or ("", [])
+    assert scope_for(SITEMAP, after) == "change"
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        # an entry removed
+        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n</urlset>',
+        # an entry rewritten while another is added
+        SITEMAP.replace("emi-calculator", "other").replace(
+            "</urlset>", "  <url>\n    <loc>https://thecalchive.com/blog/a</loc>\n  </url>\n</urlset>"
+        ),
+        # something other than an entry added
+        SITEMAP.replace("</urlset>", "<!-- x --><url><loc>https://thecalchive.com/b</loc></url></urlset>"),
+    ],
+)
+def test_any_other_sitemap_edit_still_needs_a_second_person(after):
+    assert scope_for(SITEMAP, after) is None
+
+
+def test_robots_txt_is_never_self_reviewable():
+    assert scope_for("User-agent: *\n", "User-agent: *\nDisallow:\n", "CalcHive/robots.txt") is None

@@ -47,7 +47,7 @@ export function TipDescriptions() {
       <span id="tip-2efb708ac7">{"Look up DNS now. Safe to retry — records can take minutes to hours to appear."}</span>
       <span id="tip-638cd2f7c3">{"Open a revert pull request. The change is only undone once someone merges it."}</span>
       <span id="tip-8840e44e3f">{"Open the pull request that carries this change on your repository. A human still merges it."}</span>
-      <span id="tip-3a83a14444">{"Record your approval. If you are this workspace's only approver, the checkbox appears on changes you may approve yourself: low or medium risk, structured data only, or a new blog post."}</span>
+      <span id="tip-a4ed80ab12">{"Record your approval. If you are this workspace's only approver, the checkbox appears on changes you may approve yourself: low or medium risk, structured data only, new sitemap entries, or a new blog post."}</span>
       <span id="tip-b6ef7312e7">{"Register the domain and issue a one-time TXT record proving you control it."}</span>
       <span id="tip-c6f0c10545">{"Remove this person from the workspace. Their account survives; their access here does not."}</span>
       <span id="tip-386f83ca86">{"Replace the token with a fresh one. The old record stops working immediately."}</span>
