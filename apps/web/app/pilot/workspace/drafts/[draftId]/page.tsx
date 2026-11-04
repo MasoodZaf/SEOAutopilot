@@ -256,9 +256,10 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               {answering
                 ? "The answers are now a proposal to edit the page's source file: each placed under its heading, with FAQ markup built from them."
                 : "The post is now a proposal to add a new page."}{" "}
-              Two people other than you must approve it on the{" "}
-              <Link href="/pilot" className="underline underline-offset-4">dashboard</Link>, under Proposals; then deploying
-              it opens a pull request that a person merges to publish.
+              Approve it on the{" "}
+              <Link href="/pilot" className="underline underline-offset-4">dashboard</Link>, under Proposals: a reviewer
+              who is not you, or you yourself if you are this workspace&rsquo;s only approver. Deploying it then opens a
+              pull request that a person merges to publish.
             </Note>
           ) : null}
 
