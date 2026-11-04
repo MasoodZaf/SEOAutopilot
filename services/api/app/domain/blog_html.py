@@ -61,8 +61,10 @@ def build_post_page(
 ) -> str:
     """The template page with the post in place of its main content."""
     mains = MAIN.findall(template)
-    if len(mains) != 1:
+    if len(mains) > 1:
         raise BlogTemplateError("blog_template_needs_one_main_element")
+    if not mains:
+        template = _wrap_content_in_main(template)
     if not HEAD_CLOSE.search(template) or not TITLE.search(template):
         raise BlogTemplateError("blog_template_needs_head_and_title")
     if NOINDEX.search(template):
@@ -106,6 +108,30 @@ def build_post_page(
         "</article>\n"
     )
     return MAIN.sub(lambda match: match.group(1) + article + match.group(3), page, count=1)
+
+
+TOP = re.compile(r"</(?:nav|header)\s*>", re.IGNORECASE)
+FOOTER = re.compile(r"<footer\b", re.IGNORECASE)
+BODY_OPEN = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
+INLINE_SCRIPT = re.compile(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>.*?</script\s*>", re.IGNORECASE | re.DOTALL)
+
+
+def _wrap_content_in_main(template: str) -> str:
+    """For a page with no <main>: what lies between its top bar and its footer.
+
+    Plain-HTML sites often lay a page out as <nav> or <header>, the content,
+    then <footer>. That middle becomes the main element. Inline scripts after
+    the top bar belong to the template page (a calculator starting itself,
+    say) and go with it; scripts loaded from files stay, as the site's own.
+    """
+    body = BODY_OPEN.search(template)
+    footer = FOOTER.search(template, body.end() if body else 0)
+    if body is None or footer is None:
+        raise BlogTemplateError("blog_template_needs_one_main_element")
+    tops = [match for match in TOP.finditer(template, body.end(), footer.start())]
+    start = tops[0].end() if tops else body.end()
+    tail = INLINE_SCRIPT.sub("", template[footer.start():])
+    return template[:start] + "\n<main></main>\n" + tail
 
 
 def _absolute_urls(page: str, template_url: str) -> str:

@@ -113,3 +113,24 @@ def test_anything_else_is_refused(value):
 
     with pytest.raises(ValidationError):
         GovernanceSettingsUpdate(blog_template_path=value)
+
+
+def test_a_page_with_no_main_uses_what_lies_between_its_nav_and_footer():
+    """TheCalcHive's shape: nav, app views, footer, then the page's own start-up script."""
+    template = (
+        '<html><head><title>EMI</title><link rel="stylesheet" href="style.css"></head><body>\n'
+        '<nav><a href="/">CalcHive</a></nav>\n<div class="top-bar">recent</div>\n'
+        '<div id="home-view"><h1>All calculators</h1></div>\n'
+        "<footer><p>(c) CalcHive</p></footer>\n"
+        '<script src="app.js"></script>\n<script>openCalc("emi")</script>\n</body></html>'
+    )
+    page = build_post_page(
+        template, template_url="https://thecalchive.com/emi-calculator",
+        post_url="https://thecalchive.com/blog/how-emi-works", title="How EMI works",
+        description="d", author="a", published_on="2026-11-04", body_markdown="Body.",
+    )
+    assert '<nav><a href="/">CalcHive</a></nav>\n<main>\n<article>' in page
+    assert "home-view" not in page and "top-bar" not in page
+    assert "<footer><p>(c) CalcHive</p></footer>" in page
+    assert '<script src="/app.js"></script>' in page
+    assert 'openCalc("emi")' not in page
