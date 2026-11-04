@@ -187,6 +187,81 @@ def resolve_required_approver_count(risk: str, site_override: int | None) -> int
     return floor
 
 
+JSON_LD_BLOCK = re.compile(
+    r"<script\b[^>]*\btype\s*=\s*[\"']application/ld\+json[\"'][^>]*>(.*?)</script\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def only_adds_json_ld(before_content: str, after_content: str) -> bool:
+    """Whether the change does nothing but add JSON-LD blocks to an existing file.
+
+    Decided from the content itself, not from who made the proposal: with
+    every JSON-LD block removed, both sides must read the same, the change
+    must add at least one block, keep every block it had, and every block
+    must parse as JSON. Structured data changes nothing a visitor reads.
+    """
+    if not before_content or before_content == after_content:
+        return False
+    before_blocks = JSON_LD_BLOCK.findall(before_content)
+    after_blocks = JSON_LD_BLOCK.findall(after_content)
+    if len(after_blocks) <= len(before_blocks):
+        return False
+    remaining = list(after_blocks)
+    for block in before_blocks:
+        if block not in remaining:
+            return False
+        remaining.remove(block)
+    for block in after_blocks:
+        try:
+            json.loads(block)
+        except ValueError:
+            return False
+
+    def visible(text: str) -> str:
+        # Whitespace between tags is where a block was inserted; it renders as nothing.
+        collapsed = " ".join(JSON_LD_BLOCK.sub("", text).split())
+        return re.sub(r">\s+<", "><", collapsed)
+
+    return visible(before_content) == visible(after_content)
+
+
+SELF_REVIEW_RISKS = frozenset({"low", "medium"})
+
+
+def self_review_scope(
+    *,
+    risk: str,
+    content_draft_id: object | None,
+    target_type: str,
+    target_path: str | None,
+    before_content: str | None,
+    after_content: str | None,
+) -> str | None:
+    """What a workspace's only approver may approve alone.
+
+    "change": a low or medium risk edit. "new_post": a new blog post from a
+    reviewed content draft, high risk only because it adds a page, so it takes
+    a second, explicit confirmation. Every other high-risk change (canonical,
+    robots, redirect, sitemap, claim-changing, template-wide) needs a second
+    person. Recomputed from the content, never read from a stored flag.
+    """
+    if risk in SELF_REVIEW_RISKS:
+        return "change"
+    path = (target_path or "").lower()
+    if (
+        risk == "high"
+        and content_draft_id is not None
+        and target_type == "github_file"
+        and before_content == ""
+        and "robots.txt" not in path
+        and "sitemap" not in path
+        and not detect_control_directive_changes("", after_content or "")
+    ):
+        return "new_post"
+    return None
+
+
 def evaluate_proposal_policy(
     target_type: str,
     target_path: str,
@@ -224,6 +299,10 @@ def evaluate_proposal_policy(
         # however short: never less than high.
         risk = "high"
     elif target_type in {"html_meta", "json_ld_schema", "link_insertion"}:
+        risk = "low"
+    elif target_type in {"content_edit", "github_file"} and only_adds_json_ld(before_content, after_content):
+        # FAQ markup built from the page's own questions and answers: as low
+        # as any other structured data, however many characters it adds.
         risk = "low"
     elif target_type in {"content_edit", "github_file"}:
         risk = "medium" if abs(len(after_content) - len(before_content)) < 300 else "high"

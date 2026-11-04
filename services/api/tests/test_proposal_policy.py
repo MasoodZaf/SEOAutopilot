@@ -243,3 +243,36 @@ def test_claim_changing_copy_is_high_risk_however_small() -> None:
     assert claimed.risk == "high"
     assert claimed.required_approver_count >= 2
     assert claimed.can_auto_deploy is False
+
+
+FAQ_PAGE = "<html><head><title>EMI</title></head><body><h2>How is EMI calculated?</h2><p>Answer.</p></body></html>"
+FAQ_BLOCK = (
+    '<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage",'
+    + '"mainEntity":[' + ",".join(['{"@type":"Question","name":"q","acceptedAnswer":{"@type":"Answer","text":"' + "a" * 80 + '"}}'] * 4) + "]}</script>"
+)
+
+
+def test_adding_only_faq_markup_is_low_risk_however_long() -> None:
+    after = FAQ_PAGE.replace("</head>", FAQ_BLOCK + "\n</head>")
+    assert len(after) - len(FAQ_PAGE) > 300
+    _, policy = policy_for("github_file", "TheCalcHive/emi.html", FAQ_PAGE, after)
+    assert policy.risk == "low"
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        # visible text changed alongside the markup
+        FAQ_PAGE.replace("</head>", FAQ_BLOCK + "</head>").replace("Answer.", "A new claim." + "x" * 300),
+        # a block that is not JSON
+        FAQ_PAGE.replace("</head>", '<script type="application/ld+json">{not json' + "x" * 300 + "</script></head>"),
+        # an existing block removed while another is added
+        FAQ_PAGE.replace("</head>", FAQ_BLOCK + "</head>"),
+    ],
+)
+def test_anything_beyond_adding_json_ld_keeps_its_risk(after: str) -> None:
+    before = FAQ_PAGE
+    if after.count("application/ld+json") == 1 and "A new claim" not in after and "{not json" not in after:
+        before = FAQ_PAGE.replace("</head>", '<script type="application/ld+json">{"@type":"WebPage"}</script></head>')
+    _, policy = policy_for("github_file", "TheCalcHive/emi.html", before, after)
+    assert policy.risk != "low"

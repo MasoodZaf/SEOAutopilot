@@ -38,6 +38,7 @@ from app.domain.proposals import (
     generate_unified_diff,
     validate_proposal_content,
 )
+from app.domain.proposals import self_review_scope as domain_self_review_scope
 from app.domain.publishing import publish_blocked_reason
 
 ALLOWED_PROPOSAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR, Role.DEVELOPER}
@@ -45,8 +46,19 @@ ALLOWED_APPROVAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
 # Risks a workspace's only approver may self-review. High risk covers
 # canonical, robots, redirect and template-wide changes, which always need a
 # second person.
-SELF_REVIEW_RISKS = {"low", "medium"}
 SELF_REVIEW_ROLES = {Role.OWNER, Role.ADMIN}
+
+
+
+def self_review_scope(proposal: Proposal) -> str | None:
+    return domain_self_review_scope(
+        risk=proposal.risk,
+        content_draft_id=proposal.content_draft_id,
+        target_type=proposal.target_type,
+        target_path=proposal.target_path,
+        before_content=proposal.before_content,
+        after_content=proposal.after_content,
+    )
 ALLOWED_DEPLOYMENT_ROLES = {Role.OWNER, Role.ADMIN, Role.DEVELOPER}
 # Publishing both deploys and makes live, so it needs a role that may do both:
 # a developer can open a pull request and a SEO manager can approve one, but
@@ -421,15 +433,21 @@ class ProposalService:
                 )
             # The only person who can approve anything here. Without this a
             # one-person workspace can find problems but never fix one.
-            if proposal.risk not in SELF_REVIEW_RISKS:
+            scope = self_review_scope(proposal)
+            if scope is None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="self_review_not_allowed_for_risk",
                 )
             if not command.self_review:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="self_review_confirmation_required",
+                )
+            if scope == "new_post" and not command.self_review_post:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="self_review_post_confirmation_required",
                 )
             self_reviewed = True
 
@@ -1044,7 +1062,7 @@ class ProposalService:
             )
         )
         required = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
-        if proposal.risk in SELF_REVIEW_RISKS and await self.is_sole_approver():
+        if self_review_scope(proposal) is not None and await self.is_sole_approver():
             # A second approver does not exist to be counted. Re-checked here,
             # at the merge, so a self-review given before a second approver
             # joined no longer carries a change on its own.

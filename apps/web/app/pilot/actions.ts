@@ -347,6 +347,7 @@ export async function approveProposalAction(formData: FormData): Promise<never> 
         decision: "approved",
         notes: "Approved from web dashboard",
         self_review: formData.get("self_review") === "yes",
+        self_review_post: formData.get("self_review_post") === "yes",
       }),
     });
   } catch (error) {

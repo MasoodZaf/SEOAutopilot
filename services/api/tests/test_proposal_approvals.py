@@ -319,3 +319,59 @@ async def test_self_review_ends_once_a_second_approver_exists() -> None:
         )
 
     assert exc.value.detail == "author_cannot_approve_own_proposal"
+
+
+def new_blog_post(tenant_id: UUID, author_id: UUID, body: str = "---\ntitle: EMI\n---\nHow EMI works.\n") -> Proposal:
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    proposal.risk = "high"
+    proposal.target_type = "github_file"
+    proposal.target_path = "content/blog/emi.md"
+    proposal.before_content = ""
+    proposal.after_content = body
+    proposal.content_draft_id = uuid4()
+    return proposal
+
+
+@pytest.mark.asyncio
+async def test_the_only_approver_may_approve_a_new_blog_post_after_both_confirmations() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = new_blog_post(tenant_id, author_id)
+    session = MembershipAwareSession(proposal, [author_id])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+        )
+    assert exc.value.detail == "self_review_post_confirmation_required"
+
+    approval = await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+        proposal.id,
+        ProposalApprovalCreate(decision="approved", self_review=True, self_review_post=True),
+    )
+    assert proposal.status == "approved"
+    assert approval.self_reviewed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"content_draft_id": None},  # a new file that is not a reviewed blog draft
+        {"before_content": "<p>old</p>"},  # an edit to an existing page
+        {"target_path": "public/robots.txt"},
+        {"after_content": '<meta name="robots" content="noindex">'},
+    ],
+)
+async def test_other_high_risk_changes_still_need_a_second_person(change: dict[str, object]) -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = new_blog_post(tenant_id, author_id)
+    for key, value in change.items():
+        setattr(proposal, key, value)
+    session = MembershipAwareSession(proposal, [author_id])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id,
+            ProposalApprovalCreate(decision="approved", self_review=True, self_review_post=True),
+        )
+    assert exc.value.detail == "self_review_not_allowed_for_risk"

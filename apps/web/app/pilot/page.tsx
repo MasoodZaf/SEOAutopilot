@@ -111,6 +111,8 @@ type Proposal = {
   target_type: string;
   target_path: string;
   risk: string;
+  // What the workspace's only approver may approve alone; absent from an older API.
+  self_review_scope?: "change" | "new_post" | null;
   status: string;
   diff_unified: string;
   base_hash: string;
@@ -191,7 +193,8 @@ const errorMessages: Record<string, string> = {
   publish_requires_approvals: "This change does not have all the approvals its risk needs yet.",
   author_cannot_approve_own_proposal: "You drafted this change, so someone else in the workspace has to approve it.",
   self_review_confirmation_required: "You drafted this change and are the only approver here. Tick “I read this diff” to approve it yourself.",
-  self_review_not_allowed_for_risk: "High-risk changes need a second person, even in a one-person workspace. Invite a reviewer under Members.",
+  self_review_not_allowed_for_risk: "This change needs a second person, even in a one-person workspace. Invite a reviewer under Members.",
+  self_review_post_confirmation_required: "A new post goes live as a whole page. Tick “I read the whole post and checked every claim” as well to approve it yourself.",
   proposal_must_be_approved_before_publishing: "Approve the change before publishing it.",
   no_pull_request_to_publish: "There is no pull request for this change to merge.",
   publish_requires_github_merge__indexing_control_change: "This change touches canonical, robots or redirect directives. Those are always merged on GitHub, by a person.",
@@ -1125,13 +1128,21 @@ export default async function PilotPage({searchParams}: PageProps) {
                               <form action={approveProposalAction} className="flex items-center gap-3">
                                 <input type="hidden" name="site_host" value={target.host} />
                                 <input type="hidden" name="proposal_id" value={prop.id} />
-                                {(prop.risk === "low" || prop.risk === "medium") && (
+                                {(prop.self_review_scope !== undefined
+                                  ? prop.self_review_scope !== null
+                                  : prop.risk === "low" || prop.risk === "medium") && (
                                   <label className="flex items-center gap-1.5 text-[12px] text-ink-soft">
                                     <input type="checkbox" name="self_review" value="yes" />
                                     I read this diff (only reviewer)
                                   </label>
                                 )}
-                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. If you are this workspace's only approver, tick 'I read this diff' to approve a low- or medium-risk change you drafted." aria-describedby="tip-7ed3a8e5e4">
+                                {prop.self_review_scope === "new_post" && (
+                                  <label className="flex items-center gap-1.5 text-[12px] text-ink-soft">
+                                    <input type="checkbox" name="self_review_post" value="yes" />
+                                    I read the whole post and checked every claim
+                                  </label>
+                                )}
+                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. If you are this workspace's only approver, tick 'I read this diff' to approve a low- or medium-risk change or a new blog post you drafted." aria-describedby="tip-a2b145d684">
                                   Approve
                                 </button>
                               </form>

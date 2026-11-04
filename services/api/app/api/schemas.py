@@ -4,7 +4,17 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+
+from app.domain.proposals import self_review_scope
 
 
 class ProductMode(StrEnum):
@@ -725,6 +735,19 @@ class ProposalRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def self_review_scope(self) -> str | None:
+        """What the workspace's only approver could approve alone; see the domain rule."""
+        return self_review_scope(
+            risk=self.risk,
+            content_draft_id=self.content_draft_id,
+            target_type=self.target_type,
+            target_path=self.target_path,
+            before_content=self.before_content,
+            after_content=self.after_content,
+        )
+
 
 class ProposalEnvelope(BaseModel):
     data: ProposalRead
@@ -742,6 +765,9 @@ class ProposalApprovalCreate(BaseModel):
     # The author confirms they read the diff. Honoured only when they are the
     # workspace's only approver and the change is low or medium risk.
     self_review: bool = False
+    # A new blog post is high risk, so its only approver also confirms they
+    # read the whole post and checked every claim in it.
+    self_review_post: bool = False
 
     @field_validator("notes")
     @classmethod
