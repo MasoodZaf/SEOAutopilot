@@ -310,3 +310,23 @@ async def test_an_answer_block_is_written_only_for_the_questions_it_was_given(co
     flags = {flag["kind"] for flag in json.loads(row["flags_json"])}
     assert flags == {"figure", "missing"}
     assert row["title"] is None and row["body_markdown"] is None
+
+
+async def test_a_topic_brief_is_drafted_without_search_terms(connection) -> None:
+    """A post a person asked for by topic (migration 0057) has no cluster behind it."""
+    ids = await _seed(connection)
+    await connection.execute(
+        "UPDATE content_brief SET source='topic',keyword_cluster_id=NULL,analysis_run_id=NULL,"
+        "requested_by=$2,query_hashes='{}',cluster_label='How is EMI calculated in India?' WHERE id=$1",
+        ids["brief"], ids["actor"],
+    )
+    model = FakeModel()
+
+    row = await _run(connection, ids, model)
+
+    assert row["status"] == "ready"
+    prompt = model.calls[0]["user"]
+    assert "How is EMI calculated in India?" in prompt
+    # The seeded search term belongs to the analysis brief, not this one.
+    assert "(none)" in prompt.split("search_terms", 1)[1][:200]
+    assert "/emi-calculator" in prompt

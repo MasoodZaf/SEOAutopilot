@@ -7,6 +7,7 @@ import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {pilotPath, selectSite} from "../site-selection.mjs";
 import {
+  planTopicPost,
   proposeLlmsTxt,
   runRoutineNow,
   scheduleRoutine,
@@ -160,6 +161,11 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
   const params = await searchParams;
   const tab: WorkspaceTab = resolveTab(one(params.tab));
   const errorCode = one(params.error);
+  const coveredPath = one(params.covered);
+  // These belong beside the "Plan a post" form, not in the page-wide banner.
+  const topicError = ["topic_already_has_page", "topic_brief_exists", "topic_invalid"].includes(errorCode)
+    ? errorCode
+    : "";
 
   const sites = await maybe<{data: Array<{id: string; normalized_host: string; name: string}>}>("/v1/sites");
   const owned = sites?.data ?? [];
@@ -243,7 +249,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
       </header>
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
-        {errorCode && (
+        {errorCode && !topicError && (
           <p role="alert" className="rounded-xl border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop">
             The last action did not complete: <code>{errorCode}</code>
           </p>
@@ -579,6 +585,49 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 Topics from this site&apos;s own searches: new posts to write, and existing pages to refresh.
                 Open one to read its plan and decide.
               </p>
+              <form action={planTopicPost} className="mt-4 flex flex-col gap-2 rounded-xl border border-rule bg-paper p-4">
+                <input type="hidden" name="site_host" value={target?.host ?? ""} />
+                <label htmlFor="plan-topic" className="text-sm font-medium text-ink">Plan a post</label>
+                <p className={muted}>
+                  Name a topic and it becomes a new-post brief you can draft from. A topic one of your pages already
+                  covers is refused, so the post doesn&apos;t compete with that page.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    id="plan-topic"
+                    name="topic"
+                    required
+                    minLength={3}
+                    maxLength={120}
+                    placeholder="How is EMI calculated?"
+                    aria-describedby={topicError ? "plan-topic-error" : undefined}
+                    className="min-w-0 flex-1 rounded-xl border border-rule-strong bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-ink-soft"
+                  />
+                  <label className="sr-only" htmlFor="plan-intent">What the reader wants</label>
+                  <select
+                    id="plan-intent"
+                    name="intent"
+                    defaultValue="informational"
+                    className="rounded-xl border border-rule-strong bg-surface px-2 py-1.5 text-sm text-ink"
+                  >
+                    <option value="informational">To learn</option>
+                    <option value="commercial">To compare</option>
+                    <option value="transactional">To do something</option>
+                  </select>
+                  <button type="submit" disabled={!site} className="rounded-full border border-rule-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk disabled:opacity-40">
+                    Plan post
+                  </button>
+                </div>
+                {topicError && (
+                  <p id="plan-topic-error" role="alert" className="text-xs text-stop">
+                    {topicError === "topic_already_has_page"
+                      ? <>Your page <code>{coveredPath || "/"}</code> already covers this topic. Improve that page instead, or pick a narrower topic.</>
+                      : topicError === "topic_brief_exists"
+                        ? "There is already a brief for this topic. Open it below."
+                        : "Use 3 to 120 characters of plain words."}
+                  </p>
+                )}
+              </form>
               {briefs.length === 0 ? (
                 <div className="mt-3"><Empty>No briefs yet. Run the content briefs routine after a keyword refresh.</Empty></div>
               ) : (

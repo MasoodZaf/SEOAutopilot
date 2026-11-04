@@ -1246,7 +1246,8 @@ class ContentBriefSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     site_id: UUID
-    keyword_cluster_id: UUID
+    keyword_cluster_id: UUID | None
+    source: str = "analysis"
     kind: ContentBriefKind
     status: ContentBriefStatus
     target_page_id: UUID | None
@@ -1274,6 +1275,23 @@ class ContentBriefCollection(BaseModel):
 class ContentBriefEnvelope(BaseModel):
     data: ContentBriefRead
     meta: dict[str, str]
+
+
+class TopicBriefCreate(BaseModel):
+    """A post a person asks for by topic, when search data has suggested none."""
+
+    topic: str = Field(min_length=3, max_length=120)
+    intent: KeywordIntent = KeywordIntent.INFORMATIONAL
+
+    @field_validator("topic")
+    @classmethod
+    def plain_topic(cls, value: str) -> str:
+        topic = " ".join(value.split())
+        if len(topic) < 3:
+            raise ValueError("a topic needs at least 3 characters")
+        if any(ch in topic for ch in "<>{}`"):
+            raise ValueError("a topic is plain words")
+        return topic
 
 
 class ContentBriefStatusUpdate(BaseModel):

@@ -108,7 +108,9 @@ export type BriefSection = {
 
 export type ContentBriefDetail = ContentBrief & {
   site_id: string;
-  keyword_cluster_id: string;
+  /** Empty on a brief planned from a topic a person named. */
+  keyword_cluster_id: string | null;
+  source: "analysis" | "topic";
   target_page_id: string | null;
   sections_json: BriefSection[];
   evidence_json: Record<string, unknown>;

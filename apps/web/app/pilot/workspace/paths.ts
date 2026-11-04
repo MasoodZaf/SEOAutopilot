@@ -9,7 +9,7 @@ export function resolveTab(value: unknown): WorkspaceTab {
 
 export function workspacePath(
   host: string,
-  params: {tab?: WorkspaceTab; session?: string; error?: string} = {},
+  params: {tab?: WorkspaceTab; session?: string; error?: string; covered?: string} = {},
 ): string {
   const selected = safeHost(host);
   const query = new URLSearchParams();
@@ -17,5 +17,7 @@ export function workspacePath(
   if (params.tab) query.set("tab", params.tab);
   if (params.session) query.set("session", params.session);
   if (params.error) query.set("error", params.error);
+  // The site's own page a refused post topic is already covered by: a path only.
+  if (params.covered && /^\/[A-Za-z0-9._~/-]{0,300}$/.test(params.covered)) query.set("covered", params.covered);
   return `/pilot/workspace?${query.toString()}`;
 }

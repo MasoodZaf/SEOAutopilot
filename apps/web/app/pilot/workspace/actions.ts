@@ -366,6 +366,43 @@ export async function proposeLlmsTxt(formData: FormData): Promise<never> {
 }
 
 /** Track a question for observed AI citations. Asking it waits for the routine. */
+const INTENTS = new Set(["informational", "commercial", "transactional", "navigational"]);
+
+/** Plan a new post from a topic; success opens the brief, where drafting starts. */
+export async function planTopicPost(formData: FormData): Promise<never> {
+  const host = formHost(formData);
+  const topic = String(formData.get("topic") ?? "").trim().slice(0, 120);
+  const intent = String(formData.get("intent") ?? "informational");
+  const back = (error?: string, covered?: string) => workspacePath(host, {tab: "reports", error, covered});
+  let briefId = "";
+  try {
+    const siteId = await siteIdFor(host);
+    if (!siteId) redirectFresh(back("site_not_found"));
+    const created = await apiJson<{data: {id: string}}>(`/v1/sites/${siteId}/content-briefs`, {
+      method: "POST",
+      body: JSON.stringify({topic, intent: INTENTS.has(intent) ? intent : "informational"}),
+    });
+    briefId = created.data.id;
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof ApiError) {
+      const covered = /^topic_already_has_page:(.+)$/.exec(error.code);
+      if (covered) {
+        let path = "";
+        try {
+          path = new URL(covered[1]).pathname;
+        } catch {
+          path = "";
+        }
+        redirectFresh(back("topic_already_has_page", path));
+      }
+      redirectFresh(back(error.status === 422 ? "topic_invalid" : safeCode(error.code)));
+    }
+    throw error;
+  }
+  redirectFresh(`/pilot/workspace/briefs/${briefId}?planned=1`);
+}
+
 export async function trackCitationPrompt(formData: FormData): Promise<never> {
   const host = formHost(formData);
   const prompt = String(formData.get("prompt") ?? "").trim().slice(0, 300);

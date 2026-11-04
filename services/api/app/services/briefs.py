@@ -10,12 +10,14 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi import status as http_status
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import ContentBriefStatus, ContentBriefStatusUpdate
+from app.api.schemas import ContentBriefStatus, ContentBriefStatusUpdate, TopicBriefCreate
 from app.core.context import Role, TenantContext
 from app.db.models import AuditEvent, ContentBrief, Site
+from app.domain.post_topics import SitePage, content_hash, covering_page, topic_sections
 from app.services.opportunities import stable_hash
 
 MANAGE_BRIEF_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR}
@@ -74,6 +76,95 @@ class ContentBriefService:
                 ContentBrief.tenant_id == self.context.tenant_id,
             )
         )
+
+    async def create_topic(self, site_id: UUID, command: TopicBriefCreate) -> ContentBrief:
+        """A new-post brief for a topic a person names.
+
+        Refused when a page the site already has targets the topic: a post
+        there would compete with that page, so the page is named instead.
+        """
+        if self.context.role not in MANAGE_BRIEF_ROLES:
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_for_brief",
+            )
+        site = await self.session.scalar(
+            select(Site).where(Site.id == site_id, Site.tenant_id == self.context.tenant_id)
+        )
+        if site is None:
+            raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="site_not_found")
+
+        pages = await self._site_pages(site_id)
+        covered = covering_page(command.topic, pages)
+        if covered is not None:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=f"topic_already_has_page:{covered.url}",
+            )
+
+        intent = command.intent.value
+        sections = topic_sections(command.topic, intent)
+        brief = ContentBrief(
+            tenant_id=self.context.tenant_id,
+            site_id=site_id,
+            source="topic",
+            requested_by=self.context.actor_id,
+            kind="new_page",
+            status="queued",
+            cluster_label=command.topic,
+            intent=intent,
+            answer_engine_candidate=False,
+            priority_score=0.0,
+            sections_json=sections,
+            evidence_json={"source": "topic", "selection_basis": "requested"},
+            query_hashes=[],
+            content_hash=content_hash(sections),
+        )
+        try:
+            async with self.session.begin_nested():
+                self.session.add(brief)
+                await self.session.flush()
+        except IntegrityError as error:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT, detail="topic_brief_exists"
+            ) from error
+
+        payload = {"topic": command.topic, "intent": intent, "site_id": str(site_id)}
+        self.session.add(
+            AuditEvent(
+                tenant_id=self.context.tenant_id,
+                actor_type="user",
+                actor_id=str(self.context.actor_id),
+                action="content_brief.requested",
+                resource_type="content_brief",
+                resource_id=str(brief.id),
+                trace_id=self.context.trace_id,
+                metadata_json=payload,
+                event_hash=stable_hash({**payload, "actor_id": str(self.context.actor_id)}),
+            )
+        )
+        await self.session.flush()
+        await self.session.refresh(brief)
+        return brief
+
+    async def _site_pages(self, site_id: UUID) -> list[SitePage]:
+        """Each page's title from the site's latest finished crawl."""
+        rows = await self.session.execute(
+            text(
+                """
+                SELECT DISTINCT ON (p.normalized_url) p.normalized_url, coalesce(o.title,'') AS title
+                FROM page_observation o
+                JOIN page p ON p.id=o.page_id AND p.tenant_id=o.tenant_id
+                WHERE o.tenant_id=:tenant AND p.site_id=:site AND o.http_status=200
+                  AND o.crawl_job_id=(
+                    SELECT id FROM crawl_job WHERE tenant_id=:tenant AND site_id=:site
+                      AND status IN('completed','partial') ORDER BY created_at DESC LIMIT 1)
+                ORDER BY p.normalized_url
+                """
+            ),
+            {"tenant": self.context.tenant_id, "site": site_id},
+        )
+        return [SitePage(url=str(row.normalized_url), title=str(row.title)) for row in rows]
 
     async def update_status(
         self, brief_id: UUID, command: ContentBriefStatusUpdate

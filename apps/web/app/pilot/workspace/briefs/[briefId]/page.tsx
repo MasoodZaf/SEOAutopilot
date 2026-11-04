@@ -76,7 +76,7 @@ const MOVES: Record<string, {status: string; label: string; primary?: boolean}[]
 
 type PageProps = {
   params: Promise<{briefId: string}>;
-  searchParams: Promise<{error?: string; updated?: string}>;
+  searchParams: Promise<{error?: string; updated?: string; planned?: string}>;
 };
 
 async function load(briefId: string) {
@@ -86,14 +86,17 @@ async function load(briefId: string) {
     const sites = (await apiJson<{data: {id: string; normalized_host: string}[]}>("/v1/sites")).data;
     const host = sites.find((site) => site.id === brief.site_id)?.normalized_host ?? "";
     let members: KeywordMember[] = [];
-    try {
-      members = (
-        await apiJson<{data: KeywordMember[]}>(`/v1/keyword-clusters/${brief.keyword_cluster_id}/members?limit=50`)
-      ).data;
-    } catch {
-      // The searches are supporting detail. A brief whose cluster was
-      // rebuilt since still has a readable plan.
-      members = [];
+    // A brief planned from a topic has no searches behind it to fetch.
+    if (brief.keyword_cluster_id) {
+      try {
+        members = (
+          await apiJson<{data: KeywordMember[]}>(`/v1/keyword-clusters/${brief.keyword_cluster_id}/members?limit=50`)
+        ).data;
+      } catch {
+        // The searches are supporting detail. A brief whose cluster was
+        // rebuilt since still has a readable plan.
+        members = [];
+      }
     }
     // Drafting is bring-your-own-key: offer only the providers this
     // workspace has stored a key for.
@@ -165,7 +168,7 @@ function Section({section}: {section: BriefSection}) {
 
 export default async function BriefPage({params, searchParams}: PageProps) {
   const {briefId} = await params;
-  const {error, updated} = await searchParams;
+  const {error, updated, planned} = await searchParams;
   const {brief, host, members, aiProviders, drafts} = await load(briefId);
   const liveDraft = drafts.find((draft) => ["queued", "running", "ready"].includes(draft.status));
 
@@ -173,6 +176,7 @@ export default async function BriefPage({params, searchParams}: PageProps) {
   const questions = members.filter((member) => member.is_question);
   const others = members.filter((member) => !member.is_question);
   const exploratory = brief.evidence_json?.selection_basis === "exploratory";
+  const fromTopic = brief.source === "topic";
   const moves = MOVES[brief.status] ?? [];
 
   return (
@@ -205,6 +209,15 @@ export default async function BriefPage({params, searchParams}: PageProps) {
           ) : null}
           {updated ? (
             <Note tone="good" role="status">Marked as {(STATUS_LABEL[updated] ?? updated).toLowerCase()}.</Note>
+          ) : null}
+          {planned ? (
+            <Note tone="good" role="status">Planned. Write a draft from it when you are ready.</Note>
+          ) : null}
+          {fromTopic ? (
+            <Note tone="warn" label="No search data">
+              This post was planned from a topic you named, not from this site&rsquo;s searches, so nothing yet
+              shows people looking for it here. Search Console will show whether they do once it is live.
+            </Note>
           ) : null}
           {exploratory ? (
             <Note tone="warn" label="Low demand">
@@ -271,6 +284,7 @@ export default async function BriefPage({params, searchParams}: PageProps) {
             </section>
           ) : null}
 
+          {fromTopic ? null : (
           <section aria-labelledby="searches-heading">
             <h2 id="searches-heading" className="font-display text-[22px] font-light tracking-tight text-ink">
               Searches behind this topic
@@ -314,6 +328,7 @@ export default async function BriefPage({params, searchParams}: PageProps) {
               </p>
             )}
           </section>
+          )}
         </div>
 
         <aside aria-labelledby="decide-heading" className="flex flex-col gap-4 lg:sticky lg:top-24 lg:self-start">
