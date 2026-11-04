@@ -739,6 +739,9 @@ class ProposalCollection(BaseModel):
 class ProposalApprovalCreate(BaseModel):
     decision: str = Field(pattern="^(approved|rejected)$")
     notes: str = Field(default="", max_length=1000)
+    # The author confirms they read the diff. Honoured only when they are the
+    # workspace's only approver and the change is low or medium risk.
+    self_review: bool = False
 
     @field_validator("notes")
     @classmethod

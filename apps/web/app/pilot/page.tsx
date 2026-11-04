@@ -189,6 +189,9 @@ const errorMessages: Record<string, string> = {
   publishing_from_app_disabled: "Publishing from SEO Autopilot is off for this site. Turn it on under Adjust governance, or merge the pull request on GitHub.",
   insufficient_permissions_to_publish: "Only an owner or admin can publish a change from here.",
   publish_requires_approvals: "This change does not have all the approvals its risk needs yet.",
+  author_cannot_approve_own_proposal: "You drafted this change, so someone else in the workspace has to approve it.",
+  self_review_confirmation_required: "You drafted this change and are the only approver here. Tick “I read this diff” to approve it yourself.",
+  self_review_not_allowed_for_risk: "High-risk changes need a second person, even in a one-person workspace. Invite a reviewer under Members.",
   proposal_must_be_approved_before_publishing: "Approve the change before publishing it.",
   no_pull_request_to_publish: "There is no pull request for this change to merge.",
   publish_requires_github_merge__indexing_control_change: "This change touches canonical, robots or redirect directives. Those are always merged on GitHub, by a person.",
@@ -1119,10 +1122,16 @@ export default async function PilotPage({searchParams}: PageProps) {
                           */}
                           {(prop.status === "validated" || prop.status === "review_required") && (
                             <>
-                              <form action={approveProposalAction}>
+                              <form action={approveProposalAction} className="flex items-center gap-3">
                                 <input type="hidden" name="site_host" value={target.host} />
                                 <input type="hidden" name="proposal_id" value={prop.id} />
-                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. You cannot approve a change you authored yourself." aria-describedby="tip-ec0ccb8c77">
+                                {(prop.risk === "low" || prop.risk === "medium") && (
+                                  <label className="flex items-center gap-1.5 text-[12px] text-ink-soft">
+                                    <input type="checkbox" name="self_review" value="yes" />
+                                    I read this diff (only reviewer)
+                                  </label>
+                                )}
+                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. If you are this workspace's only approver, tick 'I read this diff' to approve a low- or medium-risk change you drafted." aria-describedby="tip-7ed3a8e5e4">
                                   Approve
                                 </button>
                               </form>

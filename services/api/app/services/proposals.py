@@ -21,6 +21,7 @@ from app.db.models import (
     Proposal,
     ProposalApproval,
     Site,
+    TenantMembership,
 )
 from app.domain.deployments import (
     BatchDeploymentAdapter,
@@ -41,6 +42,11 @@ from app.domain.publishing import publish_blocked_reason
 
 ALLOWED_PROPOSAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR, Role.DEVELOPER}
 ALLOWED_APPROVAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
+# Risks a workspace's only approver may self-review. High risk covers
+# canonical, robots, redirect and template-wide changes, which always need a
+# second person.
+SELF_REVIEW_RISKS = {"low", "medium"}
+SELF_REVIEW_ROLES = {Role.OWNER, Role.ADMIN}
 ALLOWED_DEPLOYMENT_ROLES = {Role.OWNER, Role.ADMIN, Role.DEVELOPER}
 # Publishing both deploys and makes live, so it needs a role that may do both:
 # a developer can open a pull request and a SEO manager can approve one, but
@@ -355,6 +361,23 @@ class ProposalService:
             )
         )
 
+    async def is_sole_approver(self) -> bool:
+        """Whether the actor may self-review: the workspace's only active approver.
+
+        Counted from memberships at the moment of the decision, never cached:
+        inviting a second approver ends self-review for every later approval.
+        """
+        if self.context.role not in SELF_REVIEW_ROLES:
+            return False
+        approvers = await self.session.scalars(
+            select(TenantMembership.user_id).where(
+                TenantMembership.tenant_id == self.context.tenant_id,
+                TenantMembership.status == "active",
+                TenantMembership.role.in_([role.value for role in ALLOWED_APPROVAL_ROLES]),
+            )
+        )
+        return set(approvers) == {self.context.actor_id}
+
     async def approve_proposal(
         self,
         proposal_id: UUID,
@@ -388,11 +411,27 @@ class ProposalService:
         # bad draft to clear it without spending a reviewer on a change nobody
         # wants. Holding a withdrawal to the approval rule protects nothing and
         # leaves the wrong change sitting in the queue.
+        self_reviewed = False
         if self.context.actor_id == proposal.author_id and command.decision != "rejected":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="author_cannot_approve_own_proposal",
-            )
+            sole = await self.is_sole_approver()
+            if not sole:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="author_cannot_approve_own_proposal",
+                )
+            # The only person who can approve anything here. Without this a
+            # one-person workspace can find problems but never fix one.
+            if proposal.risk not in SELF_REVIEW_RISKS:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="self_review_not_allowed_for_risk",
+                )
+            if not command.self_review:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="self_review_confirmation_required",
+                )
+            self_reviewed = True
 
         if self.context.role not in ALLOWED_APPROVAL_ROLES:
             raise HTTPException(
@@ -426,6 +465,7 @@ class ProposalService:
             approver_id=self.context.actor_id,
             decision=command.decision,
             notes=command.notes,
+            self_reviewed=self_reviewed,
         )
         self.session.add(approval)
 
@@ -436,7 +476,7 @@ class ProposalService:
             # two-person rule rather than to a single approver.
             required_count = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
             distinct_approvers = prior_approver_ids | {self.context.actor_id}
-            if len(distinct_approvers) >= required_count:
+            if self_reviewed or len(distinct_approvers) >= required_count:
                 proposal.status = "approved"
             else:
                 proposal.status = "review_required"
@@ -448,6 +488,7 @@ class ProposalService:
             "decision": command.decision,
             "approver_id": str(self.context.actor_id),
             "resulting_status": proposal.status,
+            "self_reviewed": self_reviewed,
         }
         self.session.add(
             AuditEvent(
@@ -1003,6 +1044,11 @@ class ProposalService:
             )
         )
         required = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
+        if proposal.risk in SELF_REVIEW_RISKS and await self.is_sole_approver():
+            # A second approver does not exist to be counted. Re-checked here,
+            # at the merge, so a self-review given before a second approver
+            # joined no longer carries a change on its own.
+            required = 1
         if len(approvers) < required:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

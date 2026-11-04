@@ -623,6 +623,8 @@ class ProposalApproval(Base):
     approver_id: Mapped[UUID]
     decision: Mapped[str] = mapped_column(String(16))
     notes: Mapped[str] = mapped_column(Text, default="")
+    # The author approved their own proposal as the workspace's only approver.
+    self_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

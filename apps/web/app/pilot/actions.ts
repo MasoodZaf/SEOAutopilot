@@ -343,7 +343,11 @@ export async function approveProposalAction(formData: FormData): Promise<never> 
   try {
     await apiJson(`/v1/proposals/${proposalId}/approvals`, {
       method: "POST",
-      body: JSON.stringify({decision: "approved", notes: "Approved from web dashboard"}),
+      body: JSON.stringify({
+        decision: "approved",
+        notes: "Approved from web dashboard",
+        self_review: formData.get("self_review") === "yes",
+      }),
     });
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
