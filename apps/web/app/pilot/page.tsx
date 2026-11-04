@@ -166,9 +166,7 @@ const errorMessages: Record<string, string> = {
   "verification-challenge-expired": "The verification record expired. Generate a fresh record.",
   "pilot-session-not-configured": "The local pilot session is not configured yet.",
   authentication_not_configured: "The local pilot session is not available.",
-  site_not_verified: "Verify site ownership before connecting data or making changes.",
-  preview_crawl_daily_limit: "This site has had its quick audit today. Verify the domain for full crawls, or try again tomorrow.",
-  preview_crawl_workspace_limit: "This workspace has run five quick audits today. Verify a domain for full crawls, or try again tomorrow.",
+  site_not_verified: "Verify site ownership before connecting data or crawling.",
   calibration_run_already_open: "A calibration review set is already open.",
   no_opportunities: "Run and analyze a crawl before creating a review set.",
   page_has_too_few_answered_questions: "The source file has fewer than two question headings with a 15–100 word paragraph directly under them, so there is nothing to declare.",
@@ -245,9 +243,7 @@ async function loadPilot(requestedHost: string | undefined): Promise<{
     // The API ranks only what the latest analyzed crawl confirmed, and counts
     // the open issues it did not re-check (pages a page-limited crawl did not
     // reach). Those are left out of the queue, not closed.
-    // An unverified site can run a small preview crawl, so its findings are
-    // shown too; acting on them still waits for verification.
-    const oppResult: {data: Opportunity[]; meta?: {not_rechecked?: number}} = site.status === "active" || site.status === "pending_verification"
+    const oppResult: {data: Opportunity[]; meta?: {not_rechecked?: number}} = site.status === "active"
       ? await apiJson<{data: Opportunity[]; meta?: {not_rechecked?: number}}>(`/v1/sites/${site.id}/opportunities?limit=20&status=open`)
       : {data: []};
     
@@ -735,52 +731,9 @@ export default async function PilotPage({searchParams}: PageProps) {
             </Link>
           </Panel>
         ) : data.site.status !== "active" ? (
-          <>
-          {data.site.status === "pending_verification" && (
-            <section aria-labelledby="quick-audit-heading" className="flex flex-col gap-6">
-              <SectionHead
-                index="01"
-                id="quick-audit-heading"
-                title="Quick audit"
-                description="See what is holding this site back while DNS propagates. It reads up to 25 public pages, honours robots.txt and changes nothing."
-              />
-              <CrawlPanel crawls={data.crawls ?? []} now={data.renderedAt ?? new Date().toISOString()}>
-                <form action={startFirstCrawl}>
-                  <input type="hidden" name="site_host" value={target.host} />
-                  <button type="submit" disabled={crawlActive} className={crawlActive ? smallButton.secondary : smallButton.primary}>
-                    {crawlActive ? "Audit running" : data.latestCrawl ? "Run quick audit again" : "Run quick audit"}
-                  </button>
-                </form>
-              </CrawlPanel>
-              {data.opportunities.length > 0 ? (
-                <Panel className="overflow-hidden">
-                  <ol className="divide-y divide-rule">
-                    {data.opportunities.slice(0, 5).map((opportunity, index) => (
-                      <li key={opportunity.id} className="grid grid-cols-[2.5rem_1fr] gap-x-4 px-6 py-4">
-                        <span className="figure pt-0.5 text-[22px] text-ink-faint tabular-nums">
-                          {String(index + 1).padStart(2, "0")}
-                        </span>
-                        <div className="min-w-0">
-                          <h3 className="text-[14px] leading-6 font-medium text-pretty text-ink">{opportunity.title}</h3>
-                          {opportunity.page_url && (
-                            <p className="mt-1 font-mono text-[12px] break-all text-accent">{opportunity.page_url}</p>
-                          )}
-                          <p className="mt-1 text-[12px] leading-5 text-pretty text-ink-soft">{advisoryFor(opportunity.title).correction}</p>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                  <p className="border-t border-rule px-6 py-4 text-[12px] leading-5 text-pretty text-ink-faint">
-                    {data.opportunities.length > 5 ? `${data.opportunities.length - 5} more found. ` : ""}
-                    Verify the domain below to crawl every page and turn these into fixes you can review.
-                  </p>
-                </Panel>
-              ) : null}
-            </section>
-          )}
           <section aria-labelledby="dns-heading" className="flex flex-col gap-6">
             <SectionHead
-              index={data.site.status === "pending_verification" ? "02" : "01"}
+              index="01"
               id="dns-heading"
               title="Prove you own this domain"
               description={`Add the following DNS TXT record to verify ownership of ${data.site.canonical_origin}.`}
@@ -844,7 +797,6 @@ export default async function PilotPage({searchParams}: PageProps) {
               )}
             </Panel>
           </section>
-          </>
         ) : (
           <>
             {/* 01 — Evidence */}

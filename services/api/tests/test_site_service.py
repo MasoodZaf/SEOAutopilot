@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import CrawlCreate, SiteCreate
 from app.core.context import Role, TenantContext
 from app.db.models import AuditEvent, CrawlJob, OutboxEvent, Site, SiteVerificationChallenge
-from app.services.sites import PREVIEW_MAX_DEPTH, PREVIEW_MAX_PAGES, SiteService
+from app.services.sites import SiteService
 
 
 def context(role: Role = Role.OWNER) -> TenantContext:
@@ -81,63 +81,21 @@ async def test_challenge_stores_hash_not_raw_token() -> None:
     assert challenge.status == "pending"
 
 
-def unverified_site(tenant_context: TenantContext, site_status: str = "pending_verification") -> Site:
-    return Site(
+@pytest.mark.asyncio
+async def test_crawl_requires_verified_site() -> None:
+    tenant_context = context()
+    session, mocked = session_mock()
+    site = Site(
         id=UUID("019d0000-0000-7000-8000-000000000006"),
         tenant_id=tenant_context.tenant_id,
         name="Example",
         canonical_origin="https://example.com",
         normalized_host="example.com",
-        status=site_status,
+        status="pending_verification",
     )
-
-
-@pytest.mark.asyncio
-async def test_an_unverified_site_gets_a_small_preview_crawl() -> None:
-    tenant_context = context(Role.OWNER)
-    session, mocked = session_mock()
-    # site, crawls of this site today, preview crawls in the workspace today, active crawl
-    mocked.scalar = AsyncMock(side_effect=[unverified_site(tenant_context), 0, 2, None])
-
-    async def flush_crawl() -> None:
-        crawl = cast(CrawlJob, mocked.add.call_args.args[0])
-        crawl.id = UUID("019d0000-0000-7000-8000-000000000011")
-
-    mocked.flush = AsyncMock(side_effect=flush_crawl)
-    crawl = await SiteService(session, tenant_context).create_crawl(
-        UUID("019d0000-0000-7000-8000-000000000006"), CrawlCreate(max_pages=500, max_depth=10)
-    )
-    assert crawl.config_snapshot["max_pages"] == PREVIEW_MAX_PAGES
-    assert crawl.config_snapshot["max_depth"] == PREVIEW_MAX_DEPTH
-    assert crawl.config_snapshot["preview"] is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("counts", "code"),
-    [((1, 0), "preview_crawl_daily_limit"), ((0, 5), "preview_crawl_workspace_limit")],
-)
-async def test_preview_crawls_are_rate_limited(counts: tuple[int, int], code: str) -> None:
-    tenant_context = context(Role.OWNER)
-    session, mocked = session_mock()
-    mocked.scalar = AsyncMock(side_effect=[unverified_site(tenant_context), *counts])
+    mocked.scalar = AsyncMock(return_value=site)
     with pytest.raises(HTTPException) as error:
-        await SiteService(session, tenant_context).create_crawl(
-            UUID("019d0000-0000-7000-8000-000000000006"), CrawlCreate()
-        )
-    assert error.value.status_code == 429
-    assert error.value.detail == code
-
-
-@pytest.mark.asyncio
-async def test_a_suspended_site_cannot_crawl_at_all() -> None:
-    tenant_context = context()
-    session, mocked = session_mock()
-    mocked.scalar = AsyncMock(return_value=unverified_site(tenant_context, "suspended"))
-    with pytest.raises(HTTPException) as error:
-        await SiteService(session, tenant_context).create_crawl(
-            UUID("019d0000-0000-7000-8000-000000000006"), CrawlCreate()
-        )
+        await SiteService(session, tenant_context).create_crawl(site.id, CrawlCreate())
     assert error.value.status_code == 409
     assert error.value.detail == "site_not_verified"
 
