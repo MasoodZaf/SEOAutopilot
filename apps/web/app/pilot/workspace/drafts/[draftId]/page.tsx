@@ -67,7 +67,7 @@ const ERRORS: Record<string, string> = {
   blog_path_template_invalid: "This site's blog path setting is not usable. It must contain {slug} and stay inside the repository.",
   content_draft_already_submitted: "This draft has already been sent for approval.",
   blog_template_not_found: "The page this site's posts are laid out like was not found in the repository. Pick another under Adjust governance → Blog posts.",
-  blog_template_needs_one_main_element: "The layout page has no single <main> element to hold the post. Pick a page whose content sits in one <main>.",
+  blog_template_needs_one_main_element: "The layout page has neither one <main> element nor a nav-and-footer layout to place the post in. Pick another page.",
   blog_template_needs_head_and_title: "The layout page has no <head> and <title>, so the post cannot take its own title.",
   blog_template_is_noindex: "The layout page is set to noindex, and a post copied from it would be hidden from search. Pick another page.",
   insufficient_permissions_to_create_proposal: "Your role cannot send changes for approval.",
