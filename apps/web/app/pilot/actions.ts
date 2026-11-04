@@ -45,8 +45,15 @@ function redirectFresh(path: string): never {
   redirect(path);
 }
 
-function errorUrl(host: string, code: string): string {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function errorUrl(host: string, code: string, proposalId?: string): string {
   const safeCode = /^[a-z0-9_-]+$/i.test(code) ? code : "unexpected-error";
+  // A refused approval or deploy is shown on that proposal's card, and the
+  // page opens there: a banner at the top was easy to miss below the fold.
+  if (proposalId && UUID_RE.test(proposalId)) {
+    return `${pilotPath(host, {error: safeCode, failed: proposalId})}#proposal-${proposalId}`;
+  }
   return pilotPath(host, {error: safeCode});
 }
 
@@ -354,7 +361,7 @@ export async function approveProposalAction(formData: FormData): Promise<never> 
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error", proposalId));
   }
   redirectFresh(pilotPath(host, {proposal: "approved"}));
 }
@@ -373,7 +380,7 @@ export async function deployProposalAction(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error", proposalId));
   }
   redirectFresh(pilotPath(host, {proposal: "deployed"}));
 }

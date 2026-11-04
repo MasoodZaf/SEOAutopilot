@@ -156,6 +156,7 @@ type PageProps = {
     governance?: string;
     simulation?: string;
     proposal?: string;
+    failed?: string;
     site?: string;
     dns_provider?: string;
   }>;
@@ -402,7 +403,7 @@ const smallButton = {
 } as const;
 
 export default async function PilotPage({searchParams}: PageProps) {
-  const {error, governance: govUpdated, simulation, proposal: propMsg, site: requestedHost} = await searchParams;
+  const {error, governance: govUpdated, simulation, proposal: propMsg, failed, site: requestedHost} = await searchParams;
   const data = await loadPilot(requestedHost);
   // A placeholder only when the workspace has no site at all -- in which case
   // the body below renders the "add a site" panel and nothing that reads these
@@ -422,6 +423,8 @@ export default async function PilotPage({searchParams}: PageProps) {
   const selectedChallenge = challenge?.siteId === data.site?.id ? challenge : undefined;
   const performanceIdempotencyKey = randomUUID();
   const gov = data.governance;
+  // A refused approval or deploy is shown on its own card when that card is listed.
+  const failedHere = Boolean(error && failed && data.proposals?.some((item) => item.id === failed));
   const crawlActive = Boolean(data.latestCrawl && ["queued", "running"].includes(data.latestCrawl.status));
 
   return (
@@ -541,9 +544,9 @@ export default async function PilotPage({searchParams}: PageProps) {
       </header>
 
       <div className="mx-auto flex max-w-6xl flex-col gap-14 px-6 py-10">
-        {(error || govUpdated || simulation || propMsg) && (
+        {((error && !failedHere) || govUpdated || simulation || propMsg) && (
           <div className="flex flex-col gap-2">
-            {error && (
+            {error && !failedHere && (
               <Note tone="stop" role="alert">
                 {errorMessages[error] ?? `Error: ${error}`}
               </Note>
@@ -1118,7 +1121,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               ) : (
                 <div className="flex flex-col gap-4">
                   {data.proposals.map((prop) => (
-                    <Panel as="article" key={prop.id} className="overflow-hidden">
+                    <Panel as="article" key={prop.id} id={`proposal-${prop.id}`} className="scroll-mt-24 overflow-hidden">
                       <div className="flex flex-wrap items-start justify-between gap-3 px-6 pt-5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
@@ -1142,6 +1145,13 @@ export default async function PilotPage({searchParams}: PageProps) {
                           </pre>
                         )}
                       </div>
+                      {failedHere && failed === prop.id && error ? (
+                        <div className="border-t border-rule px-6 pt-3">
+                          <Note tone="stop" role="alert">
+                            {errorMessages[error] ?? `Error: ${error}`}
+                          </Note>
+                        </div>
+                      ) : null}
                       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule px-6 py-3">
                         <span className="font-mono text-[12px] break-all text-ink-faint">{prop.target_path}</span>
                         <div className="flex gap-2">
