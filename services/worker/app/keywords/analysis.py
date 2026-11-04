@@ -160,8 +160,13 @@ async def run_keyword_analysis(
         tenant_id, site_id, routine_run_id, ALGORITHM_VERSION,
         window_start, window_end, len(metrics), len(clusters), digest,
     )
-    # A rerun of the same window replaces its clusters wholesale, so a stale
-    # cluster from an earlier evidence set cannot survive.
+    # A rerun of the same window refreshes its clusters in place, keyed by
+    # cluster_key, so a cluster keeps its id. Content briefs hang off that id
+    # (ON DELETE CASCADE) and drafts hang off briefs: deleting and recreating
+    # the clusters erased every brief the daily rerun touched, and once a brief
+    # had a draft the delete would fail outright. Members are rebuilt wholesale,
+    # and a cluster the new evidence no longer forms is removed -- unless a
+    # draft was written from its brief, which keeps it, memberless.
     await connection.execute(
         """
         DELETE FROM keyword_cluster_member
@@ -169,10 +174,6 @@ async def run_keyword_analysis(
           SELECT id FROM keyword_cluster WHERE tenant_id=$1 AND analysis_run_id=$2
         )
         """,
-        tenant_id, run_id,
-    )
-    await connection.execute(
-        "DELETE FROM keyword_cluster WHERE tenant_id=$1 AND analysis_run_id=$2",
         tenant_id, run_id,
     )
 
@@ -185,6 +186,20 @@ async def run_keyword_analysis(
               best_position,average_position,striking_distance_count,
               primary_page_id,competing_page_count,opportunity_score)
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            ON CONFLICT(analysis_run_id,cluster_key) DO UPDATE SET
+              label=EXCLUDED.label,
+              intent=EXCLUDED.intent,
+              answer_engine_candidate=EXCLUDED.answer_engine_candidate,
+              member_count=EXCLUDED.member_count,
+              clicks=EXCLUDED.clicks,
+              impressions=EXCLUDED.impressions,
+              ctr=EXCLUDED.ctr,
+              best_position=EXCLUDED.best_position,
+              average_position=EXCLUDED.average_position,
+              striking_distance_count=EXCLUDED.striking_distance_count,
+              primary_page_id=EXCLUDED.primary_page_id,
+              competing_page_count=EXCLUDED.competing_page_count,
+              opportunity_score=EXCLUDED.opportunity_score
             RETURNING id
             """,
             tenant_id, site_id, run_id, cluster.label[:200], cluster.cluster_key[:200],
@@ -209,6 +224,20 @@ async def run_keyword_analysis(
                 for member in cluster.members
             ],
         )
+
+    await connection.execute(
+        """
+        DELETE FROM keyword_cluster c
+        WHERE c.tenant_id=$1 AND c.analysis_run_id=$2
+          AND NOT (c.cluster_key = ANY($3::text[]))
+          AND NOT EXISTS (
+            SELECT 1 FROM content_brief b
+            JOIN content_draft d ON d.content_brief_id=b.id AND d.tenant_id=b.tenant_id
+            WHERE b.tenant_id=c.tenant_id AND b.keyword_cluster_id=c.id
+          )
+        """,
+        tenant_id, run_id, [cluster.cluster_key[:200] for cluster in clusters],
+    )
 
     return {
         "analysis_run_id": str(run_id),
