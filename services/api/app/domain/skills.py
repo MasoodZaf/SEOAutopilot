@@ -134,6 +134,20 @@ SKILLS: tuple[Skill, ...] = (
         "Run a crawl and audit every day.",
     ),
     Skill(
+        key="search_performance",
+        name="Search Console performance",
+        description=(
+            "Clicks, impressions, average position and click-through rate from Search "
+            "Console for the last 28 days against the 28 before, and the pages that "
+            "earn or lose the most impressions."
+        ),
+        effect=SkillEffect.READ,
+        allowed_roles=ALL_ROLES,
+        strong_triggers=frozenset({"traffic", "clicks", "impressions", "performance", "console"}),
+        weak_triggers=frozenset({"ranking", "rankings", "position", "ctr", "google", "visitors"}),
+        example="How is search traffic doing this month?",
+    ),
+    Skill(
         key="keyword_research",
         name="SEO and AEO keyword research",
         description=(

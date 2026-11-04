@@ -112,6 +112,49 @@ function AgentBody({body}: {body: string}) {
   );
 }
 
+/**
+ * Follow-up actions the model suggested. The model cannot run them: each is a
+ * button that sends the skill's own example through the fixed registry, under
+ * the same role check as the Skills tab.
+ */
+function SuggestedSkills({
+  evidence,
+  siteHost,
+  sessionId,
+}: {
+  evidence: Array<Record<string, unknown>>;
+  siteHost: string;
+  sessionId: string;
+}) {
+  const suggestions = evidence.filter(
+    (item): item is {kind: string; key: string; name: string; example: string} =>
+      item.kind === "suggested_skill" &&
+      typeof item.key === "string" &&
+      typeof item.name === "string" &&
+      typeof item.example === "string",
+  );
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-rule pt-3">
+      {suggestions.map((item) => (
+        <form key={item.key} action={sendMessage}>
+          <input type="hidden" name="site_host" value={siteHost} />
+          <input type="hidden" name="session_id" value={sessionId} />
+          <input type="hidden" name="body" value={item.example} />
+          <input type="hidden" name="skill_key" value={item.key} />
+          <button
+            type="submit"
+            title={item.example}
+            className="rounded-full border border-good-rule bg-good-soft px-3 py-1 text-[12px] font-medium text-good hover:bg-good-soft"
+          >
+            {item.name}
+          </button>
+        </form>
+      ))}
+    </div>
+  );
+}
+
 export default async function WorkspacePage({searchParams}: {searchParams: Promise<Search>}) {
   const params = await searchParams;
   const tab: WorkspaceTab = resolveTab(one(params.tab));
@@ -290,6 +333,13 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                           )}
                         </div>
                         {message.role === "agent" ? <AgentBody body={message.body} /> : <p className="text-sm text-ink-soft">{message.body}</p>}
+                        {message.role === "agent" && (
+                          <SuggestedSkills
+                            evidence={message.evidence_json}
+                            siteHost={target.host}
+                            sessionId={activeSession.id}
+                          />
+                        )}
                       </li>
                     ))}
                     {messages.length === 0 && <li className={muted}>No messages yet. Try one of the examples on the Skills tab.</li>}
@@ -305,11 +355,11 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                       rows={3}
                       required
                       maxLength={8000}
-                      placeholder="Ask for an audit, keyword clusters, sitemap coverage, competitors, or the weekly report…"
+                      placeholder="Ask anything about this site: why traffic dropped, what to fix first, which pages AI search cites…"
                       className="rounded-xl border border-rule-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-soft"
                     />
                     <div className="flex items-center justify-between gap-3">
-                      <p className={muted}>The agent reads stored evidence and can queue analysis. It never publishes a change.</p>
+                      <p className={muted}>Answers come from this site&apos;s own crawl, Search Console and citation records. Actions are buttons you press; the agent never changes the site.</p>
                       <button type="submit" className="rounded-full border border-good-rule bg-good-soft px-4 py-1.5 text-xs font-medium text-good hover:bg-good-soft">
                         Send
                       </button>

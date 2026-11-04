@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
 from app.db.models import (
+    AgentMessage,
     AuditEvent,
     Connector,
     ContentBrief,
@@ -93,6 +94,26 @@ def _hash(payload: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+async def workspace_model_spend(session: AsyncSession, tenant_id: UUID) -> int:
+    """This month's spend on the workspace's own keys: drafts plus chat answers.
+
+    One budget, so a busy chat cannot leave nothing for drafting unnoticed and
+    the other way round.
+    """
+    since = month_start(datetime.now(UTC))
+    drafts = await session.scalar(
+        select(func.coalesce(func.sum(ContentDraft.cost_micros), 0)).where(
+            ContentDraft.tenant_id == tenant_id, ContentDraft.created_at >= since
+        )
+    )
+    chat = await session.scalar(
+        select(func.coalesce(func.sum(AgentMessage.cost_micros), 0)).where(
+            AgentMessage.tenant_id == tenant_id, AgentMessage.created_at >= since
+        )
+    )
+    return int(drafts or 0) + int(chat or 0)
+
+
 def month_start(now: datetime) -> datetime:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -131,13 +152,7 @@ class ContentDraftService:
         return list(rows)
 
     async def spent_this_month(self) -> int:
-        spent = await self.session.scalar(
-            select(func.coalesce(func.sum(ContentDraft.cost_micros), 0)).where(
-                ContentDraft.tenant_id == self.context.tenant_id,
-                ContentDraft.created_at >= month_start(datetime.now(UTC)),
-            )
-        )
-        return int(spent or 0)
+        return await workspace_model_spend(self.session, self.context.tenant_id)
 
     async def _has_key(self, provider: str) -> bool:
         """Whether the workspace stored its own key for this provider.

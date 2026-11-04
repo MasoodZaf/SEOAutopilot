@@ -202,7 +202,10 @@ async def process_draft(
 
     now = datetime.now(UTC)
     spent = await connection.fetchval(
-        "SELECT coalesce(sum(cost_micros),0) FROM content_draft WHERE tenant_id=$1 AND created_at>=$2",
+        "SELECT (SELECT coalesce(sum(cost_micros),0) FROM content_draft"
+        " WHERE tenant_id=$1 AND created_at>=$2)"
+        " + (SELECT coalesce(sum(cost_micros),0) FROM agent_message"
+        " WHERE tenant_id=$1 AND created_at>=$2)",
         tenant_id,
         now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
     )
