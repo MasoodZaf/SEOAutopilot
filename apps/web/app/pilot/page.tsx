@@ -564,7 +564,7 @@ export default async function PilotPage({searchParams}: PageProps) {
           <section aria-labelledby="governance-heading">
             <h2 id="governance-heading" className="sr-only">Governance</h2>
             <Panel as="div" className="overflow-hidden">
-              <dl className="grid grid-cols-2 divide-rule sm:grid-cols-3 lg:grid-cols-5 lg:divide-x">
+              <div className="grid grid-cols-2 divide-rule sm:grid-cols-3 lg:grid-cols-5 lg:divide-x">
                 <Metric
                   className="border-b border-rule p-6 lg:border-b-0"
                   label="Operation mode"
@@ -604,7 +604,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                   value={gov.freeze_window_start ? "Set" : "None"}
                   hint={gov.freeze_window_start ? "Scheduled" : "No window active"}
                 />
-              </dl>
+              </div>
               {data.site && (
                 <details className="group border-t border-rule">
                   <summary className="flex items-center gap-2 px-6 py-3 text-[13px] font-medium text-ink-soft transition-colors hover:text-ink">
@@ -914,12 +914,12 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <Panel className="p-6">
                   <h3 className="font-display text-[15px] font-medium tracking-tight text-ink">Google Search Console</h3>
                   {data.searchPerformance && data.searchPerformance.rows > 0 ? (
-                    <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
+                    <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
                       <Metric label="Clicks" value={data.searchPerformance.clicks} />
                       <Metric label="Impressions" value={data.searchPerformance.impressions} />
                       <Metric label="Click-through rate" value={data.searchPerformance.ctr === null ? "—" : (data.searchPerformance.ctr * 100).toFixed(1)} unit={data.searchPerformance.ctr === null ? undefined : "%"} />
                       <Metric label="Average position" value={data.searchPerformance.position === null ? "—" : data.searchPerformance.position.toFixed(1)} />
-                    </dl>
+                    </div>
                   ) : (
                     <p className="mt-4 text-[13px] leading-6 text-pretty text-ink-faint">No Search Console data yet. Connect Google under Settings, then wait for the daily sync.</p>
                   )}
@@ -928,12 +928,12 @@ export default async function PilotPage({searchParams}: PageProps) {
                   <h3 className="font-display text-[15px] font-medium tracking-tight text-ink">Google Analytics 4</h3>
                   {data.engagement && data.engagement.rows > 0 ? (
                     <>
-                      <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
+                      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
                         <Metric label="Sessions" value={data.engagement.sessions} />
                         <Metric label="Engagement rate" value={data.engagement.engagement_rate === null ? "—" : (data.engagement.engagement_rate * 100).toFixed(0)} unit={data.engagement.engagement_rate === null ? undefined : "%"} />
                         <Metric label="Page views" value={data.engagement.views} />
                         <Metric label="Key events" value={data.engagement.key_events} />
-                      </dl>
+                      </div>
                       <table className="mt-8 w-full text-left text-[12px]">
                         <caption className="eyebrow mb-2 text-left">Top landing pages</caption>
                         <thead>
@@ -1140,7 +1140,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                           isModified={true}
                         />
                         {prop.diff_unified && (
-                          <pre className="max-h-72 overflow-auto rounded-xl border border-rule bg-sunk p-4 font-mono text-[12px] leading-5 text-ink-soft">
+                          <pre tabIndex={0} aria-label={`Diff of ${prop.target_path}`} className="max-h-72 overflow-auto rounded-xl border border-rule bg-sunk p-4 font-mono text-[12px] leading-5 text-ink-soft focus-visible:outline-2 focus-visible:outline-accent">
                             {prop.diff_unified}
                           </pre>
                         )}
@@ -1271,7 +1271,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         <span className="font-mono text-[12px] text-ink tabular">{Math.round(m.confidence_score * 100)}%</span>
                       </div>
                       <Meter className="mt-2" label="Evidence completeness" value={m.confidence_score} tone="good" />
-                      <dl className="mt-6 grid grid-cols-2 gap-6">
+                      <div className="mt-6 grid grid-cols-2 gap-6">
                         <Metric
                           label="Clicks delta"
                           value={
@@ -1293,7 +1293,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                           }
                           unit={typeof m.delta_metrics?.position_delta === "number" ? "ranks" : undefined}
                         />
-                      </dl>
+                      </div>
                       {m.annotations?.length > 0 && (
                         <p className="mt-5 border-t border-rule pt-4 text-[12px] leading-5 text-pretty text-ink-faint">{m.annotations[0]}</p>
                       )}

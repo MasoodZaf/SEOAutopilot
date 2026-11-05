@@ -294,7 +294,7 @@ export default async function BriefPage({params, searchParams}: PageProps) {
               shown the view is recorded in the audit trail.
             </p>
             {members.length ? (
-              <Panel as="div" className="mt-4 overflow-x-auto">
+              <Panel as="div" tabIndex={0} role="region" aria-label="Brief evidence table" className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[520px] text-left text-[13px]">
                   <thead className="text-ink-faint">
                     <tr>

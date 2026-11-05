@@ -162,7 +162,7 @@ export function RedditTab({
                     <button type="submit" className={`${secondary} self-start`}>Save edits</button>
                   </form>
                 ) : (
-                  <pre className="mt-2 max-h-56 overflow-auto rounded-xl border border-rule bg-sunk p-3 text-[13px] whitespace-pre-wrap text-ink-soft">
+                  <pre tabIndex={0} aria-label="Draft text" className="mt-2 max-h-56 overflow-auto rounded-xl border border-rule bg-sunk p-3 text-[13px] whitespace-pre-wrap text-ink-soft">
                     {draft.kind === "post" ? `${draft.title}\n\n${draft.body}` : draft.body}
                   </pre>
                 )}

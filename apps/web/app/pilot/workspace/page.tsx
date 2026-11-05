@@ -545,7 +545,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               {clusters.length === 0 ? (
                 <div className="mt-3"><Empty>No keyword analysis yet. Connect Search Console, then run the keyword refresh routine.</Empty></div>
               ) : (
-                <div className="mt-3 overflow-x-auto">
+                <div tabIndex={0} role="region" aria-label="Scrollable table" className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[640px] text-left text-sm">
                     <thead className="text-xs uppercase tracking-wide text-ink-faint">
                       <tr>
@@ -749,7 +749,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                       {citations.history.slice(1, 6).map((run) => `${run.cited}/${run.answers}`).join(" · ")}
                     </p>
                   )}
-                  <div className="mt-4 overflow-x-auto">
+                  <div tabIndex={0} role="region" aria-label="Scrollable table" className="mt-4 overflow-x-auto">
                     <table className="w-full min-w-[32rem] text-left text-sm">
                       <thead>
                         <tr className="border-b border-rule text-xs text-ink-faint">

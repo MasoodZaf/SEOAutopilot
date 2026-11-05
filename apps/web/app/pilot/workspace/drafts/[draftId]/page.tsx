@@ -394,7 +394,7 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               <h2 id="diff-heading" className="font-display text-[22px] font-light tracking-tight text-ink">
                 Changed from the AI draft
               </h2>
-              <Panel as="div" className="mt-4 max-h-[32rem] overflow-auto">
+              <Panel as="div" tabIndex={0} role="region" aria-label="Post preview" className="mt-4 max-h-[32rem] overflow-auto">
                 <pre className="p-4 font-mono text-[12px] leading-5">
                   {diff.map((line, index) => (
                     <span
