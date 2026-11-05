@@ -1,0 +1,11 @@
+[Unit]
+Description=Tell a person that %i failed
+
+[Service]
+Type=oneshot
+# Optional: ALERT_WEBHOOK_URL=... (an ntfy topic, or a Slack incoming webhook).
+# Unset, the alert is a journal line and nothing leaves the box.
+EnvironmentFile=-/etc/seo-autopilot/alert.env
+ExecStart=/opt/seo-autopilot/infra/scripts/alert.sh %i
+StandardOutput=journal
+StandardError=journal

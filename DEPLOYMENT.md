@@ -157,14 +157,26 @@ draining, connectors that have been asking for re-consent for days, rollbacks
 nothing has ever checked, and a backup directory that stopped being written to.
 
 ```bash
-cp infra/scripts/seo-autopilot-health.* /etc/systemd/system/
-systemctl daemon-reload && systemctl enable --now seo-autopilot-health.timer
+cp infra/scripts/seo-autopilot-{health,conditions,alert@}.* /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now seo-autopilot-health.timer seo-autopilot-conditions.timer
 systemctl --failed          # a failing invariant shows up here
 journalctl -u seo-autopilot-health -n 50
 ```
 
-Hourly. A failing check exits non-zero, so it becomes a failed unit and a
-journal entry rather than a number on a dashboard nobody opens. It reads counts
+Two units, because systemd keeps one state per unit and the single unit this
+replaced sat red for days on a connector awaiting re-consent, so an open
+perimeter arrived as a non-event:
+
+| Unit | Runs | Checks | Red means |
+|---|---|---|---|
+| `seo-autopilot-health` | hourly | perimeter, stale leases, outbox backlog, unreconciled rollbacks, ownerless tenants, backup age | an emergency |
+| `seo-autopilot-conditions` | daily 08:00 | connectors awaiting re-consent, connectors not syncing, unmerged reverts — each over 7 days | a decision a person owes is overdue |
+
+Both have `OnFailure=seo-autopilot-alert@%n`. It sends the unit name and its
+`FAIL` lines (counts only) to `ALERT_WEBHOOK_URL` from
+`/etc/seo-autopilot/alert.env` — an ntfy topic or a Slack incoming webhook.
+Unset, the alert is a journal line and nothing leaves the box. It reads counts
 and ages across tenants on the relay role, never content.
 
 ### Timeouts

@@ -1,0 +1,15 @@
+[Unit]
+Description=SEO Autopilot decisions a person owes
+After=docker.service
+Requires=docker.service
+# Red only once overdue: a connector waiting a day for re-consent is a to-do,
+# one waiting a week is somebody who is not coming. Daily, so an overdue item
+# is one message a day rather than one an hour.
+OnFailure=seo-autopilot-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/seo-autopilot
+ExecStart=/bin/sh -c 'docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m app.cli.health --tier conditions --attention-days 7 --stale-connector-days 7 --stale-rollback-days 7'
+StandardOutput=journal
+StandardError=journal
