@@ -77,7 +77,7 @@ async def workspace(engine):
             )
     yield ids
     async with factory() as session, session.begin():
-        for table in ("outbox_event", "audit_event", "proposal_approval", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
+        for table in ("outbox_event", "audit_event", "rollback_receipt", "deployment_receipt", "proposal_approval", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
             await session.execute(text(f"DELETE FROM {table} WHERE tenant_id=:t"), {"t": ids["tenant"]})
         await session.execute(text("DELETE FROM tenant WHERE id=:t"), {"t": ids["tenant"]})
 
@@ -406,4 +406,42 @@ async def test_withdrawing_a_post_sends_its_draft_back_for_review(tenant_session
         second = await service.submit(draft.id)
         assert second.id != first.id
         assert second.status == "review_required"
+        await session.commit()
+
+
+@pytest.mark.parametrize(
+    ("result_status", "draft_status"),
+    [("applied", "ready"), ("pending", "submitted")],
+    ids=["closed-before-merge", "revert-pr-opened"],
+)
+async def test_a_post_rolled_back_before_it_merged_goes_back_for_review(
+    tenant_session_factory, workspace, result_status, draft_status
+):
+    """Closing a post's unmerged pull request takes nothing off the site; the
+    draft must come back so the fix can be sent again. A merged post with only
+    a revert pull request open is still live, so its draft stays sent."""
+    from app.db.models import DeploymentReceipt
+    from app.domain.deployments import RollbackRequest, RollbackResult
+    from app.services.governance import GovernanceService
+
+    class ClosingAdapter:
+        async def rollback(self, request: RollbackRequest) -> RollbackResult:
+            return RollbackResult(result_status, "https://github.com/o/r/pull/12", "h" * 64, "stub")
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+        proposal = await service.submit(draft.id)
+        proposal.status = "deployed"
+        session.add(DeploymentReceipt(
+            tenant_id=workspace["tenant"], site_id=proposal.site_id, proposal_id=proposal.id,
+            connector_type="github", idempotency_key=f"post-{result_status}",
+            external_ref="https://github.com/o/r/pull/12", manifest_json={"pull_request_number": 12},
+        ))
+        await session.flush()
+
+        await GovernanceService(session, ctx(workspace)).rollback_deployment(
+            proposal.id, "page unstyled", ClosingAdapter()
+        )
+        reopened = await service.get(draft.id)
+        assert reopened is not None and reopened.status == draft_status
         await session.commit()

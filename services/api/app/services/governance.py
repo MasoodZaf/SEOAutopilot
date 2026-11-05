@@ -445,6 +445,13 @@ class GovernanceService:
         receipt.status = "rolled_back" if rolled_back else "rollback_pending"
         proposal.status = "failed" if rolled_back else proposal.status
         proposal.updated_at = datetime.now(UTC)
+        if rolled_back:
+            # A post closed before it merged never went out: its draft goes
+            # back for review so the fix can be sent again, not redrafted.
+            # Imported here: proposals imports from this module's neighbours.
+            from app.services.proposals import reopen_draft
+
+            await reopen_draft(self.session, self.context, proposal, proposal.updated_at)
 
         event_payload = {
             "proposal_id": str(proposal.id),
