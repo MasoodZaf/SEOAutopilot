@@ -86,7 +86,7 @@ RETRY_WINDOW_DAYS = 14
 # deployment is recent, because the usual reason for failure is a pull request
 # still waiting to be merged -- and that reason expires.
 UNVERIFIED_SQL = """
-SELECT p.tenant_id, p.id AS proposal_id, pg.normalized_url, s.normalized_host
+SELECT p.tenant_id, p.id AS proposal_id, p.generator, pg.normalized_url, s.normalized_host
 FROM proposal p
 JOIN deployment_receipt r ON r.proposal_id = p.id AND r.tenant_id = p.tenant_id
 JOIN site s ON s.id = p.site_id AND s.tenant_id = p.tenant_id
@@ -108,6 +108,21 @@ WHERE p.status = 'deployed'
 ORDER BY r.deployed_at
 LIMIT :limit
 """
+
+
+# A sitemap entry is filed against the post it lists, but its lines are only
+# ever in the sitemap. Checked against the post's page it fails for ever: on
+# 2026-11-05 TheCalcHive's sitemap listed the post and its proposal still said
+# "4 of 4 expected line(s) absent".
+SITEMAP_GENERATOR = "sitemap_entry"
+
+
+def evidence_url(generator: str | None, page_url: str) -> str:
+    """The URL whose response shows whether this change is live."""
+    if generator == SITEMAP_GENERATOR:
+        parts = urlsplit(page_url)
+        return f"{parts.scheme}://{parts.netloc}/sitemap.xml"
+    return page_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +187,7 @@ async def unverified(connection, limit: int) -> list[VerificationCandidate]:
         VerificationCandidate(
             tenant_id=row.tenant_id,
             proposal_id=row.proposal_id,
-            url=row.normalized_url,
+            url=evidence_url(row.generator, row.normalized_url),
             host=row.normalized_host,
         )
         for row in rows.all()

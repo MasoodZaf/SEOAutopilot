@@ -160,3 +160,12 @@ async def test_a_page_off_its_own_site_is_never_fetched_at_all() -> None:
     report, _ = await sweep([candidate(url="https://elsewhere.example/x")], verifying)
     assert report == VerifyReport(considered=1, unreachable=1)
     verifying.assert_not_awaited()
+
+
+def test_only_a_sitemap_entry_is_looked_for_somewhere_else() -> None:
+    from app.services.deployment_verification import evidence_url
+
+    post = "https://thecalchive.com/blog/emi-worked-example"
+    assert evidence_url("sitemap_entry", post) == "https://thecalchive.com/sitemap.xml"
+    assert evidence_url("h1_repair", post) == post
+    assert evidence_url(None, post) == post
