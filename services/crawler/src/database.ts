@@ -43,6 +43,10 @@ export async function claimCrawl(pool: Pool, tenantId: string, crawlId: string):
     }>(`UPDATE crawl_job c SET status='running',lease_until=now()+interval '2 minutes',last_heartbeat_at=now(),started_at=coalesce(started_at,now()),attempts=attempts+1,error_code=null
        FROM site s WHERE c.id=$1 AND c.tenant_id=$2 AND s.id=c.site_id AND s.tenant_id=c.tenant_id
        AND c.attempts<3 AND (c.status='queued' OR (c.status='running' AND c.lease_until<now()))
+       -- One running crawl per workspace: a second waits for a free turn rather
+       -- than taking another slot, so one tenant's sites cannot fill the crawler.
+       AND NOT EXISTS (SELECT 1 FROM crawl_job o WHERE o.tenant_id=c.tenant_id AND o.id<>c.id
+                       AND o.status='running' AND o.lease_until>=now())
        RETURNING c.id,c.tenant_id,c.site_id,c.config_snapshot,c.attempts,s.canonical_origin`, [crawlId, tenantId]);
     const row = result.rows[0];
     if (!row) {

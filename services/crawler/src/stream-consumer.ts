@@ -34,9 +34,9 @@ export function normalizeDatabaseUrl(value:string|undefined):string|undefined{
   return value?.replace("postgresql+asyncpg://","postgresql://");
 }
 
-export async function runConsumer():Promise<void>{
+export async function runConsumer(slot=0):Promise<void>{
   const redis=createClient({url:process.env.REDIS_URL});await redis.connect();
-  const pool=new Pool({connectionString:normalizeDatabaseUrl(process.env.DATABASE_URL),max:4});const consumer=`${hostname()}-${process.pid}`;
+  const pool=new Pool({connectionString:normalizeDatabaseUrl(process.env.DATABASE_URL),max:4});const consumer=`${hostname()}-${process.pid}-${slot}`;
   try{await redis.sendCommand(["XGROUP","CREATE",STREAM,GROUP,"0","MKSTREAM"])}catch(error){if(!(error instanceof Error)||!error.message.includes("BUSYGROUP"))throw error}
   for(;;){
     const claimed=parseClaimReply(await redis.sendCommand(["XAUTOCLAIM",STREAM,GROUP,consumer,"60000","0-0","COUNT","1"]));
