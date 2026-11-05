@@ -31,7 +31,8 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import Date, cast, func, select, text
+from sqlalchemy import Date, Text, and_, any_, bindparam, cast, func, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.context import Role, TenantContext
@@ -196,13 +197,17 @@ class VisibilityService:
         first_week = week_start(last) - timedelta(weeks=weeks - 1)
         rows = {first_week + timedelta(weeks=index): WeekRow(first_week + timedelta(weeks=index)) for index in range(weeks)}
 
+        # Summed per term per week, then per week, in the database: a site with
+        # thousands of search terms returned one row per term per week to be
+        # added up here, and at 10,000 pages that was most of a second.
+        branded = await self._branded_hashes(site, brand)
         week = cast(func.date_trunc("week", SearchMetric.metric_date), Date)
-        per_query = await self.session.execute(
+        per_query = (
             select(
                 week.label("week"),
-                SearchMetric.query_hash,
-                func.sum(SearchMetric.clicks).label("clicks"),
-                func.sum(SearchMetric.impressions).label("impressions"),
+                SearchMetric.query_hash.label("query_hash"),
+                func.coalesce(func.sum(SearchMetric.clicks), 0).label("clicks"),
+                func.coalesce(func.sum(SearchMetric.impressions), 0).label("impressions"),
             )
             .where(
                 SearchMetric.tenant_id == self.context.tenant_id,
@@ -211,28 +216,46 @@ class VisibilityService:
                 SearchMetric.metric_date <= last,
             )
             .group_by(week, SearchMetric.query_hash)
+            .subquery()
         )
-        per_query_rows = per_query.all()
-        branded = await self._branded_hashes(site, brand) if per_query_rows else set()
-        for bucket, query_hash, clicks, impressions in per_query_rows:
+        is_branded_query = per_query.c.query_hash == any_(
+            bindparam("branded", sorted(branded or ()), type_=ARRAY(Text))
+        )
+        zero_click = and_(
+            per_query.c.impressions >= ZERO_CLICK_MIN_IMPRESSIONS, per_query.c.clicks == 0
+        )
+        weekly = (
+            await self.session.execute(
+                select(
+                    per_query.c.week,
+                    func.sum(per_query.c.clicks),
+                    func.sum(per_query.c.impressions),
+                    func.coalesce(func.sum(per_query.c.clicks).filter(is_branded_query), 0),
+                    func.coalesce(func.sum(per_query.c.impressions).filter(is_branded_query), 0),
+                    func.count().filter(zero_click),
+                    func.coalesce(func.sum(per_query.c.impressions).filter(zero_click), 0),
+                ).group_by(per_query.c.week)
+            )
+        ).all()
+        for bucket, clicks, impressions, b_clicks, b_impressions, zero_count, zero_impr in weekly:
             row = rows.get(bucket)
             if row is None:
                 continue
-            row.clicks += clicks or 0
-            row.impressions += impressions or 0
+            row.clicks += float(clicks or 0)
+            row.impressions += float(impressions or 0)
             if branded is not None:
-                row.branded_clicks = row.branded_clicks or 0.0
-                row.branded_impressions = row.branded_impressions or 0.0
-                if query_hash in branded:
-                    row.branded_clicks += clicks or 0
-                    row.branded_impressions += impressions or 0
-            if (impressions or 0) >= ZERO_CLICK_MIN_IMPRESSIONS and not clicks:
-                row.zero_click_queries += 1
-                row.zero_click_impressions += impressions or 0
+                row.branded_clicks = (row.branded_clicks or 0.0) + float(b_clicks)
+                row.branded_impressions = (row.branded_impressions or 0.0) + float(b_impressions)
+            row.zero_click_queries += int(zero_count)
+            row.zero_click_impressions += float(zero_impr)
+        if not weekly:
+            # Nothing to split is not a split that failed.
+            branded = set()
         if branded is not None:
             for row in rows.values():
                 row.branded_clicks = row.branded_clicks or 0.0
                 row.branded_impressions = row.branded_impressions or 0.0
+        per_query_rows = weekly
 
         analytics_connected = await self._direct_sessions(site.id, rows, first_week, last)
         citation_runs = await self._citation_runs(site.id, first_week)
