@@ -11,7 +11,7 @@ const CONTACT = "support@oryxenlabs.com";
 
 export default function TermsPage() {
   return (
-    <Legal title="Terms of Service" updated="9 September 2026">
+    <Legal title="Terms of Service" updated="5 November 2026">
       <Section heading="What this is">
         <p>
           These terms cover the SEO Autopilot deployment at <code>seo.oryxenlabs.com</code>,
@@ -40,7 +40,8 @@ export default function TermsPage() {
         </p>
         <p>
           The credentials you provide are yours: your Google OAuth client, your GitHub App, your
-          API quota. You are responsible for keeping them within the terms of the providers that
+          API quota, and the AI provider key the assistant and drafting run on — that provider
+          bills you for what they use. You are responsible for keeping them within the terms of the providers that
           issued them.
         </p>
       </Section>
@@ -49,7 +50,9 @@ export default function TermsPage() {
         <p>
           SEO Autopilot gathers evidence, ranks opportunities and drafts changes. A proposal
           becomes a pull request on your repository only after a person approves it, and the
-          author of a change cannot approve their own. Change budgets, freeze windows and an
+          author of a change cannot approve their own — except in a workspace with a single approver,
+          where that person can approve their own change only after confirming each review step
+          themselves; inviting a second approver ends that. Change budgets, freeze windows and an
           emergency stop exist and are enforced.
         </p>
         <p>
@@ -84,7 +87,8 @@ export default function TermsPage() {
 
       <Section heading="Ending it">
         <p>
-          You may stop at any time: remove your credentials and delete your workspace. We may
+          You may stop at any time: remove your credentials, and ask us at {CONTACT} to delete your
+          workspace. We may
           suspend or end access, and because this is a testing deployment we may shut it down —
           with reasonable notice where we can give it. Contact{" "}
           <a className="underline" href={`mailto:${CONTACT}`}>{CONTACT}</a> for anything here.

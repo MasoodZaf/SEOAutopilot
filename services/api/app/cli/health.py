@@ -15,6 +15,17 @@ relay identity -- the role migration 0027 created for sweeps -- and it reads
 only counts and ages, never content.
 
     python -m app.cli.health --database-url "$RELAY_DATABASE_URL"
+
+The checks come in two kinds, and they run as two units because systemd keeps
+one state per unit. An *invariant* never fails in normal operation: a dead
+worker's lease, an undrained outbox, a backup that stopped. Any failure is an
+emergency and pages somebody. A *condition* is a decision a person owes -- a
+connector to re-consent, a revert to merge -- and can honestly wait days. Run
+together, a condition sitting red for a week hid every new invariant failure
+behind it, which is how an open perimeter once arrived as a non-event.
+
+    python -m app.cli.health --tier invariants    # green, or an emergency
+    python -m app.cli.health --tier conditions    # red only once overdue
 """
 
 from __future__ import annotations
@@ -25,8 +36,11 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import asyncpg
+
+Tier = Literal["invariant", "condition"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +49,7 @@ class Check:
     value: int
     threshold: int
     detail: str
+    tier: Tier = "invariant"
 
     @property
     def failing(self) -> bool:
@@ -63,9 +78,13 @@ SELECT count(*) FROM outbox_event
 WHERE published_at IS NULL AND occurred_at < now() - make_interval(mins => $1)
 """
 
+# Aged by when the connector last changed: one that broke this morning is a
+# person's to-do, one that has been broken for a week is a person who is not
+# coming. Only the second is worth turning red.
 REAUTH_SQL = """
 SELECT count(*) FROM connector
 WHERE status IN ('reauthorization_required', 'error')
+  AND updated_at < now() - make_interval(days => $1)
 """
 
 # A rollback whose revert nobody has merged or closed. The reconciler records
@@ -131,6 +150,7 @@ async def run_checks(
     outbox_backlog_minutes: int,
     stale_rollback_days: int,
     stale_connector_days: int,
+    attention_days: int = 0,
 ) -> list[Check]:
     connection = await asyncpg.connect(
         database_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -138,7 +158,7 @@ async def run_checks(
     try:
         stale_leases = await connection.fetchval(STALE_LEASE_SQL)
         backlog = await connection.fetchval(OUTBOX_BACKLOG_SQL, outbox_backlog_minutes)
-        reauth = await connection.fetchval(REAUTH_SQL)
+        reauth = await connection.fetchval(REAUTH_SQL, attention_days)
         stale_rollbacks = await connection.fetchval(STALE_ROLLBACK_SQL, stale_rollback_days)
         unreconciled = await connection.fetchval(UNRECONCILED_SQL)
         ownerless = await connection.fetchval(OWNERLESS_TENANT_SQL)
@@ -163,7 +183,9 @@ async def run_checks(
             "connectors_needing_attention",
             int(reauth or 0),
             0,
-            "connectors in reauthorization_required or error; a person has to re-consent",
+            f"connectors in reauthorization_required or error for over {attention_days} days;"
+            " a person has to re-consent",
+            "condition",
         ),
         Check(
             "unreconciled_rollbacks",
@@ -182,12 +204,14 @@ async def run_checks(
             int(stale_connectors or 0),
             0,
             f"active connectors that have read nothing for {stale_connector_days} days",
+            "condition",
         ),
         Check(
             "rollbacks_awaiting_a_decision",
             int(stale_rollbacks or 0),
             0,
             f"reverts open for over {stale_rollback_days} days; the change is still live",
+            "condition",
         ),
     ]
     if backup_dir is not None:
@@ -210,6 +234,14 @@ def _backup_age(directory: Path, max_age_hours: int) -> Check:
     return Check("backup_age_hours", hours, max_age_hours, f"newest dump is {newest.name}")
 
 
+def select_tier(checks: list[Check], tier: str) -> list[Check]:
+    if tier == "invariants":
+        return [check for check in checks if check.tier == "invariant"]
+    if tier == "conditions":
+        return [check for check in checks if check.tier == "condition"]
+    return checks
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -225,6 +257,18 @@ def main() -> int:
     # not failed, and a check that cries on every transient outage gets muted,
     # which is the same as not having it.
     parser.add_argument("--stale-connector-days", type=int, default=3)
+    parser.add_argument(
+        "--attention-days",
+        type=int,
+        default=0,
+        help="How long a connector may wait for re-consent before it counts.",
+    )
+    parser.add_argument(
+        "--tier",
+        choices=("all", "invariants", "conditions"),
+        default="all",
+        help="invariants page somebody; conditions are decisions a person owes.",
+    )
     arguments = parser.parse_args()
     if not arguments.database_url:
         print("refused: --database-url or RELAY_DATABASE_URL is required")
@@ -238,8 +282,10 @@ def main() -> int:
             outbox_backlog_minutes=arguments.outbox_backlog_minutes,
             stale_rollback_days=arguments.stale_rollback_days,
             stale_connector_days=arguments.stale_connector_days,
+            attention_days=arguments.attention_days,
         )
     )
+    checks = select_tier(checks, arguments.tier)
     for check in checks:
         print(check)
     failing = [check for check in checks if check.failing]

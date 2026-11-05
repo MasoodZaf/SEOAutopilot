@@ -33,11 +33,13 @@ status; the worst it can do is record that it could not find something.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from uuid import UUID
 
 import httpx
@@ -86,7 +88,7 @@ RETRY_WINDOW_DAYS = 14
 # deployment is recent, because the usual reason for failure is a pull request
 # still waiting to be merged -- and that reason expires.
 UNVERIFIED_SQL = """
-SELECT p.tenant_id, p.id AS proposal_id, pg.normalized_url, s.normalized_host
+SELECT p.tenant_id, p.id AS proposal_id, p.generator, pg.normalized_url, s.normalized_host
 FROM proposal p
 JOIN deployment_receipt r ON r.proposal_id = p.id AND r.tenant_id = p.tenant_id
 JOIN site s ON s.id = p.site_id AND s.tenant_id = p.tenant_id
@@ -108,6 +110,21 @@ WHERE p.status = 'deployed'
 ORDER BY r.deployed_at
 LIMIT :limit
 """
+
+
+# A sitemap entry is filed against the post it lists, but its lines are only
+# ever in the sitemap. Checked against the post's page it fails for ever: on
+# 2026-11-05 TheCalcHive's sitemap listed the post and its proposal still said
+# "4 of 4 expected line(s) absent".
+SITEMAP_GENERATOR = "sitemap_entry"
+
+
+def evidence_url(generator: str | None, page_url: str) -> str:
+    """The URL whose response shows whether this change is live."""
+    if generator == SITEMAP_GENERATOR:
+        parts = urlsplit(page_url)
+        return f"{parts.scheme}://{parts.netloc}/sitemap.xml"
+    return page_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,20 +189,65 @@ async def unverified(connection, limit: int) -> list[VerificationCandidate]:
         VerificationCandidate(
             tenant_id=row.tenant_id,
             proposal_id=row.proposal_id,
-            url=row.normalized_url,
+            url=evidence_url(row.generator, row.normalized_url),
             host=row.normalized_host,
         )
         for row in rows.all()
     ]
 
 
-async def fetch_live(client: httpx.AsyncClient, url: str) -> tuple[str, int]:
-    """The page as a visitor would get it, redirects followed.
+MAX_REDIRECTS = 5
 
-    A 4xx or 5xx is returned rather than raised: "the page 404s" is a real
-    verification outcome and belongs in the record, not in an exception.
+
+class UnsafeDestination(httpx.TransportError):
+    """A hop that resolves somewhere a visitor's browser could never reach.
+
+    The site's owner controls its DNS and its redirects, and a snippet of the
+    response is stored and shown back to them -- so a redirect to the metadata
+    service or a container on this host would be read out to the tenant. The
+    crawler refuses these too. Raised as a transport error so the sweep records
+    "could not reach", never "the change is absent".
     """
-    response = await client.get(url, follow_redirects=True)
+
+
+async def resolve(host: str, port: int) -> list[str]:
+    resolved = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return [str(sockaddr[0]) for *_, sockaddr in resolved]
+
+
+async def _require_public(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise UnsafeDestination(f"refused scheme or host: {parts.scheme}")
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    try:
+        addresses = await resolve(parts.hostname, port)
+    except OSError as error:
+        raise httpx.ConnectError(f"could not resolve {parts.hostname}") from error
+    for found in addresses:
+        address = ipaddress.ip_address(found)
+        if not address.is_global or address.is_multicast:
+            raise UnsafeDestination(f"{parts.hostname} resolves to a non-public address")
+
+
+async def fetch_live(client: httpx.AsyncClient, url: str) -> tuple[str, int]:
+    """The page as a visitor would get it, redirects followed one hop at a time.
+
+    Every hop is resolved and refused if it lands on a private, loopback,
+    link-local or reserved address. A 4xx or 5xx is returned rather than
+    raised: "the page 404s" is a real verification outcome and belongs in the
+    record, not in an exception.
+    """
+    for _ in range(MAX_REDIRECTS + 1):
+        await _require_public(url)
+        response = await client.get(url, follow_redirects=False)
+        location = response.headers.get("location")
+        if response.is_redirect and location:
+            url = urljoin(url, location)
+            continue
+        break
+    else:
+        raise httpx.TooManyRedirects(f"more than {MAX_REDIRECTS} redirects")
     body = response.text
     if len(body.encode("utf-8", "ignore")) > MAX_BODY_BYTES:
         body = body[: MAX_BODY_BYTES // 2]

@@ -14,6 +14,7 @@ from app.api.schemas import DeploymentCreate, ProposalApprovalCreate, ProposalCr
 from app.core.context import Role, TenantContext
 from app.db.models import (
     AuditEvent,
+    ContentDraft,
     DeploymentReceipt,
     Opportunity,
     OutboxEvent,
@@ -21,6 +22,7 @@ from app.db.models import (
     Proposal,
     ProposalApproval,
     Site,
+    TenantMembership,
 )
 from app.domain.deployments import (
     BatchDeploymentAdapter,
@@ -37,10 +39,27 @@ from app.domain.proposals import (
     generate_unified_diff,
     validate_proposal_content,
 )
+from app.domain.proposals import self_review_scope as domain_self_review_scope
 from app.domain.publishing import publish_blocked_reason
 
 ALLOWED_PROPOSAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER, Role.EDITOR, Role.DEVELOPER}
 ALLOWED_APPROVAL_ROLES = {Role.OWNER, Role.ADMIN, Role.SEO_MANAGER}
+# Risks a workspace's only approver may self-review. High risk covers
+# canonical, robots, redirect and template-wide changes, which always need a
+# second person.
+SELF_REVIEW_ROLES = {Role.OWNER, Role.ADMIN}
+
+
+
+def self_review_scope(proposal: Proposal) -> str | None:
+    return domain_self_review_scope(
+        risk=proposal.risk,
+        content_draft_id=proposal.content_draft_id,
+        target_type=proposal.target_type,
+        target_path=proposal.target_path,
+        before_content=proposal.before_content,
+        after_content=proposal.after_content,
+    )
 ALLOWED_DEPLOYMENT_ROLES = {Role.OWNER, Role.ADMIN, Role.DEVELOPER}
 # Publishing both deploys and makes live, so it needs a role that may do both:
 # a developer can open a pull request and a SEO manager can approve one, but
@@ -152,6 +171,45 @@ class ProposalService:
             target_type="github_file",
             target_path=target_path,
             before_content="",
+            after_content=after_content,
+            evidence_refs=evidence_refs,
+            expires_in_days=14,
+        )
+
+    async def create_generated_edit(
+        self,
+        site: Site,
+        *,
+        page_id: UUID,
+        generator: str,
+        title: str,
+        rationale: str,
+        target_path: str,
+        before_content: str,
+        after_content: str,
+        evidence_refs: dict[str, Any],
+    ) -> Proposal:
+        """An edit to an existing file that the product wrote from its own records.
+
+        No model wrote it. `before_content` is the file as read, so the
+        deployment's drift check refuses it if the file changed meanwhile.
+        """
+        if self.context.role not in ALLOWED_PROPOSAL_ROLES:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="insufficient_permissions_to_create_proposal",
+            )
+        return await self._create(
+            site,
+            opportunity_id=None,
+            page_id=page_id,
+            content_draft_id=None,
+            generator=generator,
+            title=title,
+            rationale=rationale,
+            target_type="github_file",
+            target_path=target_path,
+            before_content=before_content,
             after_content=after_content,
             evidence_refs=evidence_refs,
             expires_in_days=14,
@@ -355,6 +413,26 @@ class ProposalService:
             )
         )
 
+    async def is_sole_approver(self) -> bool:
+        """Whether the actor may self-review: the workspace's only active approver.
+
+        Counted from memberships at the moment of the decision, never cached:
+        inviting a second approver ends self-review for every later approval.
+        """
+        if self.context.role not in SELF_REVIEW_ROLES:
+            return False
+        approvers = await self.session.scalars(
+            select(TenantMembership.user_id).where(
+                TenantMembership.tenant_id == self.context.tenant_id,
+                TenantMembership.status == "active",
+                TenantMembership.role.in_([role.value for role in ALLOWED_APPROVAL_ROLES]),
+            )
+        )
+        return set(approvers) == {self.context.actor_id}
+
+    async def _reopen_draft(self, proposal: Proposal, now: datetime) -> None:
+        await reopen_draft(self.session, self.context, proposal, now)
+
     async def approve_proposal(
         self,
         proposal_id: UUID,
@@ -388,11 +466,33 @@ class ProposalService:
         # bad draft to clear it without spending a reviewer on a change nobody
         # wants. Holding a withdrawal to the approval rule protects nothing and
         # leaves the wrong change sitting in the queue.
+        self_reviewed = False
         if self.context.actor_id == proposal.author_id and command.decision != "rejected":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="author_cannot_approve_own_proposal",
-            )
+            sole = await self.is_sole_approver()
+            if not sole:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="author_cannot_approve_own_proposal",
+                )
+            # The only person who can approve anything here. Without this a
+            # one-person workspace can find problems but never fix one.
+            scope = self_review_scope(proposal)
+            if scope is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="self_review_not_allowed_for_risk",
+                )
+            if not command.self_review:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="self_review_confirmation_required",
+                )
+            if scope == "new_post" and not command.self_review_post:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="self_review_post_confirmation_required",
+                )
+            self_reviewed = True
 
         if self.context.role not in ALLOWED_APPROVAL_ROLES:
             raise HTTPException(
@@ -426,17 +526,19 @@ class ProposalService:
             approver_id=self.context.actor_id,
             decision=command.decision,
             notes=command.notes,
+            self_reviewed=self_reviewed,
         )
         self.session.add(approval)
 
         if command.decision == "rejected":
             proposal.status = "rejected"
+            await self._reopen_draft(proposal, now)
         else:
             # A proposal whose policy record lost this key fails closed to the
             # two-person rule rather than to a single approver.
             required_count = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
             distinct_approvers = prior_approver_ids | {self.context.actor_id}
-            if len(distinct_approvers) >= required_count:
+            if self_reviewed or len(distinct_approvers) >= required_count:
                 proposal.status = "approved"
             else:
                 proposal.status = "review_required"
@@ -448,6 +550,7 @@ class ProposalService:
             "decision": command.decision,
             "approver_id": str(self.context.actor_id),
             "resulting_status": proposal.status,
+            "self_reviewed": self_reviewed,
         }
         self.session.add(
             AuditEvent(
@@ -1003,6 +1106,11 @@ class ProposalService:
             )
         )
         required = int(proposal.policy_evaluation_json.get("required_approver_count", 2))
+        if self_review_scope(proposal) is not None and await self.is_sole_approver():
+            # A second approver does not exist to be counted. Re-checked here,
+            # at the merge, so a self-review given before a second approver
+            # joined no longer carries a change on its own.
+            required = 1
         if len(approvers) < required:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1113,3 +1221,41 @@ class ProposalService:
         )
         await self.session.flush()
         return receipt, None
+
+
+async def reopen_draft(
+    session: AsyncSession, context: TenantContext, proposal: Proposal, now: datetime
+) -> None:
+    """A withdrawn, rejected or rolled-back post sends its draft back for review.
+
+    Otherwise the draft stays "submitted" with no live proposal: it can be
+    neither edited nor sent again, and the only way to fix a mistake found
+    at approval or after deploying is to draft the post from scratch and pay for it twice.
+    """
+    if proposal.content_draft_id is None:
+        return
+    draft = await session.scalar(
+        select(ContentDraft).where(
+            ContentDraft.tenant_id == context.tenant_id,
+            ContentDraft.id == proposal.content_draft_id,
+        )
+    )
+    if draft is None or draft.status != "submitted":
+        return
+    draft.status = "ready"
+    draft.version += 1
+    draft.updated_at = now
+    payload = {"content_draft_id": str(draft.id), "proposal_id": str(proposal.id)}
+    session.add(
+        AuditEvent(
+            tenant_id=context.tenant_id,
+            actor_type="user",
+            actor_id=str(context.actor_id),
+            action="content_draft.reopened",
+            resource_type="content_draft",
+            resource_id=str(draft.id),
+            trace_id=context.trace_id,
+            metadata_json=payload,
+            event_hash=stable_hash({**payload, "actor_id": str(context.actor_id)}),
+        )
+    )

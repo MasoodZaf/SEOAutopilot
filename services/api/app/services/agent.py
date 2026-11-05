@@ -6,7 +6,7 @@ actor's role before running, so the workspace can never widen what an actor can
 reach. Nothing here writes site content or reaches a deployment adapter.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -18,10 +18,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import RoutineUpsert
 from app.core.config import Settings, get_settings
 from app.core.context import Role, TenantContext
-from app.db.models import AgentMessage, AgentSession, AgentTask, Routine, Site
+from app.db.models import AgentMessage, AgentSession, AgentTask, Routine, SearchMetric, Site
 from app.domain.github_adapter import GitHubDeploymentAdapter
 from app.domain.routines import PAID_ROUTINE_KINDS, Cadence, RoutineSchedule, initial_run_at
 from app.domain.skills import SKILLS, RequestedCadence, Skill, SkillEffect, parse_cadence, route
+from app.services.agent_model import (
+    ANSWER_SCHEMA,
+    ANSWER_SYSTEM,
+    PLAN_SCHEMA,
+    PLAN_SYSTEM,
+    AnthropicChatModel,
+    ChatModel,
+    ChatModelError,
+    OpenAIChatModel,
+)
 from app.services.ai_citations import AiCitationService
 from app.services.briefs import ContentBriefService
 from app.services.competitors import CompetitorService
@@ -32,6 +42,8 @@ from app.services.proposal_drafts import ProposalDraftService
 from app.services.proposals import ProposalService
 from app.services.reports import ReportService
 from app.services.routines import RoutineService
+from app.services.search_performance import SearchPerformanceService
+from app.services.tenant_credentials import ANTHROPIC_API_KEY, OPENAI_API_KEY, store_for
 
 MAX_SESSIONS_PER_SITE = 100
 # Early enough to have finished before a working day starts in most timezones.
@@ -43,6 +55,12 @@ SUMMARY_LIMIT = 5
 # proposals, which is the closest a skill can come to acting at scale.
 PROPOSE_LIMIT = 50
 PROPOSE_REPORT_LIMIT = 10
+# How much of the conversation the model sees, and how many skills one message
+# may read. Bounded so a single message has a bounded cost.
+CHAT_HISTORY_MESSAGES = 12
+CHAT_MAX_READS = 3
+CHAT_MAX_SUGGESTIONS = 3
+CHAT_PROVIDERS = (("anthropic", ANTHROPIC_API_KEY), ("openai", OPENAI_API_KEY))
 
 
 class SkillAnswer:
@@ -51,6 +69,10 @@ class SkillAnswer:
     def __init__(self, body: str, evidence: list[dict[str, Any]] | None = None) -> None:
         self.body = body
         self.evidence = evidence or []
+        # Set when a model wrote the answer.
+        self.provider: str | None = None
+        self.model: str | None = None
+        self.cost_micros = 0
 
 
 def _bullet(lines: list[str]) -> str:
@@ -69,11 +91,16 @@ class AgentService:
         *,
         keyword_encryption_key: bytes | None = None,
         settings: "Settings | None" = None,
+        chat_models: dict[str, ChatModel] | None = None,
     ) -> None:
         self.session = session
         self.context = context
         self.keyword_encryption_key = keyword_encryption_key
         self._settings = settings
+        self.chat_models: dict[str, ChatModel] = chat_models or {
+            "anthropic": AnthropicChatModel(),
+            "openai": OpenAIChatModel(),
+        }
 
     @property
     def settings(self) -> "Settings":
@@ -198,10 +225,15 @@ class AgentService:
         self.session.add(user_message)
         await self.session.flush()
 
-        skill, answer = await self._resolve(body, forced_skill_key)
+        skill: Skill | None = None
         task: AgentTask | None = None
-        if skill is not None:
-            task, answer = await self._execute(skill, site, session_id, answer, body)
+        answer: SkillAnswer | None = None
+        if not forced_skill_key:
+            answer, task = await self._converse(site, session_id, body, next_sequence)
+        if answer is None:
+            skill, answer = await self._resolve(body, forced_skill_key)
+            if skill is not None:
+                task, answer = await self._execute(skill, site, session_id, answer, body)
 
         agent_message = AgentMessage(
             tenant_id=self.context.tenant_id,
@@ -213,6 +245,9 @@ class AgentService:
             skill_key=skill.key if skill else None,
             agent_task_id=task.id if task else None,
             evidence_json=answer.evidence,
+            provider=answer.provider,
+            model=answer.model,
+            cost_micros=answer.cost_micros,
         )
         self.session.add(agent_message)
         record.message_count = next_sequence + 2
@@ -223,6 +258,131 @@ class AgentService:
         if task is not None:
             await self.session.refresh(task)
         return user_message, agent_message, task
+
+    async def _chat_key(self) -> tuple[str, str] | None:
+        """The workspace's own model key, Claude first. None means use the router."""
+        if not self.settings.agent_chat_model_enabled:
+            return None
+        try:
+            store = store_for(self.session, self.settings)
+        except HTTPException:
+            return None
+        for provider, credential in CHAT_PROVIDERS:
+            secret = await store.get(self.context.tenant_id, credential)
+            key = secret.get("api_key") if isinstance(secret, dict) else None
+            if isinstance(key, str) and key:
+                return provider, key
+        return None
+
+    async def _converse(
+        self, site: Site, session_id: UUID, body: str, before_sequence: int
+    ) -> tuple[SkillAnswer | None, AgentTask | None]:
+        """Answer in plain language through the workspace's own model key.
+
+        Returns (None, None) when there is no key, the budget is spent, or the
+        provider fails, and the caller falls back to the deterministic router.
+        The model only chooses which READ skills run; every action it suggests
+        comes back as a button for a person to press.
+        """
+        found = await self._chat_key()
+        if found is None:
+            return None, None
+        provider, api_key = found
+        # Imported here: content_drafts imports this module's neighbours.
+        from app.services.content_drafts import workspace_model_spend
+
+        if (
+            await workspace_model_spend(self.session, self.context.tenant_id)
+            >= self.settings.content_draft_monthly_budget_micros
+        ):
+            return None, None
+        model_name = (
+            self.settings.agent_chat_anthropic_model
+            if provider == "anthropic"
+            else self.settings.agent_chat_openai_model
+        )
+        chat = self.chat_models[provider]
+        permitted = visible_skills(self.context.role)
+        reads = [skill for skill in permitted if skill.effect is SkillEffect.READ]
+        actions = [skill for skill in permitted if skill.effect is not SkillEffect.READ]
+        history = await self._history(session_id, before_sequence)
+        conversation = [*history, {"role": "user", "content": body.strip()[:8000]}]
+
+        spent = SkillAnswer("")
+        spent.provider = provider
+        try:
+            plan = await chat.complete(
+                api_key=api_key,
+                model=model_name,
+                system=PLAN_SYSTEM.format(read_skills=_describe(reads)),
+                messages=conversation,
+                schema=PLAN_SCHEMA,
+                schema_name="skill_plan",
+            )
+            spent.cost_micros += plan.cost_micros
+            spent.model = plan.model
+            chosen = _pick(plan.answer.get("skills"), reads, CHAT_MAX_READS)
+            question = str(plan.answer.get("clarifying_question") or "").strip()
+            if not chosen and question:
+                spent.body = question[:2000]
+                return spent, None
+
+            results: list[str] = []
+            last_task: AgentTask | None = None
+            for skill in chosen:
+                last_task, result = await self._execute(skill, site, session_id, SkillAnswer(""), body)
+                spent.evidence.extend(result.evidence)
+                results.append(f"<skill_result key=\"{skill.key}\" name=\"{skill.name}\">\n{result.body}\n</skill_result>")
+
+            reply = await chat.complete(
+                api_key=api_key,
+                model=model_name,
+                system=ANSWER_SYSTEM.format(site=site.name, action_skills=_describe(actions + reads)),
+                messages=[
+                    *conversation,
+                    {
+                        "role": "user",
+                        "content": "Skill results for the message above:\n\n"
+                        + ("\n\n".join(results) or "(no skill was needed)"),
+                    },
+                ],
+                schema=ANSWER_SCHEMA,
+                schema_name="chat_answer",
+            )
+        except ChatModelError:
+            # Any cost already incurred is lost from the ledger here; the
+            # router answers instead so the person is never left with nothing.
+            return None, None
+        spent.cost_micros += reply.cost_micros
+        spent.model = reply.model
+        spent.body = str(reply.answer.get("answer") or "").strip()[:8000] or (
+            "I could not put an answer together from what is stored for this site."
+        )
+        for skill in _pick(reply.answer.get("suggested_skills"), permitted, CHAT_MAX_SUGGESTIONS):
+            spent.evidence.append(
+                {"kind": "suggested_skill", "key": skill.key, "name": skill.name, "example": skill.example}
+            )
+        return spent, last_task
+
+    async def _history(self, session_id: UUID, before_sequence: int) -> list[dict[str, str]]:
+        rows = await self.session.scalars(
+            select(AgentMessage)
+            .where(
+                AgentMessage.tenant_id == self.context.tenant_id,
+                AgentMessage.session_id == session_id,
+                AgentMessage.sequence <= before_sequence,
+            )
+            .order_by(AgentMessage.sequence.desc())
+            .limit(CHAT_HISTORY_MESSAGES)
+        )
+        turns = [
+            {"role": "user" if row.role == "user" else "assistant", "content": row.body}
+            for row in reversed(list(rows))
+        ]
+        # Both providers want the conversation to open with the person.
+        while turns and turns[0]["role"] != "user":
+            turns.pop(0)
+        return turns
 
     async def _resolve(
         self, body: str, forced_skill_key: str | None
@@ -453,6 +613,7 @@ class AgentService:
     async def _read(self, skill: Skill, site: Site) -> SkillAnswer:
         handlers = {
             "site_audit": self._read_site_audit,
+            "search_performance": self._read_search_performance,
             "keyword_research": self._read_keywords,
             "content_briefs": self._read_briefs,
             "sitemap_review": self._read_sitemap,
@@ -468,6 +629,88 @@ class AgentService:
                 status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="skill_not_implemented"
             )
         return await handler(site)
+
+    async def _read_search_performance(self, site: Site) -> SkillAnswer:
+        # Search Console data lags by about two days.
+        end = datetime.now(UTC).date() - timedelta(days=2)
+        start = end - timedelta(days=27)
+        prior_end = start - timedelta(days=1)
+        prior_start = prior_end - timedelta(days=27)
+        service = SearchPerformanceService(self.session, self.context)
+        current = await service.summarize(site.id, start, end)
+        prior = await service.summarize(site.id, prior_start, prior_end)
+        if current.rows == 0 and prior.rows == 0:
+            return _no_evidence(
+                "Search Console data", "Connect Search Console under Connections, then ask again."
+            )
+
+        def line(label: str, now: float, then: float, fmt: str) -> str:
+            change = f" ({now - then:+{fmt}} vs prior)" if prior.rows else ""
+            return f"{label}: {now:{fmt}}{change}"
+
+        lines = [
+            line("Clicks", current.clicks, prior.clicks, ",.0f"),
+            line("Impressions", current.impressions, prior.impressions, ",.0f"),
+        ]
+        if current.position is not None:
+            lines.append(
+                f"Average position: {current.position:.1f}"
+                + (f" (was {prior.position:.1f})" if prior.position is not None else "")
+            )
+        if current.ctr is not None:
+            lines.append(f"Click-through rate: {current.ctr:.2%}")
+
+        def window(lo: date, hi: date) -> Any:
+            return (
+                select(
+                    SearchMetric.page_url,
+                    func.sum(SearchMetric.impressions).label("impressions"),
+                    func.sum(SearchMetric.clicks).label("clicks"),
+                    (
+                        func.sum(SearchMetric.position * SearchMetric.impressions)
+                        / func.nullif(func.sum(SearchMetric.impressions), 0)
+                    ).label("position"),
+                )
+                .where(
+                    SearchMetric.tenant_id == self.context.tenant_id,
+                    SearchMetric.site_id == site.id,
+                    SearchMetric.metric_date >= lo,
+                    SearchMetric.metric_date <= hi,
+                )
+                .group_by(SearchMetric.page_url)
+            )
+
+        now_rows = {row.page_url: row for row in (await self.session.execute(window(start, end))).all()}
+        then_rows = {
+            row.page_url: row for row in (await self.session.execute(window(prior_start, prior_end))).all()
+        }
+        top = sorted(now_rows.values(), key=lambda row: row.impressions or 0, reverse=True)[:SUMMARY_LIMIT]
+        page_lines = [
+            f"{row.page_url} — {row.impressions:,.0f} impressions, {row.clicks:,.0f} clicks"
+            + (f", position {row.position:.1f}" if row.position is not None else "")
+            for row in top
+        ]
+        movers = sorted(
+            (
+                ((now_rows[url].impressions if url in now_rows else 0) - (then_rows[url].impressions if url in then_rows else 0), url)
+                for url in set(now_rows) | set(then_rows)
+            ),
+        )
+        losers = [f"{url} ({delta:+,.0f} impressions)" for delta, url in movers[:3] if delta < 0]
+        gainers = [f"{url} ({delta:+,.0f} impressions)" for delta, url in reversed(movers[-3:]) if delta > 0]
+
+        text = (
+            f"Search Console for {site.name}, {start} to {end}:\n\n{_bullet(lines)}"
+            + (f"\n\nPages with the most impressions:\n\n{_bullet(page_lines)}" if page_lines else "")
+            + (f"\n\nBiggest gains:\n\n{_bullet(gainers)}" if gainers else "")
+            + (f"\n\nBiggest losses:\n\n{_bullet(losers)}" if losers else "")
+        )
+        if current.is_sparse:
+            text += (
+                "\n\nUnder 100 impressions in the window: too little data to read changes "
+                "in position or click-through rate as real."
+            )
+        return SkillAnswer(text, [{"kind": "search_window", "start": str(start), "end": str(end)}])
 
     async def _read_site_audit(self, site: Site) -> SkillAnswer:
         service = OpportunityService(self.session, self.context)
@@ -747,3 +990,22 @@ def routine_upsert_for(skill: Skill) -> RoutineUpsert | None:
     if skill.routine_kind is None:
         return None
     return RoutineUpsert(kind=skill.routine_kind, cadence="daily")  # type: ignore[arg-type]
+
+
+def _describe(skills: list[Skill]) -> str:
+    return "\n".join(f"- {skill.key}: {skill.name}. {skill.description}" for skill in skills)
+
+
+def _pick(keys: Any, allowed: list[Skill], limit: int) -> list[Skill]:
+    """Keep only registry skills the actor may run, in order, without repeats."""
+    if not isinstance(keys, list):
+        return []
+    by_key = {skill.key: skill for skill in allowed}
+    picked: list[Skill] = []
+    for key in keys:
+        skill = by_key.get(key) if isinstance(key, str) else None
+        if skill is not None and skill not in picked:
+            picked.append(skill)
+        if len(picked) == limit:
+            break
+    return picked

@@ -1,10 +1,21 @@
+import re
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+
+from app.domain.proposals import self_review_scope
 
 
 class ProductMode(StrEnum):
@@ -725,6 +736,19 @@ class ProposalRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def self_review_scope(self) -> str | None:
+        """What the workspace's only approver could approve alone; see the domain rule."""
+        return self_review_scope(
+            risk=self.risk,
+            content_draft_id=self.content_draft_id,
+            target_type=self.target_type,
+            target_path=self.target_path,
+            before_content=self.before_content,
+            after_content=self.after_content,
+        )
+
 
 class ProposalEnvelope(BaseModel):
     data: ProposalRead
@@ -739,6 +763,12 @@ class ProposalCollection(BaseModel):
 class ProposalApprovalCreate(BaseModel):
     decision: str = Field(pattern="^(approved|rejected)$")
     notes: str = Field(default="", max_length=1000)
+    # The author confirms they read the diff. Honoured only when they are the
+    # workspace's only approver and the change is low or medium risk.
+    self_review: bool = False
+    # A new blog post is high risk, so its only approver also confirms they
+    # read the whole post and checked every claim in it.
+    self_review_post: bool = False
 
     @field_validator("notes")
     @classmethod
@@ -855,6 +885,26 @@ class GovernanceSettingsUpdate(BaseModel):
     freeze_window_start: datetime | None = None
     freeze_window_end: datetime | None = None
     publish_from_app: bool | None = None
+    # A page of the site, by URL path, whose layout blog posts reuse. Blank
+    # clears it, so posts go back to Markdown files.
+    blog_template_path: str | None = Field(default=None, max_length=300)
+
+    @field_validator("blog_template_path")
+    @classmethod
+    def site_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return ""
+        path = urlsplit(text).path if "://" in text else text
+        if (
+            not re.fullmatch(r"/[A-Za-z0-9._~/-]{0,300}", path)
+            or "//" in path
+            or any(segment == ".." for segment in path.split("/"))
+        ):
+            raise ValueError("blog_template_path must be a path on this site, like /emi-calculator")
+        return path.rstrip("/") or "/"
 
 
 class SiteModeUpdate(BaseModel):
@@ -873,6 +923,7 @@ class GovernanceStatusRead(BaseModel):
     freeze_window_start: datetime | None
     freeze_window_end: datetime | None
     publish_from_app: bool = False
+    blog_template_path: str | None = None
 
 
 class GovernanceStatusEnvelope(BaseModel):
@@ -1195,7 +1246,8 @@ class ContentBriefSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     site_id: UUID
-    keyword_cluster_id: UUID
+    keyword_cluster_id: UUID | None
+    source: str = "analysis"
     kind: ContentBriefKind
     status: ContentBriefStatus
     target_page_id: UUID | None
@@ -1223,6 +1275,23 @@ class ContentBriefCollection(BaseModel):
 class ContentBriefEnvelope(BaseModel):
     data: ContentBriefRead
     meta: dict[str, str]
+
+
+class TopicBriefCreate(BaseModel):
+    """A post a person asks for by topic, when search data has suggested none."""
+
+    topic: str = Field(min_length=3, max_length=120)
+    intent: KeywordIntent = KeywordIntent.INFORMATIONAL
+
+    @field_validator("topic")
+    @classmethod
+    def plain_topic(cls, value: str) -> str:
+        topic = " ".join(value.split())
+        if len(topic) < 3:
+            raise ValueError("a topic needs at least 3 characters")
+        if any(ch in topic for ch in "<>{}`"):
+            raise ValueError("a topic is plain words")
+        return topic
 
 
 class ContentBriefStatusUpdate(BaseModel):
@@ -1778,6 +1847,24 @@ class TenantCredentialCollection(BaseModel):
     meta: dict[str, str | int]
 
 
+class AiModelCheckRead(BaseModel):
+    model: str
+    status: str
+
+
+class AiKeyCheckRead(BaseModel):
+    """What the provider says today about the stored key and the drafting models.
+
+    Asked live, like the Google client check: access to a model is decided in
+    the customer's provider account and can change at any time.
+    """
+
+    provider: str
+    configured: bool
+    key_suffix: str | None = None
+    models: list[AiModelCheckRead] = []
+
+
 class GoogleClientCheckRead(BaseModel):
     """What Google says today about the client this workspace would consent on.
 
@@ -1842,4 +1929,89 @@ class BrandTermsUpdate(BaseModel):
 
 class BrandTermsEnvelope(BaseModel):
     data: list[str]
+    meta: dict[str, str]
+
+
+class RedditDraftCreate(BaseModel):
+    """A reply to `thread_url`, or a new post in `subreddit`: exactly one of the two."""
+
+    thread_url: str | None = Field(default=None, max_length=2000)
+    subreddit: str | None = Field(default=None, max_length=40)
+    question: str = Field(min_length=1, max_length=500)
+    context: str = Field(default="", max_length=6000)
+    page_url: str | None = Field(default=None, max_length=2000)
+    provider: str | None = Field(default=None, pattern="^(anthropic|openai)$")
+
+    @model_validator(mode="after")
+    def one_target(self) -> "RedditDraftCreate":
+        if bool(self.thread_url) == bool(self.subreddit):
+            raise ValueError("give a thread_url to reply to, or a subreddit to post in")
+        return self
+
+
+class RedditDraftUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+    body: str | None = Field(default=None, max_length=10000)
+
+
+class RedditPosted(BaseModel):
+    posted_url: str = Field(min_length=1, max_length=2000)
+
+
+class RedditDraftRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    site_id: UUID
+    kind: str
+    subreddit: str
+    thread_url: str | None
+    question: str
+    page_url: str | None
+    title: str
+    body: str
+    status: str
+    provider: str
+    model: str
+    cost_micros: int
+    approved_at: datetime | None
+    handed_off_at: datetime | None
+    posted_url: str | None
+    created_at: datetime
+
+
+class RedditDraftEnvelope(BaseModel):
+    data: RedditDraftRead
+    meta: dict[str, str]
+
+
+class RedditDraftCollection(BaseModel):
+    data: list[RedditDraftRead]
+    meta: dict[str, str | int]
+
+
+class RedditThreadRead(BaseModel):
+    url: str
+    subreddit: str
+    title: str
+    questions: list[str]
+    providers: list[str]
+    citations: int
+    site_also_cited: bool
+    last_seen_at: datetime
+    drafted: bool
+
+
+class RedditThreadCollection(BaseModel):
+    data: list[RedditThreadRead]
+    meta: dict[str, str | int]
+
+
+class RedditHandOff(BaseModel):
+    open_url: str
+    copy_text: str
+
+
+class RedditHandOffEnvelope(BaseModel):
+    data: RedditHandOff
+    draft: RedditDraftRead
     meta: dict[str, str]

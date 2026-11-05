@@ -16,6 +16,7 @@ import {
   draftProposalAction,
   publishProposalAction,
   setApproverCountAction,
+  setBlogTemplateAction,
   setPublishFromAppAction,
   setSiteModeAction,
   withdrawProposalAction,
@@ -111,6 +112,8 @@ type Proposal = {
   target_type: string;
   target_path: string;
   risk: string;
+  // What the workspace's only approver may approve alone; absent from an older API.
+  self_review_scope?: "change" | "new_post" | null;
   status: string;
   diff_unified: string;
   base_hash: string;
@@ -130,6 +133,8 @@ type GovernanceStatus = {
   freeze_window_end: string | null;
   // Absent from an older API: treated as off.
   publish_from_app?: boolean;
+  // A page whose layout blog posts reuse, for plain-HTML sites. Null: Markdown files.
+  blog_template_path?: string | null;
 };
 type Measurement = {
   id: string;
@@ -151,6 +156,7 @@ type PageProps = {
     governance?: string;
     simulation?: string;
     proposal?: string;
+    failed?: string;
     site?: string;
     dns_provider?: string;
   }>;
@@ -189,6 +195,11 @@ const errorMessages: Record<string, string> = {
   publishing_from_app_disabled: "Publishing from SEO Autopilot is off for this site. Turn it on under Adjust governance, or merge the pull request on GitHub.",
   insufficient_permissions_to_publish: "Only an owner or admin can publish a change from here.",
   publish_requires_approvals: "This change does not have all the approvals its risk needs yet.",
+  "blog-template-invalid": "Enter a path on this site, like /emi-calculator.",
+  author_cannot_approve_own_proposal: "You drafted this change, so someone else in the workspace has to approve it.",
+  self_review_confirmation_required: "You drafted this change and are the only approver here. Tick “I read this diff” to approve it yourself.",
+  self_review_not_allowed_for_risk: "This change needs a second person, even in a one-person workspace. Invite a reviewer under Members.",
+  self_review_post_confirmation_required: "A new post goes live as a whole page. Tick “I read the whole post and checked every claim” as well to approve it yourself.",
   proposal_must_be_approved_before_publishing: "Approve the change before publishing it.",
   no_pull_request_to_publish: "There is no pull request for this change to merge.",
   publish_requires_github_merge__indexing_control_change: "This change touches canonical, robots or redirect directives. Those are always merged on GitHub, by a person.",
@@ -392,7 +403,7 @@ const smallButton = {
 } as const;
 
 export default async function PilotPage({searchParams}: PageProps) {
-  const {error, governance: govUpdated, simulation, proposal: propMsg, site: requestedHost} = await searchParams;
+  const {error, governance: govUpdated, simulation, proposal: propMsg, failed, site: requestedHost} = await searchParams;
   const data = await loadPilot(requestedHost);
   // A placeholder only when the workspace has no site at all -- in which case
   // the body below renders the "add a site" panel and nothing that reads these
@@ -412,6 +423,8 @@ export default async function PilotPage({searchParams}: PageProps) {
   const selectedChallenge = challenge?.siteId === data.site?.id ? challenge : undefined;
   const performanceIdempotencyKey = randomUUID();
   const gov = data.governance;
+  // A refused approval or deploy is shown on its own card when that card is listed.
+  const failedHere = Boolean(error && failed && data.proposals?.some((item) => item.id === failed));
   const crawlActive = Boolean(data.latestCrawl && ["queued", "running"].includes(data.latestCrawl.status));
 
   return (
@@ -531,9 +544,9 @@ export default async function PilotPage({searchParams}: PageProps) {
       </header>
 
       <div className="mx-auto flex max-w-6xl flex-col gap-14 px-6 py-10">
-        {(error || govUpdated || simulation || propMsg) && (
+        {((error && !failedHere) || govUpdated || simulation || propMsg) && (
           <div className="flex flex-col gap-2">
-            {error && (
+            {error && !failedHere && (
               <Note tone="stop" role="alert">
                 {errorMessages[error] ?? `Error: ${error}`}
               </Note>
@@ -551,7 +564,7 @@ export default async function PilotPage({searchParams}: PageProps) {
           <section aria-labelledby="governance-heading">
             <h2 id="governance-heading" className="sr-only">Governance</h2>
             <Panel as="div" className="overflow-hidden">
-              <dl className="grid grid-cols-2 divide-rule sm:grid-cols-3 lg:grid-cols-5 lg:divide-x">
+              <div className="grid grid-cols-2 divide-rule sm:grid-cols-3 lg:grid-cols-5 lg:divide-x">
                 <Metric
                   className="border-b border-rule p-6 lg:border-b-0"
                   label="Operation mode"
@@ -591,7 +604,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                   value={gov.freeze_window_start ? "Set" : "None"}
                   hint={gov.freeze_window_start ? "Scheduled" : "No window active"}
                 />
-              </dl>
+              </div>
               {data.site && (
                 <details className="group border-t border-rule">
                   <summary className="flex items-center gap-2 px-6 py-3 text-[13px] font-medium text-ink-soft transition-colors hover:text-ink">
@@ -673,6 +686,29 @@ export default async function PilotPage({searchParams}: PageProps) {
                           className="mt-1"
                         />
                         Let owners and admins merge approved changes from here in one click. Indexing, configuration and template-wide changes are still merged on GitHub.
+                      </label>
+                      <button type="submit" className={button.secondary}>
+                        Save
+                      </button>
+                    </form>
+                    {/*
+                      Plain-HTML sites serve no Markdown. Naming one of the
+                      site's pages makes each post a copy of it with only
+                      <main> replaced, at /blog/{slug}.
+                    */}
+                    <form action={setBlogTemplateAction} className="flex flex-col gap-2">
+                      <input type="hidden" name="site_host" value={target.host} />
+                      <input type="hidden" name="site_id" value={data.site.id} />
+                      <p className="eyebrow">Blog posts</p>
+                      <label className="flex flex-col gap-1 text-[13px] leading-5 text-pretty text-ink-soft">
+                        For a site of plain HTML pages, the page whose layout posts reuse. Leave blank to publish Markdown files for a static-site generator.
+                        <input
+                          name="blog_template_path"
+                          defaultValue={gov.blog_template_path ?? ""}
+                          placeholder="/emi-calculator"
+                          pattern="/[A-Za-z0-9._~/-]*"
+                          className={inputMono}
+                        />
                       </label>
                       <button type="submit" className={button.secondary}>
                         Save
@@ -878,12 +914,12 @@ export default async function PilotPage({searchParams}: PageProps) {
                 <Panel className="p-6">
                   <h3 className="font-display text-[15px] font-medium tracking-tight text-ink">Google Search Console</h3>
                   {data.searchPerformance && data.searchPerformance.rows > 0 ? (
-                    <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
+                    <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
                       <Metric label="Clicks" value={data.searchPerformance.clicks} />
                       <Metric label="Impressions" value={data.searchPerformance.impressions} />
                       <Metric label="Click-through rate" value={data.searchPerformance.ctr === null ? "—" : (data.searchPerformance.ctr * 100).toFixed(1)} unit={data.searchPerformance.ctr === null ? undefined : "%"} />
                       <Metric label="Average position" value={data.searchPerformance.position === null ? "—" : data.searchPerformance.position.toFixed(1)} />
-                    </dl>
+                    </div>
                   ) : (
                     <p className="mt-4 text-[13px] leading-6 text-pretty text-ink-faint">No Search Console data yet. Connect Google under Settings, then wait for the daily sync.</p>
                   )}
@@ -892,12 +928,12 @@ export default async function PilotPage({searchParams}: PageProps) {
                   <h3 className="font-display text-[15px] font-medium tracking-tight text-ink">Google Analytics 4</h3>
                   {data.engagement && data.engagement.rows > 0 ? (
                     <>
-                      <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
+                      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-8">
                         <Metric label="Sessions" value={data.engagement.sessions} />
                         <Metric label="Engagement rate" value={data.engagement.engagement_rate === null ? "—" : (data.engagement.engagement_rate * 100).toFixed(0)} unit={data.engagement.engagement_rate === null ? undefined : "%"} />
                         <Metric label="Page views" value={data.engagement.views} />
                         <Metric label="Key events" value={data.engagement.key_events} />
-                      </dl>
+                      </div>
                       <table className="mt-8 w-full text-left text-[12px]">
                         <caption className="eyebrow mb-2 text-left">Top landing pages</caption>
                         <thead>
@@ -1085,7 +1121,7 @@ export default async function PilotPage({searchParams}: PageProps) {
               ) : (
                 <div className="flex flex-col gap-4">
                   {data.proposals.map((prop) => (
-                    <Panel as="article" key={prop.id} className="overflow-hidden">
+                    <Panel as="article" key={prop.id} id={`proposal-${prop.id}`} className="scroll-mt-24 overflow-hidden">
                       <div className="flex flex-wrap items-start justify-between gap-3 px-6 pt-5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
@@ -1104,11 +1140,18 @@ export default async function PilotPage({searchParams}: PageProps) {
                           isModified={true}
                         />
                         {prop.diff_unified && (
-                          <pre className="max-h-72 overflow-auto rounded-xl border border-rule bg-sunk p-4 font-mono text-[12px] leading-5 text-ink-soft">
+                          <pre tabIndex={0} aria-label={`Diff of ${prop.target_path}`} className="max-h-72 overflow-auto rounded-xl border border-rule bg-sunk p-4 font-mono text-[12px] leading-5 text-ink-soft focus-visible:outline-2 focus-visible:outline-accent">
                             {prop.diff_unified}
                           </pre>
                         )}
                       </div>
+                      {failedHere && failed === prop.id && error ? (
+                        <div className="border-t border-rule px-6 pt-3">
+                          <Note tone="stop" role="alert">
+                            {errorMessages[error] ?? `Error: ${error}`}
+                          </Note>
+                        </div>
+                      ) : null}
                       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule px-6 py-3">
                         <span className="font-mono text-[12px] break-all text-ink-faint">{prop.target_path}</span>
                         <div className="flex gap-2">
@@ -1119,10 +1162,24 @@ export default async function PilotPage({searchParams}: PageProps) {
                           */}
                           {(prop.status === "validated" || prop.status === "review_required") && (
                             <>
-                              <form action={approveProposalAction}>
+                              <form action={approveProposalAction} className="flex items-center gap-3">
                                 <input type="hidden" name="site_host" value={target.host} />
                                 <input type="hidden" name="proposal_id" value={prop.id} />
-                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. You cannot approve a change you authored yourself." aria-describedby="tip-ec0ccb8c77">
+                                {(prop.self_review_scope !== undefined
+                                  ? prop.self_review_scope !== null
+                                  : prop.risk === "low" || prop.risk === "medium") && (
+                                  <label className="flex items-center gap-1.5 text-[12px] text-ink-soft">
+                                    <input type="checkbox" name="self_review" value="yes" />
+                                    I read this diff (only reviewer)
+                                  </label>
+                                )}
+                                {prop.self_review_scope === "new_post" && (
+                                  <label className="flex items-center gap-1.5 text-[12px] text-ink-soft">
+                                    <input type="checkbox" name="self_review_post" value="yes" />
+                                    I read the whole post and checked every claim
+                                  </label>
+                                )}
+                                <button type="submit" className={smallButton.primary} data-tip="Record your approval. If you are this workspace's only approver, the checkbox appears on changes you may approve yourself: low or medium risk, structured data only, new sitemap entries, or a new blog post." aria-describedby="tip-a4ed80ab12">
                                   Approve
                                 </button>
                               </form>
@@ -1214,7 +1271,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                         <span className="font-mono text-[12px] text-ink tabular">{Math.round(m.confidence_score * 100)}%</span>
                       </div>
                       <Meter className="mt-2" label="Evidence completeness" value={m.confidence_score} tone="good" />
-                      <dl className="mt-6 grid grid-cols-2 gap-6">
+                      <div className="mt-6 grid grid-cols-2 gap-6">
                         <Metric
                           label="Clicks delta"
                           value={
@@ -1236,7 +1293,7 @@ export default async function PilotPage({searchParams}: PageProps) {
                           }
                           unit={typeof m.delta_metrics?.position_delta === "number" ? "ranks" : undefined}
                         />
-                      </dl>
+                      </div>
                       {m.annotations?.length > 0 && (
                         <p className="mt-5 border-t border-rule pt-4 text-[12px] leading-5 text-pretty text-ink-faint">{m.annotations[0]}</p>
                       )}

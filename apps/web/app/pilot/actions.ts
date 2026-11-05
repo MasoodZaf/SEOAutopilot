@@ -45,8 +45,15 @@ function redirectFresh(path: string): never {
   redirect(path);
 }
 
-function errorUrl(host: string, code: string): string {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function errorUrl(host: string, code: string, proposalId?: string): string {
   const safeCode = /^[a-z0-9_-]+$/i.test(code) ? code : "unexpected-error";
+  // A refused approval or deploy is shown on that proposal's card, and the
+  // page opens there: a banner at the top was easy to miss below the fold.
+  if (proposalId && UUID_RE.test(proposalId)) {
+    return `${pilotPath(host, {error: safeCode, failed: proposalId})}#proposal-${proposalId}`;
+  }
   return pilotPath(host, {error: safeCode});
 }
 
@@ -343,13 +350,18 @@ export async function approveProposalAction(formData: FormData): Promise<never> 
   try {
     await apiJson(`/v1/proposals/${proposalId}/approvals`, {
       method: "POST",
-      body: JSON.stringify({decision: "approved", notes: "Approved from web dashboard"}),
+      body: JSON.stringify({
+        decision: "approved",
+        notes: "Approved from web dashboard",
+        self_review: formData.get("self_review") === "yes",
+        self_review_post: formData.get("self_review_post") === "yes",
+      }),
     });
   } catch (error) {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error", proposalId));
   }
   redirectFresh(pilotPath(host, {proposal: "approved"}));
 }
@@ -368,7 +380,7 @@ export async function deployProposalAction(formData: FormData): Promise<never> {
     // `redirect()` throws; let its control-flow signal through so this
     // action's own redirects are not rewritten as a generic error.
     unstable_rethrow(error);
-    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error", proposalId));
   }
   redirectFresh(pilotPath(host, {proposal: "deployed"}));
 }
@@ -559,6 +571,23 @@ export async function publishProposalAction(formData: FormData): Promise<never> 
   }
   if (refusal) redirectFresh(errorUrl(host, `publish_refused__${refusal}`));
   redirectFresh(pilotPath(host, {proposal: "published"}));
+}
+
+export async function setBlogTemplateAction(formData: FormData): Promise<never> {
+  const host = actionHost(formData);
+  const siteId = String(formData.get("site_id") ?? "");
+  const path = String(formData.get("blog_template_path") ?? "").trim();
+  if (path && !/^\/[A-Za-z0-9._~/-]{0,300}$/.test(path)) redirectFresh(errorUrl(host, "blog-template-invalid"));
+  try {
+    await apiJson(`/v1/sites/${siteId}/governance`, {
+      method: "PATCH",
+      body: JSON.stringify({blog_template_path: path}),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    redirectFresh(errorUrl(host, error instanceof ApiError ? error.code : "unexpected-error"));
+  }
+  redirectFresh(pilotPath(host, {governance: "blog-template-saved"}));
 }
 
 export async function setPublishFromAppAction(formData: FormData): Promise<never> {

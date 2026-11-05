@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.context import Role
+from app.services import deployment_verification as _dv
 from app.services.deployment_verification import (
     SWEEP_LOCK_KEY,
     VERIFIER_ACTOR_ID,
@@ -160,3 +161,71 @@ async def test_a_page_off_its_own_site_is_never_fetched_at_all() -> None:
     report, _ = await sweep([candidate(url="https://elsewhere.example/x")], verifying)
     assert report == VerifyReport(considered=1, unreachable=1)
     verifying.assert_not_awaited()
+
+
+def test_only_a_sitemap_entry_is_looked_for_somewhere_else() -> None:
+    from app.services.deployment_verification import evidence_url
+
+    post = "https://thecalchive.com/blog/emi-worked-example"
+    assert evidence_url("sitemap_entry", post) == "https://thecalchive.com/sitemap.xml"
+    assert evidence_url("h1_repair", post) == post
+    assert evidence_url(None, post) == post
+
+
+# --- the live fetch never reaches somewhere a visitor could not ---------------
+
+_ADDRESSES = {
+    "site.example": ["93.184.216.34"],
+    "metadata.example": ["169.254.169.254"],
+    "inside.example": ["172.18.0.5"],
+    "loop.example": ["127.0.0.1", "93.184.216.34"],
+}
+
+
+def _client(routes):
+    def handler(request):
+        return routes[str(request.url)]
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture
+def fake_dns(monkeypatch):
+    async def resolve(host, port):
+        return _ADDRESSES[host]
+
+    monkeypatch.setattr(_dv, "resolve", resolve)
+
+
+@pytest.mark.asyncio
+async def test_a_public_page_is_fetched_through_its_redirects(fake_dns):
+    client = _client({
+        "https://site.example/a": httpx.Response(301, headers={"location": "/b"}),
+        "https://site.example/b": httpx.Response(200, text="live"),
+    })
+    assert await _dv.fetch_live(client, "https://site.example/a") == ("live", 200)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["http://metadata.example/latest", "http://inside.example:8000/", "http://loop.example/"])
+async def test_a_redirect_into_this_host_is_refused_before_it_is_requested(fake_dns, target):
+    """The site owner controls both the redirect and the DNS, and sees the snippet."""
+    requested = []
+
+    def handler(request):
+        requested.append(str(request.url))
+        if request.url.host == "site.example":
+            return httpx.Response(302, headers={"location": target})
+        return httpx.Response(200, text="secret")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(_dv.UnsafeDestination):
+        await _dv.fetch_live(client, "https://site.example/")
+    assert requested == ["https://site.example/"]
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_loop_ends(fake_dns):
+    client = _client({"https://site.example/a": httpx.Response(302, headers={"location": "/a"})})
+    with pytest.raises(httpx.TooManyRedirects):
+        await _dv.fetch_live(client, "https://site.example/a")

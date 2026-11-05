@@ -76,6 +76,30 @@ class CitationFinding:
     own_urls: list[str]
     competitor_hosts: list[str]
     excerpt: str
+    # Reddit threads the answer cited: the conversations an answer engine
+    # trusts on this question, and so the ones most worth taking part in.
+    thread_urls: list[str] = field(default_factory=list)
+
+
+REDDIT_THREAD = re.compile(
+    r"^https?://(?:www\.|old\.|new\.)?reddit\.com/r/([A-Za-z0-9_]{2,21})/comments/([a-z0-9]{3,12})(?:/([A-Za-z0-9_-]{0,120}))?",
+    re.IGNORECASE,
+)
+MAX_THREADS = 5
+
+
+def reddit_threads(cited_urls: list[str]) -> list[str]:
+    """Canonical Reddit thread URLs among the citations, without query or fragment."""
+    threads: list[str] = []
+    for url in cited_urls:
+        match = REDDIT_THREAD.match(url)
+        if match is None:
+            continue
+        subreddit, post_id, slug = match.group(1), match.group(2).lower(), match.group(3) or ""
+        canonical = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/" + (f"{slug}/" if slug else "")
+        if canonical not in threads:
+            threads.append(canonical)
+    return threads[:MAX_THREADS]
 
 
 def analyze(
@@ -123,6 +147,7 @@ def analyze(
         own_urls=own_urls[:5],
         competitor_hosts=cited_competitors[:MAX_HOSTS],
         excerpt=excerpt,
+        thread_urls=reddit_threads(cited_urls),
     )
 
 
@@ -283,8 +308,9 @@ async def persist(
             """
             INSERT INTO ai_citation_observation(tenant_id,site_id,run_id,prompt_id,prompt,provider,
               model,status,error_code,site_cited,site_mentioned,own_citation_rank,cited_hosts,
-              own_urls,competitor_hosts,answer_excerpt,web_searches,cost_micros)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16,$17,$18)
+              own_urls,competitor_hosts,answer_excerpt,web_searches,cost_micros,thread_urls)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16,$17,$18,
+              $19::jsonb)
             """,
             tenant_id, site_id, run_id, item.prompt_id, item.prompt, item.provider, item.model,
             item.status, item.error_code,
@@ -295,6 +321,7 @@ async def persist(
             json.dumps(finding.competitor_hosts if finding else []),
             finding.excerpt if finding else None,
             item.web_searches, item.cost_micros,
+            json.dumps(finding.thread_urls if finding else []),
         )
     # Per-answer failures are recorded on each observation; the run itself
     # completed, and its summary says which errors stopped which answers.

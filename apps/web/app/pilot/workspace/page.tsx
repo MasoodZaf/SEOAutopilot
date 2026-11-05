@@ -7,6 +7,7 @@ import {ApiError, apiJson, isMissingTenant} from "@/lib/server-api";
 
 import {pilotPath, selectSite} from "../site-selection.mjs";
 import {
+  planTopicPost,
   proposeLlmsTxt,
   runRoutineNow,
   scheduleRoutine,
@@ -16,6 +17,7 @@ import {
   untrackCitationPrompt,
 } from "./actions";
 import {SOURCE_ADVICE, citationGrid, citationShare, formatMicros} from "./citations.mjs";
+import {RedditTab, type RedditDraft, type RedditThread} from "./reddit-tab";
 import {resolveTab, workspacePath, workspaceTabs, type WorkspaceTab} from "./paths";
 import {readinessBreakdown} from "./readiness.mjs";
 import {
@@ -112,10 +114,58 @@ function AgentBody({body}: {body: string}) {
   );
 }
 
+/**
+ * Follow-up actions the model suggested. The model cannot run them: each is a
+ * button that sends the skill's own example through the fixed registry, under
+ * the same role check as the Skills tab.
+ */
+function SuggestedSkills({
+  evidence,
+  siteHost,
+  sessionId,
+}: {
+  evidence: Array<Record<string, unknown>>;
+  siteHost: string;
+  sessionId: string;
+}) {
+  const suggestions = evidence.filter(
+    (item): item is {kind: string; key: string; name: string; example: string} =>
+      item.kind === "suggested_skill" &&
+      typeof item.key === "string" &&
+      typeof item.name === "string" &&
+      typeof item.example === "string",
+  );
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-rule pt-3">
+      {suggestions.map((item) => (
+        <form key={item.key} action={sendMessage}>
+          <input type="hidden" name="site_host" value={siteHost} />
+          <input type="hidden" name="session_id" value={sessionId} />
+          <input type="hidden" name="body" value={item.example} />
+          <input type="hidden" name="skill_key" value={item.key} />
+          <button
+            type="submit"
+            title={item.example}
+            className="rounded-full border border-good-rule bg-good-soft px-3 py-1 text-[12px] font-medium text-good hover:bg-good-soft"
+          >
+            {item.name}
+          </button>
+        </form>
+      ))}
+    </div>
+  );
+}
+
 export default async function WorkspacePage({searchParams}: {searchParams: Promise<Search>}) {
   const params = await searchParams;
   const tab: WorkspaceTab = resolveTab(one(params.tab));
   const errorCode = one(params.error);
+  const coveredPath = one(params.covered);
+  // These belong beside the "Plan a post" form, not in the page-wide banner.
+  const topicError = ["topic_already_has_page", "topic_brief_exists", "topic_invalid"].includes(errorCode)
+    ? errorCode
+    : "";
 
   const sites = await maybe<{data: Array<{id: string; normalized_host: string; name: string}>}>("/v1/sites");
   const owned = sites?.data ?? [];
@@ -145,6 +195,10 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
     ? await maybe<{data: AiCitationPrompt[]; suggestions: AiCitationSuggestion[]}>(`/v1/sites/${site.id}/ai-citation-prompts`)
     : null;
   const citations = site ? ((await maybe<{data: AiCitationReport}>(`/v1/sites/${site.id}/ai-citations`))?.data ?? null) : null;
+  const redditThreads =
+    site && tab === "reddit" ? ((await maybe<{data: RedditThread[]}>(`/v1/sites/${site.id}/reddit/threads`))?.data ?? []) : [];
+  const redditDrafts =
+    site && tab === "reddit" ? ((await maybe<{data: RedditDraft[]}>(`/v1/sites/${site.id}/reddit/drafts`))?.data ?? []) : [];
   const tracked = citationPrompts?.data ?? [];
   const suggestions = citationPrompts?.suggestions ?? [];
   const grid = citationGrid(citations?.observations ?? []);
@@ -195,7 +249,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
       </header>
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
-        {errorCode && (
+        {errorCode && !topicError && (
           <p role="alert" className="rounded-xl border border-stop-rule bg-stop-soft px-4 py-3 text-sm text-stop">
             The last action did not complete: <code>{errorCode}</code>
           </p>
@@ -290,6 +344,13 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                           )}
                         </div>
                         {message.role === "agent" ? <AgentBody body={message.body} /> : <p className="text-sm text-ink-soft">{message.body}</p>}
+                        {message.role === "agent" && (
+                          <SuggestedSkills
+                            evidence={message.evidence_json}
+                            siteHost={target.host}
+                            sessionId={activeSession.id}
+                          />
+                        )}
                       </li>
                     ))}
                     {messages.length === 0 && <li className={muted}>No messages yet. Try one of the examples on the Skills tab.</li>}
@@ -305,11 +366,11 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                       rows={3}
                       required
                       maxLength={8000}
-                      placeholder="Ask for an audit, keyword clusters, sitemap coverage, competitors, or the weekly report…"
+                      placeholder="Ask anything about this site: why traffic dropped, what to fix first, which pages AI search cites…"
                       className="rounded-xl border border-rule-strong bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-soft"
                     />
                     <div className="flex items-center justify-between gap-3">
-                      <p className={muted}>The agent reads stored evidence and can queue analysis. It never publishes a change.</p>
+                      <p className={muted}>Answers come from this site&apos;s own crawl, Search Console and citation records. Actions are buttons you press; the agent never changes the site.</p>
                       <button type="submit" className="rounded-full border border-good-rule bg-good-soft px-4 py-1.5 text-xs font-medium text-good hover:bg-good-soft">
                         Send
                       </button>
@@ -319,6 +380,10 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               )}
             </div>
           </section>
+        )}
+
+        {tab === "reddit" && target && (
+          <RedditTab host={target.host} siteName={target.name} threads={redditThreads} drafts={redditDrafts} />
         )}
 
         {tab === "tasks" && (
@@ -480,7 +545,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
               {clusters.length === 0 ? (
                 <div className="mt-3"><Empty>No keyword analysis yet. Connect Search Console, then run the keyword refresh routine.</Empty></div>
               ) : (
-                <div className="mt-3 overflow-x-auto">
+                <div tabIndex={0} role="region" aria-label="Scrollable table" className="mt-3 overflow-x-auto">
                   <table className="w-full min-w-[640px] text-left text-sm">
                     <thead className="text-xs uppercase tracking-wide text-ink-faint">
                       <tr>
@@ -520,6 +585,49 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                 Topics from this site&apos;s own searches: new posts to write, and existing pages to refresh.
                 Open one to read its plan and decide.
               </p>
+              <form action={planTopicPost} className="mt-4 flex flex-col gap-2 rounded-xl border border-rule bg-paper p-4">
+                <input type="hidden" name="site_host" value={target?.host ?? ""} />
+                <label htmlFor="plan-topic" className="text-sm font-medium text-ink">Plan a post</label>
+                <p className={muted}>
+                  Name a topic and it becomes a new-post brief you can draft from. A topic one of your pages already
+                  covers is refused, so the post doesn&apos;t compete with that page.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    id="plan-topic"
+                    name="topic"
+                    required
+                    minLength={3}
+                    maxLength={120}
+                    placeholder="How is EMI calculated?"
+                    aria-describedby={topicError ? "plan-topic-error" : undefined}
+                    className="min-w-0 flex-1 rounded-xl border border-rule-strong bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-ink-soft"
+                  />
+                  <label className="sr-only" htmlFor="plan-intent">What the reader wants</label>
+                  <select
+                    id="plan-intent"
+                    name="intent"
+                    defaultValue="informational"
+                    className="rounded-xl border border-rule-strong bg-surface px-2 py-1.5 text-sm text-ink"
+                  >
+                    <option value="informational">To learn</option>
+                    <option value="commercial">To compare</option>
+                    <option value="transactional">To do something</option>
+                  </select>
+                  <button type="submit" disabled={!site} className="rounded-full border border-rule-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunk disabled:opacity-40">
+                    Plan post
+                  </button>
+                </div>
+                {topicError && (
+                  <p id="plan-topic-error" role="alert" className="text-xs text-stop">
+                    {topicError === "topic_already_has_page"
+                      ? <>Your page <code>{coveredPath || "/"}</code> already covers this topic. Improve that page instead, or pick a narrower topic.</>
+                      : topicError === "topic_brief_exists"
+                        ? "There is already a brief for this topic. Open it below."
+                        : "Use 3 to 120 characters of plain words."}
+                  </p>
+                )}
+              </form>
               {briefs.length === 0 ? (
                 <div className="mt-3"><Empty>No briefs yet. Run the content briefs routine after a keyword refresh.</Empty></div>
               ) : (
@@ -641,7 +749,7 @@ export default async function WorkspacePage({searchParams}: {searchParams: Promi
                       {citations.history.slice(1, 6).map((run) => `${run.cited}/${run.answers}`).join(" · ")}
                     </p>
                   )}
-                  <div className="mt-4 overflow-x-auto">
+                  <div tabIndex={0} role="region" aria-label="Scrollable table" className="mt-4 overflow-x-auto">
                     <table className="w-full min-w-[32rem] text-left text-sm">
                       <thead>
                         <tr className="border-b border-rule text-xs text-ink-faint">

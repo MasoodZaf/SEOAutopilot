@@ -2,15 +2,18 @@
 Description=SEO Autopilot invariant check
 After=docker.service
 Requires=docker.service
+# An invariant never fails in normal operation, so a failure here reaches a
+# person. Decisions people owe (re-consent, an unmerged revert) run in
+# seo-autopilot-conditions instead: one unit keeps one state, and a condition
+# that sat red for a week once hid an open perimeter behind it.
+OnFailure=seo-autopilot-alert@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/seo-autopilot
-# Two questions, both of which have been answered wrongly in production by
-# something that looked healthy: does the perimeter still refuse an anonymous
-# request, and are the invariants holding. A failure in either fails the unit,
-# so `systemctl --failed` and the journal carry it.
 ExecStart=/opt/seo-autopilot/infra/scripts/check-perimeter.sh
-ExecStart=/bin/sh -c 'docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m app.cli.health --backup-dir /backups'
+ExecStart=/bin/sh -c 'docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m app.cli.health --tier invariants --backup-dir /backups'
 StandardOutput=journal
 StandardError=journal
+# cp infra/scripts/seo-autopilot-{health,conditions,alert@}.* /etc/systemd/system/
+# systemctl daemon-reload && systemctl enable --now seo-autopilot-health.timer seo-autopilot-conditions.timer

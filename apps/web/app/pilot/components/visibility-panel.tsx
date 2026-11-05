@@ -72,7 +72,7 @@ export function VisibilityPanel({trend, host}: {trend?: VisibilityTrend; host: s
         </p>
       ) : null}
 
-      <dl className="mt-6 grid gap-x-6 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-6 grid gap-x-6 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <Metric
             label="Branded impressions"
@@ -123,7 +123,7 @@ export function VisibilityPanel({trend, host}: {trend?: VisibilityTrend; host: s
           />
           <Bars series={card.ai.series} label="Share of AI answers naming the site, by run" />
         </div>
-      </dl>
+      </div>
 
       <details className="mt-8 border-t border-rule pt-4">
         <summary className="cursor-pointer text-[13px] text-ink-soft">

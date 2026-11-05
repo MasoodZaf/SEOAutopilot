@@ -10,6 +10,7 @@ from app.api.schemas import (
     ContentBriefStatus,
     ContentBriefStatusUpdate,
     ContentBriefSummary,
+    TopicBriefCreate,
 )
 from app.core.auth import TenantContextDependency
 from app.db.session import TenantSession
@@ -45,6 +46,24 @@ async def list_content_briefs(
     return ContentBriefCollection(
         data=[ContentBriefSummary.model_validate(item) for item in briefs],
         meta={"trace_id": context.trace_id, "count": len(briefs)},
+    )
+
+
+@router.post(
+    "/sites/{site_id}/content-briefs",
+    response_model=ContentBriefEnvelope,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_topic_brief(
+    site_id: UUID,
+    command: TopicBriefCreate,
+    context: TenantContextDependency,
+    session: TenantSession,
+) -> ContentBriefEnvelope:
+    """Plan a new post on a topic a person names; drafting it is a separate step."""
+    brief = await ContentBriefService(session, context).create_topic(site_id, command)
+    return ContentBriefEnvelope(
+        data=ContentBriefRead.model_validate(brief), meta={"trace_id": context.trace_id}
     )
 
 

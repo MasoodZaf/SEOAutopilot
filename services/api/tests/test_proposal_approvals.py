@@ -240,3 +240,158 @@ async def test_a_withdrawal_cannot_be_walked_back_into_an_approval() -> None:
 
     assert exc.value.detail == "proposal_already_rejected"
     assert proposal.status == "rejected"
+
+
+class MembershipAwareSession(AutoflushingSession):
+    """Answers the approver-membership query separately from the approval count."""
+
+    def __init__(self, proposal: Proposal, approver_members: list[UUID]) -> None:
+        super().__init__(proposal)
+        self.approver_members = approver_members
+
+    async def scalars(self, statement: object) -> list[UUID]:
+        if "tenant_membership" in str(statement):
+            return list(self.approver_members)
+        return await super().scalars(statement)
+
+
+def owner_author(tenant_id: UUID, author_id: UUID) -> TenantContext:
+    return TenantContext(
+        tenant_id=tenant_id, actor_id=author_id, role=Role.OWNER, trace_id="tr-self-review"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_only_approver_may_self_review_a_medium_risk_change() -> None:
+    """A one-person workspace could find problems but never ship a fix."""
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    session = MembershipAwareSession(proposal, [author_id])
+
+    approval = await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+        proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+    )
+
+    assert proposal.status == "approved"
+    assert approval.self_reviewed is True
+
+
+@pytest.mark.asyncio
+async def test_self_review_needs_the_explicit_confirmation() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=1)
+    session = MembershipAwareSession(proposal, [author_id])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id, ProposalApprovalCreate(decision="approved")
+        )
+
+    assert exc.value.detail == "self_review_confirmation_required"
+    assert proposal.status == "review_required"
+
+
+@pytest.mark.asyncio
+async def test_high_risk_still_needs_a_second_person_in_a_solo_workspace() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    proposal.risk = "high"
+    session = MembershipAwareSession(proposal, [author_id])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+        )
+
+    assert exc.value.detail == "self_review_not_allowed_for_risk"
+    assert proposal.status == "review_required"
+
+
+@pytest.mark.asyncio
+async def test_self_review_ends_once_a_second_approver_exists() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=1)
+    session = MembershipAwareSession(proposal, [author_id, uuid4()])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+        )
+
+    assert exc.value.detail == "author_cannot_approve_own_proposal"
+
+
+def new_blog_post(tenant_id: UUID, author_id: UUID, body: str = "---\ntitle: EMI\n---\nHow EMI works.\n") -> Proposal:
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    proposal.risk = "high"
+    proposal.target_type = "github_file"
+    proposal.target_path = "content/blog/emi.md"
+    proposal.before_content = ""
+    proposal.after_content = body
+    proposal.content_draft_id = uuid4()
+    return proposal
+
+
+@pytest.mark.asyncio
+async def test_the_only_approver_may_approve_a_new_blog_post_after_both_confirmations() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = new_blog_post(tenant_id, author_id)
+    session = MembershipAwareSession(proposal, [author_id])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+        )
+    assert exc.value.detail == "self_review_post_confirmation_required"
+
+    approval = await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+        proposal.id,
+        ProposalApprovalCreate(decision="approved", self_review=True, self_review_post=True),
+    )
+    assert proposal.status == "approved"
+    assert approval.self_reviewed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"content_draft_id": None},  # a new file that is not a reviewed blog draft
+        {"before_content": "<p>old</p>"},  # an edit to an existing page
+        {"target_path": "public/robots.txt"},
+        {"after_content": '<meta name="robots" content="noindex">'},
+    ],
+)
+async def test_other_high_risk_changes_still_need_a_second_person(change: dict[str, object]) -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = new_blog_post(tenant_id, author_id)
+    for key, value in change.items():
+        setattr(proposal, key, value)
+    session = MembershipAwareSession(proposal, [author_id])
+
+    with pytest.raises(HTTPException) as exc:
+        await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+            proposal.id,
+            ProposalApprovalCreate(decision="approved", self_review=True, self_review_post=True),
+        )
+    assert exc.value.detail == "self_review_not_allowed_for_risk"
+
+
+@pytest.mark.asyncio
+async def test_the_only_approver_may_self_review_faq_markup_that_kept_its_high_risk() -> None:
+    tenant_id, author_id = uuid4(), uuid4()
+    proposal = make_proposal(tenant_id, author_id=author_id, required_approver_count=2)
+    proposal.risk = "high"
+    proposal.target_type = "github_file"
+    proposal.target_path = "TheCalcHive/emi.html"
+    proposal.before_content = "<html><head></head><body><p>Hi</p></body></html>"
+    proposal.after_content = proposal.before_content.replace(
+        "</head>", '<script type="application/ld+json">{"@type":"FAQPage"}</script></head>'
+    )
+    session = MembershipAwareSession(proposal, [author_id])
+
+    approval = await service(session, owner_author(tenant_id, author_id)).approve_proposal(
+        proposal.id, ProposalApprovalCreate(decision="approved", self_review=True)
+    )
+    assert proposal.status == "approved"
+    assert approval.self_reviewed is True

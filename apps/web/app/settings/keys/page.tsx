@@ -4,10 +4,24 @@ import type {Metadata} from "next";
 import {GoogleClientGuide} from "@/app/components/google-client-guide";
 import {apiJson, isMissingTenant} from "@/lib/server-api";
 
-import {revokeCredentialAction, saveAiKeyAction, saveGithubAppAction, saveGoogleClientAction} from "./actions";
+import {
+  checkAiKeyAction,
+  revokeCredentialAction,
+  saveAiKeyAction,
+  saveGithubAppAction,
+  saveGoogleClientAction,
+} from "./actions";
+import {decodeCheck, explainCheck} from "./key-check.mjs";
 
 type PageProps = {
-  searchParams: Promise<{saved?: string; revoked?: string; error?: string; created?: string}>;
+  searchParams: Promise<{
+    saved?: string;
+    revoked?: string;
+    error?: string;
+    created?: string;
+    checked?: string;
+    result?: string;
+  }>;
 };
 
 export const metadata: Metadata = {
@@ -407,6 +421,8 @@ export default async function KeysPage({searchParams}: PageProps) {
             const stored = find(credentials, item.provider);
             const mine = stored?.source === "tenant";
             const suffix = typeof stored?.config.key_suffix === "string" ? stored.config.key_suffix : null;
+            const checkable = item.provider !== "perplexity_api_key";
+            const advice = query.checked === item.provider ? explainCheck(item.provider, decodeCheck(query.result)) : null;
             return (
               <div key={item.provider} className="flex flex-col gap-3 rounded-xl border border-rule bg-paper p-4">
                 <div className="flex items-center justify-between gap-2">
@@ -436,6 +452,33 @@ export default async function KeysPage({searchParams}: PageProps) {
                     {mine ? "Replace key" : "Save key"}
                   </button>
                 </form>
+                {mine && checkable ? (
+                  <form action={checkAiKeyAction} className="flex flex-col gap-2">
+                    <input type="hidden" name="provider" value={item.provider} />
+                    <button
+                      type="submit"
+                      className="self-start rounded-full border border-rule-strong bg-surface px-4 py-1.5 text-sm font-medium text-ink hover:bg-sunk"
+                    >
+                      Check key
+                    </button>
+                    {advice ? (
+                      <p
+                        role="status"
+                        className={`rounded-xl border px-3 py-2 text-xs text-pretty ${
+                          advice.tone === "good"
+                            ? "border-good-rule bg-good-soft text-good"
+                            : advice.tone === "stop"
+                              ? "border-stop-rule bg-stop-soft text-stop"
+                              : "border-warn-rule bg-warn-soft text-warn"
+                        }`}
+                      >
+                        {advice.text}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-ink-faint">Asks the provider which drafting models this key may use.</p>
+                    )}
+                  </form>
+                ) : null}
                 {mine ? (
                   <form action={revokeCredentialAction}>
                     <input type="hidden" name="provider" value={item.provider} />

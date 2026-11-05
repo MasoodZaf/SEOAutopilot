@@ -21,6 +21,7 @@ from app.api.routes.opportunities import calibration_router
 from app.api.routes.opportunities import router as opportunities_router
 from app.api.routes.pages import router as pages_router
 from app.api.routes.proposals import router as proposals_router
+from app.api.routes.reddit import router as reddit_router
 from app.api.routes.routines import router as routines_router
 from app.api.routes.sites import router as sites_router
 from app.api.routes.system import router as system_router
@@ -167,4 +168,5 @@ app.include_router(briefs_router)
 app.include_router(content_drafts_router)
 app.include_router(competitors_router)
 app.include_router(agent_router)
+app.include_router(reddit_router)
 

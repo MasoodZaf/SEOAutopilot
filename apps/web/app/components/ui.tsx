@@ -195,14 +195,16 @@ export function Metric({
  size?: "figure" | "word";
 }) {
  return (
-    <div className={cn("flex min-w-0 flex-col gap-2", className)}>
+    // Its own <dl>: a label and its value are a complete term/definition pair
+    // wherever the metric is placed, so a wrapper cannot break the pairing.
+    <dl className={cn("flex min-w-0 flex-col gap-2", className)}>
       <dt className="eyebrow">{label}</dt>
       <dd className="flex min-w-0 items-baseline gap-1.5">
         <span className={cn("figure min-w-0 break-words text-ink", size === "word" ? "text-[26px]" : "text-[34px]")}>{value}</span>
         {unit ? <span className="font-mono text-[12px] text-ink-faint">{unit}</span> : null}
       </dd>
       {hint ? <dd className="text-[12px] leading-5 text-pretty text-ink-faint">{hint}</dd> : null}
-    </div>
+    </dl>
   );
 }
 

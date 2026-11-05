@@ -10,6 +10,8 @@ import {LiveRefresh} from "../../../live-refresh";
 import {saveDraft, submitDraft, withdrawDraft} from "../../actions";
 import type {AnswerItem, ContentDraftDetail, DraftFlag} from "../../model";
 
+import {FlagProgress} from "./flag-progress";
+
 export const metadata: Metadata = {
   title: "AI draft",
   robots: {index: false, follow: false},
@@ -66,6 +68,10 @@ const ERRORS: Record<string, string> = {
   github_not_connected: "Connect this site's GitHub repository under Settings → Connectors first. Posts arrive as a pull request there.",
   blog_path_template_invalid: "This site's blog path setting is not usable. It must contain {slug} and stay inside the repository.",
   content_draft_already_submitted: "This draft has already been sent for approval.",
+  blog_template_not_found: "The page this site's posts are laid out like was not found in the repository. Pick another under Adjust governance → Blog posts.",
+  blog_template_needs_one_main_element: "The layout page has neither one <main> element nor a nav-and-footer layout to place the post in. Pick another page.",
+  blog_template_needs_head_and_title: "The layout page has no <head> and <title>, so the post cannot take its own title.",
+  blog_template_is_noindex: "The layout page is set to noindex, and a post copied from it would be hidden from search. Pick another page.",
   insufficient_permissions_to_create_proposal: "Your role cannot send changes for approval.",
   answer_heading_unknown: "That answer is for a question this draft was not asked. Reload and edit again.",
   answer_draft_empty: "Write at least one answer before sending for approval.",
@@ -157,7 +163,7 @@ function dollars(micros: number): string {
 
 function FlagRow({flag}: {flag: DraftFlag}) {
   return (
-    <li className="grid gap-2 px-5 py-4">
+    <li id={`flag-${flag.id}`} className="grid scroll-mt-24 gap-2 px-5 py-4">
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={flag.resolved ? "good" : flag.kind === "claim" || flag.kind === "figure" ? "warn" : "neutral"}>
           {flag.resolved ? "Resolved" : (FLAG_LABEL[flag.kind] ?? flag.kind)}
@@ -194,6 +200,7 @@ export default async function DraftPage({params, searchParams}: PageProps) {
   const status = STATUS[draft.status] ?? {label: draft.status, tone: "neutral" as Tone};
   const working = draft.status === "queued" || draft.status === "running";
   const unresolved = draft.flags_json.filter((flag) => !flag.resolved);
+  const firstOpen = unresolved[0]?.id ?? null;
   const diff =
     draft.generated_json?.body_markdown && draft.body_markdown
       ? lineDiff(draft.generated_json.body_markdown, draft.body_markdown)
@@ -224,10 +231,12 @@ export default async function DraftPage({params, searchParams}: PageProps) {
           </h1>
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <Badge tone={status.tone}>{status.label}</Badge>
-            {draft.status === "ready" ? (
-              <Badge tone={unresolved.length ? "warn" : "good"}>
-                {unresolved.length ? `${unresolved.length} to resolve` : "All flags resolved"}
-              </Badge>
+            {draft.status === "ready" && unresolved.length && firstOpen ? (
+              <a href={`#flag-${firstOpen}`} className="rounded-full focus-visible:outline-2">
+                <Badge tone="warn">{`${unresolved.length} to resolve`}</Badge>
+              </a>
+            ) : draft.status === "ready" ? (
+              <Badge tone="good">All flags resolved</Badge>
             ) : null}
           </div>
         </div>
@@ -247,9 +256,10 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               {answering
                 ? "The answers are now a proposal to edit the page's source file: each placed under its heading, with FAQ markup built from them."
                 : "The post is now a proposal to add a new page."}{" "}
-              Two people other than you must approve it on the{" "}
-              <Link href="/pilot" className="underline underline-offset-4">dashboard</Link>, under Proposals; then deploying
-              it opens a pull request that a person merges to publish.
+              Approve it on the{" "}
+              <Link href="/pilot" className="underline underline-offset-4">dashboard</Link>, under Proposals: a reviewer
+              who is not you, or you yourself if you are this workspace&rsquo;s only approver. Deploying it then opens a
+              pull request that a person merges to publish.
             </Note>
           ) : null}
 
@@ -348,8 +358,15 @@ export default async function DraftPage({params, searchParams}: PageProps) {
 
               <div className="flex flex-wrap items-center gap-3">
                 <button type="submit" className={button.primary}>Save changes</button>
-                <span className="text-[13px] text-ink-faint">Saving records your edits and resolved flags in the audit trail.</span>
+                <FlagProgress
+                  total={draft.flags_json.length}
+                  saved={draft.flags_json.length - unresolved.length}
+                  firstOpenId={firstOpen}
+                />
               </div>
+              <p className="-mt-3 text-[12px] text-ink-faint">
+                A ticked flag counts once you press Save. Saving records your edits and resolved flags in the audit trail.
+              </p>
             </form>
           ) : null}
 
@@ -377,7 +394,7 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               <h2 id="diff-heading" className="font-display text-[22px] font-light tracking-tight text-ink">
                 Changed from the AI draft
               </h2>
-              <Panel as="div" className="mt-4 max-h-[32rem] overflow-auto">
+              <Panel as="div" tabIndex={0} role="region" aria-label="Post preview" className="mt-4 max-h-[32rem] overflow-auto">
                 <pre className="p-4 font-mono text-[12px] leading-5">
                   {diff.map((line, index) => (
                     <span
@@ -416,6 +433,16 @@ export default async function DraftPage({params, searchParams}: PageProps) {
               Billed to your workspace&rsquo;s own {provider} key. Costs are estimated from list prices;
               your provider&rsquo;s invoice is the final figure.
             </p>
+            {draft.provider === "openai" && draft.model?.startsWith("gpt-4.1") ? (
+              <p className="mt-3 text-[12px] leading-5 text-pretty text-ink-soft">
+                Written with gpt-4.1: either this deployment is set to it, or your key could not use gpt-5. To
+                see which,{" "}
+                <Link href="/settings/keys#openai_api_key-input" className="font-medium text-accent underline underline-offset-2">
+                  check the key
+                </Link>
+                .
+              </p>
+            ) : null}
           </Panel>
 
           {draft.status === "ready" ? (
@@ -425,8 +452,8 @@ export default async function DraftPage({params, searchParams}: PageProps) {
                 {unresolved.length
                   ? `Resolve the ${unresolved.length} remaining ${unresolved.length === 1 ? "flag" : "flags"} and save first.`
                   : answering
-                    ? "Reads the page's source file and creates a proposal that places each answer under its heading, with FAQ markup built from them. High risk: two people other than the author must approve it; deploying then opens a pull request a person merges."
-                    : "Creates a proposal to add this post as a new page. Two people other than the author must approve it; deploying then opens a pull request a person merges."}
+                    ? "Reads the page's source file and creates a proposal that places each answer under its heading, with FAQ markup built from them. It then needs approving: by a reviewer who is not you, or by you if you are this workspace's only approver. Deploying opens a pull request a person merges."
+                    : "Creates a proposal to add this post as a new page, plus one listing it in the sitemap where the site has one. Each then needs approving: by a reviewer who is not you, or by you if you are this workspace's only approver. Deploying opens a pull request a person merges."}
               </p>
               <form action={submitDraft} className="mt-4">
                 <input type="hidden" name="draft_id" value={draft.id} />
@@ -436,9 +463,16 @@ export default async function DraftPage({params, searchParams}: PageProps) {
                   aria-disabled={unresolved.length > 0}
                   className={`${button.primary} w-full`}
                 >
-                  Send for approval
+                  {unresolved.length
+                    ? `Resolve ${unresolved.length} ${unresolved.length === 1 ? "flag" : "flags"} first`
+                    : "Send for approval"}
                 </button>
               </form>
+              {unresolved.length && firstOpen ? (
+                <a href={`#flag-${firstOpen}`} className="mt-3 inline-block text-[13px] font-medium text-accent underline underline-offset-2">
+                  Go to the first open flag
+                </a>
+              ) : null}
               <p className="mt-3 text-[12px] leading-5 text-ink-faint">Save your edits before sending: unsaved changes are not included.</p>
             </Panel>
           ) : null}

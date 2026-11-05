@@ -283,3 +283,17 @@ async def test_an_old_deployment_nobody_ever_checked_is_still_checked(engine, gr
         )
 
     assert await picked_up(engine, ids) == [proposal_id]
+
+
+async def test_a_sitemap_entry_is_checked_against_the_sitemap_not_the_post(engine, ground) -> None:
+    """It is filed against the post it lists, whose page never holds its lines."""
+    ids, factory = ground
+    async with factory() as session, session.begin():
+        proposal_id = await _deployed(session, ids, "/blog/emi-worked-example")
+        await session.execute(
+            text("UPDATE proposal SET generator='sitemap_entry' WHERE id=:id"), {"id": proposal_id}
+        )
+
+    async with engine.connect() as connection:
+        rows = [r for r in await unverified(connection, 50) if r.tenant_id == ids["tenant_id"]]
+    assert [(r.proposal_id, r.url) for r in rows] == [(proposal_id, f"https://{HOST}/sitemap.xml")]

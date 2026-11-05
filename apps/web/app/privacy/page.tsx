@@ -12,7 +12,7 @@ const CONTACT = "support@oryxenlabs.com";
 
 export default function PrivacyPage() {
   return (
-    <Legal title="Privacy Policy" updated="9 September 2026">
+    <Legal title="Privacy Policy" updated="5 November 2026">
       <Section heading="Who this covers">
         <p>
           SEO Autopilot is an SEO operations tool. You connect sites you control, it gathers
@@ -23,7 +23,7 @@ export default function PrivacyPage() {
       </Section>
 
       <Section heading="What is stored">
-        <p>Four kinds of thing, and nothing else:</p>
+        <p>Five kinds of thing, and nothing else:</p>
         <ul className="ml-5 list-disc space-y-2">
           <li>
             <b>Your identity.</b> When you sign in with Google we store the account identifier
@@ -31,9 +31,10 @@ export default function PrivacyPage() {
             you are across visits and to show your name to other members of your own workspace.
           </li>
           <li>
-            <b>Credentials you enter.</b> Your own Google OAuth client and GitHub App details,
-            and the tokens that authorising Search Console, Analytics or a repository produces.
-            These are encrypted before they are written down (see below).
+            <b>Credentials you enter.</b> Your own Google OAuth client and GitHub App details if
+            you add them, the AI provider keys you add (Anthropic or OpenAI), and the tokens that
+            authorising Search Console, Analytics or a repository produces. These are encrypted
+            before they are written down (see below).
           </li>
           <li>
             <b>Evidence about your sites.</b> Pages fetched from sites you have added and proved
@@ -44,10 +45,32 @@ export default function PrivacyPage() {
             <b>Work produced from that.</b> Findings, ranked opportunities, proposed changes, the
             decisions you take on them and the outcomes measured afterwards.
           </li>
+          <li>
+            <b>What you write to the assistant.</b> Your conversations with the site assistant,
+            and the blog and Reddit drafts it prepares, kept in your workspace so you can review
+            and return to them.
+          </li>
         </ul>
         <p>
           We do not use advertising trackers, we do not run third-party analytics on this
-          service, and we do not sell or share anything described here with anybody.
+          service, and we do not sell anything described here. The only party we pass any of it
+          to is the AI provider you choose, as described next.
+        </p>
+      </Section>
+
+      <Section heading="AI providers">
+        <p>
+          The assistant, blog drafting and Reddit drafting run on an AI provider key that you add
+          — Anthropic or OpenAI — under your own account with that provider. When you use one of
+          those features, the evidence the request needs is sent to that provider to produce the
+          answer: page text and findings from your site and, when the question calls for it, the
+          Search Console and Analytics figures described above. Nothing is sent to a provider
+          whose key you have not added, and nothing is sent unless you use one of these features.
+        </p>
+        <p>
+          What the provider does with it is governed by its API terms, which you accept with it
+          directly. Model output is never published on its own: every change it suggests becomes a
+          proposal a person reviews, and Reddit drafts are handed to you to post yourself.
         </p>
       </Section>
 
@@ -57,11 +80,13 @@ export default function PrivacyPage() {
           <code>profile</code> scopes — enough to establish who you are and nothing more.
         </p>
         <p>
-          Connecting Search Console or Analytics is a separate, later, optional step, and it runs
-          through <b>your own</b> Google Cloud OAuth client, which you create and control. The
-          data those grants return is used for one purpose: producing and measuring SEO findings
-          inside your own workspace. It is never used to train models, never used for
-          advertising, and never transferred to anyone.
+          Connecting Search Console or Analytics is a separate, later, optional step. It runs
+          through Oryxen Labs&rsquo; Google client, or through your own Google Cloud OAuth client
+          if you add one. The data those grants return is used for one purpose: producing and
+          measuring SEO findings inside your own workspace, and answering your own questions about
+          them. We never use it to train models, never use it for advertising, and never sell it.
+          It is transferred only to the AI provider whose key you added, only to answer a request
+          you made in the app.
         </p>
         <p>
           SEO Autopilot&rsquo;s use of information received from Google APIs adheres to the{" "}
@@ -111,15 +136,17 @@ export default function PrivacyPage() {
 
       <Section heading="Where it lives, and for how long">
         <p>
-          Data is stored on servers in Germany, operated by Hetzner, and reached through
-          Cloudflare. It is kept while your workspace exists. Removing a credential revokes it
-          immediately; deleting your workspace deletes the evidence, proposals and credentials
-          belonging to it.
+          Data is stored on a server in Helsinki, Finland, operated by Hetzner, and reached
+          through Cloudflare. It is kept while your workspace exists. Removing a credential inside the app
+          deletes it immediately. Ask us to delete your workspace and we delete everything
+          belonging to it — evidence, findings, proposals, conversations, drafts and credentials
+          — within 30 days, and your sign-in identity too if you ask.
         </p>
         <p>
           Ask us at <a className="underline" href={`mailto:${CONTACT}`}>{CONTACT}</a> for a copy
-          of what is held about you, a correction, or deletion, and we will act on it. Backups
-          are retained for a short period and roll off on their own.
+          of what is held about you, a correction, or deletion, and we will act on it. Nightly
+          backups are kept for 14 days and then deleted on their own, so a deletion reaches the
+          backups within 14 days of being carried out.
         </p>
       </Section>
 

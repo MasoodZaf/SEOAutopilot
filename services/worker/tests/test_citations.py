@@ -399,3 +399,18 @@ async def test_another_tenants_session_sees_no_citations(connection) -> None:
             assert await connection.fetchval(f"SELECT count(*) FROM {table}") == 0
     finally:
         await connection.execute("RESET ROLE")
+
+
+def test_cited_reddit_threads_are_kept_in_canonical_form():
+    from app.citations.scan import reddit_threads
+
+    urls = [
+        "https://old.reddit.com/r/personalfinance/comments/ABC123/how_is_emi_calculated/?utm=x",
+        "https://www.reddit.com/r/personalfinance/comments/abc123/how_is_emi_calculated/",
+        "https://www.reddit.com/r/personalfinance/",
+        "https://reddit.com.evil.example/r/x/comments/abc123/",
+        "https://thecalchive.com/emi-calculator",
+    ]
+    assert reddit_threads(urls) == [
+        "https://www.reddit.com/r/personalfinance/comments/abc123/how_is_emi_calculated/"
+    ]

@@ -552,3 +552,35 @@ Playwright end-to-end coverage of onboarding, opportunity, diff, approval and ro
 accessibility review; performance evidence at 10,000 pages with dashboard p95 and queue fairness;
 resilience drills for worker loss, lease expiry, duplicate events and partial provider failure; and
 an independent security review of the injection denylist and secret rotation.
+
+#### Quality-gate checkpoint (2026-11-05)
+
+Local evidence, not launch approval. Each line says what was run.
+
+- **Browser tests and accessibility.** `apps/web/e2e`, Playwright on desktop and phone with axe at
+  WCAG 2.2 AA (serious and critical fail): all public and signed-in pages, no sideways scroll, and
+  the review loop — diff, approval refused beside the proposal until the sole reviewer confirms,
+  approve, deploy refused with no repository, withdraw. 32 pass. Axe found broken term/definition
+  pairs, keyboard-unreachable scrolling regions and a sample title marked up as a heading; fixed.
+  **Not covered in the browser:** rollback (needs a deployed change; covered by API integration
+  tests) and onboarding submission.
+- **10,000 pages.** Synthetic site: 10,000 pages, 50,000 findings, 30,000 opportunities, 280,000
+  Search Console rows; 60 requests per endpoint at 10 concurrent. p95: opportunities 116 ms,
+  search performance 154 ms, visibility trend 350 ms (was 975 ms; now summed in SQL), all others
+  under 60 ms.
+- **Queue fairness.** The crawler crawled one site at a time, so one tenant's large crawl held
+  every queue. Now three slots, one running crawl per workspace. Drilled: another workspace's
+  crawl ran beside ours; our second waited for our first.
+- **Resilience drills.** Crawler killed mid-crawl: no second copy while its lease held; taken
+  over at expiry and completed with no duplicate pages. Duplicate crawl event: discarded.
+  Postgres and Redis restarted under load: the API recovered at once; the worker and crawler
+  exit and are brought back by the restart policy (prod: `unless-stopped`), and queued work then
+  completes. An unacknowledged event can wait up to the 60 s reclaim window.
+  **Not drilled:** partial provider failure against a live provider (unit tests only).
+- **Security review (in-house, not independent).** Dependencies: Next 16.3.1 carried five
+  critical advisories (unauthenticated RCE); now 16.4.5, `pnpm audit --prod` clean. The live
+  check followed redirects into private addresses and stored the reply where the tenant reads it;
+  now refused per hop. CI and workflow files are refused as SEO targets; config and template-wide
+  files are high risk. The dashboard cannot be framed. Model text is never rendered as HTML and
+  the assistant only runs read-only skills. **Still owed:** an independent review; the API has no
+  Python lockfile, so prod resolves whatever versions are newest at build time.

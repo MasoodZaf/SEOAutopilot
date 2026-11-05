@@ -77,7 +77,7 @@ async def workspace(engine):
             )
     yield ids
     async with factory() as session, session.begin():
-        for table in ("outbox_event", "audit_event", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
+        for table in ("outbox_event", "audit_event", "rollback_receipt", "deployment_receipt", "proposal_approval", "proposal", "content_draft", "tenant_credential", "connector", "content_brief", "keyword_cluster", "keyword_analysis_run", "page", "site"):
             await session.execute(text(f"DELETE FROM {table} WHERE tenant_id=:t"), {"t": ids["tenant"]})
         await session.execute(text("DELETE FROM tenant WHERE id=:t"), {"t": ids["tenant"]})
 
@@ -292,3 +292,156 @@ def test_front_matter_escapes_quotes_and_flattens_lines():
     assert 'title: "The \\"EMI\\" rule"' in rendered
     assert 'description: "line one line two"' in rendered
     assert "\r" not in rendered
+
+
+async def test_on_a_plain_html_site_the_post_is_a_page_in_the_site_shell(tenant_session_factory, workspace):
+    shell = (
+        "<html><head><title>EMI Calculator</title><link rel=\"stylesheet\" href=\"styles.css\">"
+        "<link rel=\"canonical\" href=\"https://w.example/emi-calculator\"></head>"
+        "<body><nav>Home</nav><main><h1>EMI Calculator</h1></main></body></html>"
+    )
+    asked: list[str] = []
+
+    sitemap = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        "  <url><loc>https://w.example/emi-calculator</loc></url>\n</urlset>\n"
+    )
+
+    async def read_file(path: str) -> str | None:
+        asked.append(path)
+        return {"CalcHive/emi-calculator.html": shell, "CalcHive/sitemap.xml": sitemap}.get(path)
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        await session.execute(
+            text("UPDATE site SET blog_template_path='/emi-calculator' WHERE id=:s"), {"s": workspace["site"]}
+        )
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+
+        with pytest.raises(HTTPException) as caught:
+            await service.submit(draft.id)
+        assert caught.value.detail == "github_not_connected"
+
+        proposal = await service.submit(draft.id, read_file, "CalcHive/{path}.html")
+        listed = (
+            await session.execute(
+                text("SELECT target_path, risk, status, after_content FROM proposal"
+                     " WHERE site_id=:s AND generator='sitemap_entry'"),
+                {"s": workspace["site"]},
+            )
+        ).one()
+
+    assert asked == ["CalcHive/emi-calculator.html", "CalcHive/sitemap.xml"]
+    # The sitemap is its own proposal: high risk, merged on GitHub by a person.
+    assert (listed.target_path, listed.risk) == ("CalcHive/sitemap.xml", "high")
+    assert "<loc>https://w.example/blog/how-emi-is-calculated</loc>" in listed.after_content
+    # A one-person workspace can approve it, and then merges it on GitHub.
+    from app.domain.proposals import self_review_scope
+
+    assert self_review_scope(
+        risk=listed.risk, content_draft_id=None, target_type="github_file",
+        target_path=listed.target_path, before_content=sitemap, after_content=listed.after_content,
+    ) == "change"
+    assert proposal.target_path == "CalcHive/blog/how-emi-is-calculated.html"
+    assert proposal.before_content == ""
+    assert "<nav>Home</nav>" in proposal.after_content
+    assert '<link rel="stylesheet" href="/styles.css">' in proposal.after_content
+    assert "<h1>How EMI is calculated</h1>" in proposal.after_content
+    assert "EMI Calculator</h1>" not in proposal.after_content
+    assert "canonical" not in proposal.after_content
+    # Still a new page: high risk, and its only approver may self-review it.
+    assert proposal.risk == "high"
+    assert ProposalRead.model_validate(proposal).self_review_scope == "new_post"
+
+
+async def test_a_second_post_supersedes_the_unapproved_sitemap_entry(tenant_session_factory, workspace):
+    shell = "<html><head><title>T</title></head><body><main>x</main></body></html>"
+    sitemap = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n</urlset>\n'
+
+    async def read_file(path: str) -> str | None:
+        return {"CalcHive/emi-calculator.html": shell, "CalcHive/sitemap.xml": sitemap}.get(path)
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        await session.execute(
+            text("UPDATE site SET blog_template_path='/emi-calculator' WHERE id=:s"), {"s": workspace["site"]}
+        )
+        service, first = await _ready_draft(session, workspace, resolved=True, connected=True)
+        await service.submit(first.id, read_file, "CalcHive/{path}.html")
+        _, second = await _ready_draft(session, workspace, resolved=True, connected=False)
+        second.slug = "emi-vs-interest"
+        await session.flush()
+        await service.submit(second.id, read_file, "CalcHive/{path}.html")
+        rows = (
+            await session.execute(
+                text("SELECT status, after_content FROM proposal WHERE site_id=:s AND generator='sitemap_entry'"
+                     " ORDER BY created_at"),
+                {"s": workspace["site"]},
+            )
+        ).all()
+
+    assert [row.status for row in rows] == ["expired", "review_required"]
+    assert "/blog/how-emi-is-calculated</loc>" in rows[1].after_content
+    assert "/blog/emi-vs-interest</loc>" in rows[1].after_content
+
+
+async def test_withdrawing_a_post_sends_its_draft_back_for_review(tenant_session_factory, workspace):
+    from app.api.schemas import ProposalApprovalCreate
+    from app.services.proposals import ProposalService
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+        first = await service.submit(draft.id)
+
+        await ProposalService(session, ctx(workspace)).approve_proposal(
+            first.id, ProposalApprovalCreate(decision="rejected", notes="Renderer bug; rebuilding")
+        )
+        reopened = await service.get(draft.id)
+        assert reopened is not None and reopened.status == "ready"
+        audit = await session.scalar(
+            text("SELECT count(*) FROM audit_event WHERE resource_id=:d AND action='content_draft.reopened'"),
+            {"d": str(draft.id)},
+        )
+        assert audit == 1
+
+        # It can be sent again, as a new proposal; the withdrawn one stays withdrawn.
+        second = await service.submit(draft.id)
+        assert second.id != first.id
+        assert second.status == "review_required"
+        await session.commit()
+
+
+@pytest.mark.parametrize(
+    ("result_status", "draft_status"),
+    [("applied", "ready"), ("pending", "submitted")],
+    ids=["closed-before-merge", "revert-pr-opened"],
+)
+async def test_a_post_rolled_back_before_it_merged_goes_back_for_review(
+    tenant_session_factory, workspace, result_status, draft_status
+):
+    """Closing a post's unmerged pull request takes nothing off the site; the
+    draft must come back so the fix can be sent again. A merged post with only
+    a revert pull request open is still live, so its draft stays sent."""
+    from app.db.models import DeploymentReceipt
+    from app.domain.deployments import RollbackRequest, RollbackResult
+    from app.services.governance import GovernanceService
+
+    class ClosingAdapter:
+        async def rollback(self, request: RollbackRequest) -> RollbackResult:
+            return RollbackResult(result_status, "https://github.com/o/r/pull/12", "h" * 64, "stub")
+
+    async with tenant_session_factory(workspace["tenant"]) as session:
+        service, draft = await _ready_draft(session, workspace, resolved=True, connected=True)
+        proposal = await service.submit(draft.id)
+        proposal.status = "deployed"
+        session.add(DeploymentReceipt(
+            tenant_id=workspace["tenant"], site_id=proposal.site_id, proposal_id=proposal.id,
+            connector_type="github", idempotency_key=f"post-{result_status}",
+            external_ref="https://github.com/o/r/pull/12", manifest_json={"pull_request_number": 12},
+        ))
+        await session.flush()
+
+        await GovernanceService(session, ctx(workspace)).rollback_deployment(
+            proposal.id, "page unstyled", ClosingAdapter()
+        )
+        reopened = await service.get(draft.id)
+        assert reopened is not None and reopened.status == draft_status
+        await session.commit()

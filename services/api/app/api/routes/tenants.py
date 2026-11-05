@@ -14,6 +14,8 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.api.schemas import (
+    AiKeyCheckRead,
+    AiModelCheckRead,
     AnthropicKeyCreate,
     GitHubAppCreate,
     GoogleClientCheckRead,
@@ -30,8 +32,10 @@ from app.api.schemas import (
 )
 from app.core.auth import ActorContextDependency, TenantContextDependency
 from app.core.config import get_settings
+from app.core.context import Role
 from app.db.models import Tenant, TenantMembership
 from app.db.session import TenantSession, authenticating_session
+from app.services.ai_key_check import check_model
 from app.services.google_client_check import ClientCheckResult, check_google_client
 from app.services.tenant_credentials import (
     ANTHROPIC_API_KEY,
@@ -242,6 +246,48 @@ async def put_github_app(
         source="tenant",
         config=dict(credential.config_json),
         configured_at=credential.created_at,
+    )
+
+
+# The model a draft steps down to when the key may not use the configured one
+# (worker: app.content_drafts.model.OPENAI_FALLBACK_MODEL).
+OPENAI_DRAFT_FALLBACK_MODEL = "gpt-4.1"
+
+
+@credentials_router.get("/{provider}/check", response_model=AiKeyCheckRead)
+async def check_ai_key(
+    provider: str, context: TenantContextDependency, session: TenantSession
+) -> AiKeyCheckRead:
+    """Whether the stored key may use the models drafts are written with.
+
+    Answers "why did my draft come from gpt-4.1?" without anyone needing the
+    key to hand: the provider is asked with the stored key, and only the
+    status is returned. Owner or admin, like storing the key.
+    """
+    context.require(Role.OWNER, Role.ADMIN)
+    settings = get_settings()
+    if provider == OPENAI_API_KEY:
+        name = "openai"
+        # The configured model first; then gpt-5 and the fallback, so the answer
+        # also says whether switching this deployment to gpt-5 would work.
+        models = list(dict.fromkeys([settings.content_draft_openai_model, "gpt-5", OPENAI_DRAFT_FALLBACK_MODEL]))
+    elif provider == ANTHROPIC_API_KEY:
+        name, models = "anthropic", [settings.content_draft_anthropic_model]
+    else:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant_credential_not_found")
+
+    pair = await store_for(session, settings).get_pair(context.tenant_id, provider)
+    if pair is None:
+        return AiKeyCheckRead(provider=provider, configured=False)
+    config, secret = pair
+    api_key = str(secret.get("api_key") or "")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        checks = [await check_model(client, provider=name, api_key=api_key, model=model) for model in models]
+    return AiKeyCheckRead(
+        provider=provider,
+        configured=True,
+        key_suffix=str(config.get("key_suffix") or "") or None,
+        models=[AiModelCheckRead(model=item.model, status=item.status.value) for item in checks],
     )
 
 

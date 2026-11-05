@@ -23,7 +23,7 @@ export function SerpPreview({title, url, description, isModified = false}: SerpP
           </span>
         )}
       </div>
-      <h3 className="mt-2 line-clamp-1 text-[15px] font-medium text-accent">{title}</h3>
+      <p className="mt-2 line-clamp-1 text-[15px] font-medium text-accent">{title}</p>
       <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-ink-soft">{description}</p>
     </div>
   );

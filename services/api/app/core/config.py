@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     content_draft_openai_model: str = "gpt-5"
     # Monthly spend ceiling per workspace, in integer micro-dollars ($25).
     content_draft_monthly_budget_micros: int = 25_000_000
+    # The workspace chat answers through the same bring-your-own key, and its
+    # spend counts against the same monthly budget. Without a key it falls back
+    # to the deterministic skill router.
+    agent_chat_model_enabled: bool = True
+    agent_chat_anthropic_model: str = "claude-opus-5-5"
+    agent_chat_openai_model: str = "gpt-5"
     # The mock adapter fabricates a successful deployment. It must be opted
     # into explicitly and never inferred from app_env, because a deployment
     # that reports success without touching a provider is the exact failure

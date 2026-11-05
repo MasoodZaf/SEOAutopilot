@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
 from app.db.models import (
+    AgentMessage,
     AuditEvent,
     Connector,
     ContentBrief,
@@ -44,9 +45,12 @@ from app.db.models import (
     Page,
     PageObservation,
     Proposal,
+    RedditDraft,
     Site,
 )
 from app.domain.answer_block import AnswerBlockError, AnswerItem, place_answers
+from app.domain.blog_html import BlogTemplateError, build_post_page
+from app.domain.sitemap_entry import add_sitemap_urls
 from app.services.proposal_drafts import target_path_for
 from app.services.proposals import ProposalService
 from app.services.tenant_credentials import ANTHROPIC_API_KEY, OPENAI_API_KEY, store_for
@@ -93,6 +97,31 @@ def _hash(payload: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+async def workspace_model_spend(session: AsyncSession, tenant_id: UUID) -> int:
+    """This month's spend on the workspace's own keys: drafts, chat answers and Reddit drafts.
+
+    One budget, so a busy chat cannot leave nothing for drafting unnoticed and
+    the other way round.
+    """
+    since = month_start(datetime.now(UTC))
+    drafts = await session.scalar(
+        select(func.coalesce(func.sum(ContentDraft.cost_micros), 0)).where(
+            ContentDraft.tenant_id == tenant_id, ContentDraft.created_at >= since
+        )
+    )
+    chat = await session.scalar(
+        select(func.coalesce(func.sum(AgentMessage.cost_micros), 0)).where(
+            AgentMessage.tenant_id == tenant_id, AgentMessage.created_at >= since
+        )
+    )
+    reddit = await session.scalar(
+        select(func.coalesce(func.sum(RedditDraft.cost_micros), 0)).where(
+            RedditDraft.tenant_id == tenant_id, RedditDraft.created_at >= since
+        )
+    )
+    return int(drafts or 0) + int(chat or 0) + int(reddit or 0)
+
+
 def month_start(now: datetime) -> datetime:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -131,13 +160,7 @@ class ContentDraftService:
         return list(rows)
 
     async def spent_this_month(self) -> int:
-        spent = await self.session.scalar(
-            select(func.coalesce(func.sum(ContentDraft.cost_micros), 0)).where(
-                ContentDraft.tenant_id == self.context.tenant_id,
-                ContentDraft.created_at >= month_start(datetime.now(UTC)),
-            )
-        )
-        return int(spent or 0)
+        return await workspace_model_spend(self.session, self.context.tenant_id)
 
     async def _has_key(self, provider: str) -> bool:
         """Whether the workspace stored its own key for this provider.
@@ -453,17 +476,49 @@ class ContentDraftService:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="github_not_connected"
             )
-        template = str(
-            (connector.config_json or {}).get("blog_path_template")
-            or self.settings.github_blog_path_template
-        )
-        target_path = blog_target_path(template, draft.slug)
-
         # The page the post will become, named the way the crawler names it
         # (origin + path, no trailing slash) so its first crawl finds this row
         # instead of creating a second. `planned` until that crawl sees it.
         path = "/" + self.settings.blog_url_template.replace("{slug}", draft.slug).strip("/")
         url = site.canonical_origin.rstrip("/") + path
+        published_on = datetime.now(UTC).date().isoformat()
+
+        if site.blog_template_path:
+            # A plain-HTML site: the post is one of its own pages with the
+            # main content replaced, at the file its URL maps to.
+            if read_file is None or path_template is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="github_not_connected"
+                )
+            template_url = site.canonical_origin.rstrip("/") + site.blog_template_path
+            template_file = target_path_for(path_template, template_url)
+            template_html = await read_file(template_file)
+            if template_html is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"blog_template_not_found:{template_file}",
+                )
+            target_path = target_path_for(path_template, url)
+            try:
+                post_content = build_post_page(
+                    template_html,
+                    template_url=template_url,
+                    post_url=url,
+                    title=draft.title or "",
+                    description=draft.meta_description or "",
+                    author=draft.author_name or "",
+                    published_on=published_on,
+                    body_markdown=draft.body_markdown or "",
+                )
+            except BlogTemplateError as error:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
+        else:
+            template = str(
+                (connector.config_json or {}).get("blog_path_template")
+                or self.settings.github_blog_path_template
+            )
+            target_path = blog_target_path(template, draft.slug)
+            post_content = render_post(draft, published_on)
         url_hash = hashlib.sha256(url.encode()).hexdigest()
         page = await self.session.scalar(
             select(Page).where(Page.site_id == site.id, Page.url_hash == url_hash)
@@ -493,7 +548,7 @@ class ContentDraftService:
                     title=f"New post: {draft.title}"[:240],
                     rationale=rationale,
                     target_path=target_path,
-                    after_content=render_post(draft, datetime.now(UTC).date().isoformat()),
+                    after_content=post_content,
                     evidence_refs={
                         "content_draft_id": str(draft.id),
                         "content_brief_id": str(draft.content_brief_id),
@@ -507,16 +562,120 @@ class ContentDraftService:
                 status_code=status.HTTP_409_CONFLICT, detail="content_draft_already_submitted"
             ) from error
 
+        sitemap_proposal: Proposal | None = None
+        if site.blog_template_path and read_file is not None and path_template is not None:
+            sitemap_proposal = await self._propose_sitemap_entry(
+                site, page.id, url, path_template, read_file, published_on
+            )
+
         draft.status = "submitted"
         draft.version += 1
         draft.updated_at = datetime.now(UTC)
         self.session.add(
             self._audit_event(
-                "content_draft.submitted", draft.id, {"proposal_id": str(proposal.id), "target_path": target_path}
+                "content_draft.submitted",
+                draft.id,
+                {
+                    "proposal_id": str(proposal.id),
+                    "target_path": target_path,
+                    "sitemap_proposal_id": str(sitemap_proposal.id) if sitemap_proposal else None,
+                },
             )
         )
         await self.session.flush()
         return proposal
+
+    async def _propose_sitemap_entry(
+        self,
+        site: Site,
+        page_id: UUID,
+        post_url: str,
+        path_template: str,
+        read_file: ReadFile,
+        published_on: str,
+    ) -> Proposal | None:
+        """A second proposal listing the site's pending posts in its sitemap.xml.
+
+        Separate from the post because a sitemap edit is always merged on
+        GitHub by a person, and the post should not wait on that. One live per
+        site: an older entry nobody approved yet is superseded by this one,
+        which lists every pending post. Best effort -- a site without a plain
+        sitemap.xml next to its pages simply gets no entry.
+        """
+        sitemap_path = path_template.split("{path}", 1)[0] + "sitemap.xml"
+        sitemap = await read_file(sitemap_path)
+        if sitemap is None:
+            return None
+        pending = list(
+            await self.session.scalars(
+                select(Page.normalized_url)
+                .join(Proposal, (Proposal.page_id == Page.id) & (Proposal.tenant_id == Page.tenant_id))
+                .where(
+                    Page.tenant_id == self.context.tenant_id,
+                    Page.site_id == site.id,
+                    Proposal.content_draft_id.is_not(None),
+                    Proposal.before_content == "",
+                    Proposal.status.not_in(("rejected", "expired", "failed")),
+                )
+            )
+        )
+        urls = sorted({*pending, post_url})
+        result = add_sitemap_urls(sitemap, urls, published_on)
+        if result is None:
+            return None
+        after, added = result
+
+        earlier = await self.session.scalar(
+            select(Proposal).where(
+                Proposal.tenant_id == self.context.tenant_id,
+                Proposal.site_id == site.id,
+                Proposal.generator == "sitemap_entry",
+                Proposal.status.not_in(("rejected", "expired", "failed")),
+            )
+        )
+        if earlier is not None:
+            if earlier.status in ("approved", "deployed"):
+                # Someone already approved the earlier list; this post joins
+                # the next one rather than undoing that review.
+                return None
+            earlier.status = "expired"
+            earlier.updated_at = datetime.now(UTC)
+            body = {"proposal_id": str(earlier.id), "reason": "superseded_by_newer_sitemap_entry"}
+            self.session.add(
+                AuditEvent(
+                    tenant_id=self.context.tenant_id,
+                    actor_type="user",
+                    actor_id=str(self.context.actor_id),
+                    action="proposal.superseded",
+                    resource_type="proposal",
+                    resource_id=str(earlier.id),
+                    trace_id=self.context.trace_id,
+                    metadata_json=body,
+                    event_hash=_hash({**body, "actor_id": str(self.context.actor_id)}),
+                )
+            )
+            await self.session.flush()
+
+        try:
+            async with self.session.begin_nested():
+                return await ProposalService(self.session, self.context).create_generated_edit(
+                    site,
+                    page_id=page_id,
+                    generator="sitemap_entry",
+                    title=f"List {len(added)} new post(s) in sitemap.xml",
+                    rationale=(
+                        "Adds the site's new blog post URLs to its sitemap.xml so search engines "
+                        "find them. Merge it after the posts themselves are live: until then the "
+                        "sitemap would list pages that do not exist yet. Nothing else in the "
+                        "file changes."
+                    ),
+                    target_path=sitemap_path,
+                    before_content=sitemap,
+                    after_content=after,
+                    evidence_refs={"urls_added": added, "generator_version": "sitemap_entry.v1"},
+                )
+        except (IntegrityError, HTTPException):
+            return None
 
     async def _submit_answers(
         self, draft: ContentDraft, read_file: ReadFile, path_template: str

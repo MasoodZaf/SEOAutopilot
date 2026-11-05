@@ -7,6 +7,8 @@ from typing import Any
 from urllib.parse import unquote
 from uuid import UUID
 
+from app.domain.repo_paths import path_kind
+
 
 def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -94,6 +96,12 @@ def _check_target_path(target_type: str, target_path: str) -> ValidationCheck:
         if decoded.startswith("/"):
             return ValidationCheck(
                 name, False, "Repository file paths must be relative to the repository root."
+            )
+        if path_kind(decoded) == "ci":
+            # A workflow runs with the repository's secrets as soon as it is
+            # pushed to any branch, before anyone reviews the pull request.
+            return ValidationCheck(
+                name, False, "CI and workflow files are outside what an SEO change may touch."
             )
     elif decoded.startswith("//"):
         return ValidationCheck(
@@ -187,6 +195,135 @@ def resolve_required_approver_count(risk: str, site_override: int | None) -> int
     return floor
 
 
+JSON_LD_BLOCK = re.compile(
+    r"<script\b[^>]*\btype\s*=\s*[\"']application/ld\+json[\"'][^>]*>(.*?)</script\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def only_adds_json_ld(before_content: str, after_content: str) -> bool:
+    """Whether the change does nothing but add JSON-LD blocks to an existing file.
+
+    Decided from the content itself, not from who made the proposal: with
+    every JSON-LD block removed, both sides must read the same, the change
+    must add at least one block, keep every block it had, and every block
+    must parse as JSON. Structured data changes nothing a visitor reads.
+    """
+    if not before_content or before_content == after_content:
+        return False
+    before_blocks = JSON_LD_BLOCK.findall(before_content)
+    after_blocks = JSON_LD_BLOCK.findall(after_content)
+    if len(after_blocks) <= len(before_blocks):
+        return False
+    remaining = list(after_blocks)
+    for block in before_blocks:
+        if block not in remaining:
+            return False
+        remaining.remove(block)
+    for block in after_blocks:
+        try:
+            json.loads(block)
+        except ValueError:
+            return False
+
+    def visible(text: str) -> str:
+        # Whitespace between tags is where a block was inserted; it renders as nothing.
+        collapsed = " ".join(JSON_LD_BLOCK.sub("", text).split())
+        return re.sub(r">\s+<", "><", collapsed)
+
+    return visible(before_content) == visible(after_content)
+
+
+SELF_REVIEW_RISKS = frozenset({"low", "medium"})
+SITEMAP_URL_BLOCK = re.compile(r"<url>\s*<loc>\s*https?://[^<\s]+\s*</loc>.*?</url>", re.IGNORECASE | re.DOTALL)
+
+
+def only_adds_sitemap_urls(before_content: str, after_content: str) -> bool:
+    """Whether a sitemap edit does nothing but add <url> entries.
+
+    With every <url> entry removed, both sides must read the same; every
+    entry the file had must still be there, unchanged; and at least one must
+    be added. Removing or rewriting an entry is never this.
+    """
+    if not before_content or before_content == after_content:
+        return False
+    if "<urlset" not in before_content.lower():
+        return False
+    before_blocks = SITEMAP_URL_BLOCK.findall(before_content)
+    after_blocks = SITEMAP_URL_BLOCK.findall(after_content)
+    if len(after_blocks) <= len(before_blocks):
+        return False
+    remaining = list(after_blocks)
+    for block in before_blocks:
+        if block not in remaining:
+            return False
+        remaining.remove(block)
+
+    def rest(text: str) -> str:
+        return "".join(SITEMAP_URL_BLOCK.sub("", text).split())
+
+    return rest(before_content) == rest(after_content)
+
+
+def self_review_scope(
+    *,
+    risk: str,
+    content_draft_id: object | None,
+    target_type: str,
+    target_path: str | None,
+    before_content: str | None,
+    after_content: str | None,
+) -> str | None:
+    """What a workspace's only approver may approve alone.
+
+    "change": a low or medium risk edit, one that only adds JSON-LD to an
+    existing file (FAQ markup copied from the page, high by length alone), or
+    one that only adds <url> entries to a sitemap.xml.
+    "new_post": a new blog post from a reviewed content draft, high risk only
+    because it adds a page, so it takes a second, explicit confirmation. Every
+    other high-risk change (canonical, robots, redirect, sitemap,
+    claim-changing, template-wide) needs a second person.
+
+    This widens nothing but self-review: the risk tier, and with it approver
+    count, approver roles and autopilot eligibility, is unchanged for every
+    workspace. Recomputed from the content, never read from a stored flag.
+    """
+    if risk in SELF_REVIEW_RISKS:
+        return "change"
+    path = (target_path or "").lower()
+    if "robots.txt" in path:
+        return None
+    if "sitemap" in path:
+        # Listing new pages is the one sitemap edit a sole approver may
+        # review alone; it is still merged on GitHub, by a person.
+        if (
+            risk == "high"
+            and target_type == "github_file"
+            and path.endswith(".xml")
+            and only_adds_sitemap_urls(before_content or "", after_content or "")
+        ):
+            return "change"
+        return None
+    if (
+        risk == "high"
+        and target_type in {"content_edit", "github_file"}
+        and only_adds_json_ld(before_content or "", after_content or "")
+        and not detect_control_directive_changes(before_content or "", after_content or "")
+    ):
+        return "change"
+    if (
+        risk == "high"
+        and content_draft_id is not None
+        and target_type == "github_file"
+        and before_content == ""
+        and "robots.txt" not in path
+        and "sitemap" not in path
+        and not detect_control_directive_changes("", after_content or "")
+    ):
+        return "new_post"
+    return None
+
+
 def evaluate_proposal_policy(
     target_type: str,
     target_path: str,
@@ -218,6 +355,10 @@ def evaluate_proposal_policy(
         risk = "high"
     elif directive_changes:
         # Canonical, robots, and redirect directives are never a low-risk edit.
+        risk = "high"
+    elif target_type == "github_file" and path_kind(target_path) is not None:
+        # Dependency manifests, server config and template-wide files: one
+        # small edit changes every page or what the site runs. Never routine.
         risk = "high"
     elif target_type in {"content_edit", "github_file"} and before_content == "":
         # A file that does not exist yet is a whole new page on the site,

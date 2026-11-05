@@ -27,6 +27,8 @@ import httpx
 from app.content_drafts.prompt import DRAFT_SCHEMA
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# What an OpenAI key whose organization is not verified for gpt-5 can use.
+OPENAI_FALLBACK_MODEL = "gpt-4.1"
 
 # Integer micro-dollars per million tokens (input, output), from list prices.
 # An estimate for the monthly budget, not an invoice. A model not listed is
@@ -203,6 +205,29 @@ class OpenAIDraftModel:
         user: str,
         schema: dict[str, Any] | None = None,
         schema_name: str = "blog_draft",
+    ) -> ModelAnswer:
+        """Draft, stepping down to gpt-4.1 when the key's organization may not use gpt-5.
+
+        OpenAI gates gpt-5 behind organization verification and answers 404 for
+        an unverified one. That is a property of the customer's account, not a
+        broken request, so the draft is written on the model the key can use
+        and the draft records which model wrote it.
+        """
+        try:
+            return await self._draft_once(api_key, model, system, user, schema, schema_name)
+        except DraftModelError as error:
+            if error.code != "openai_model_unavailable" or not model.startswith("gpt-5"):
+                raise
+        return await self._draft_once(api_key, OPENAI_FALLBACK_MODEL, system, user, schema, schema_name)
+
+    async def _draft_once(
+        self,
+        api_key: str,
+        model: str,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None,
+        schema_name: str,
     ) -> ModelAnswer:
         body = {
             "model": model,

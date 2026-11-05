@@ -288,3 +288,72 @@ async def test_a_connector_authorized_today_is_given_time_to_sync(
     async with factory() as session, session.begin():
         await session.execute(text("DELETE FROM connector WHERE id = :id"), {"id": connector_id})
         await session.execute(text("DELETE FROM site WHERE id = :id"), {"id": site_id})
+
+
+async def test_the_two_tiers_split_emergencies_from_decisions_owed(database_url, tmp_path: Path) -> None:
+    """One unit per tier, because systemd keeps one state per unit.
+
+    Together, a connector waiting a week for re-consent kept the unit red, and
+    an open perimeter arrived as a non-event. Everything that pages must be a
+    thing that never fails in normal operation.
+    """
+    from app.cli.health import select_tier
+
+    (tmp_path / "seo_autopilot_20261105T000000Z.dump").write_bytes(b"dump")
+    found = list((await checks(database_url, backup_dir=tmp_path)).values())
+    invariants = {check.name for check in select_tier(found, "invariants")}
+    conditions = {check.name for check in select_tier(found, "conditions")}
+    assert invariants == {
+        "stale_leases",
+        "outbox_backlog",
+        "unreconciled_rollbacks",
+        "tenants_without_an_owner",
+        "backup_age_hours",
+    }
+    assert conditions == {
+        "connectors_needing_attention",
+        "connectors_not_syncing",
+        "rollbacks_awaiting_a_decision",
+    }
+    assert len(select_tier(found, "all")) == len(found)
+
+
+async def test_a_connector_broken_this_morning_is_not_yet_overdue(
+    database_url, quiet_tenant
+) -> None:
+    """Re-consent is a person's to-do; it only turns red once it has waited."""
+    tenant_id, factory = quiet_tenant
+    before = (await checks(database_url, attention_days=7))["connectors_needing_attention"].value
+
+    site_id, connector_id = uuid4(), uuid4()
+    async with factory() as session, session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO site (id, tenant_id, name, canonical_origin, normalized_host,"
+                " status, verified_at) VALUES (:id, :tenant, 'health', 'https://h.test',"
+                " :host, 'active', now())"
+            ),
+            {"id": site_id, "tenant": tenant_id, "host": f"{site_id.hex[:8]}.test"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO connector (id, tenant_id, site_id, type, status)"
+                " VALUES (:id, :tenant, :site, 'google_analytics', 'reauthorization_required')"
+            ),
+            {"id": connector_id, "tenant": tenant_id, "site": site_id},
+        )
+
+    assert (await checks(database_url, attention_days=7))["connectors_needing_attention"].value == before
+    assert (await checks(database_url))["connectors_needing_attention"].failing
+
+    async with factory() as session, session.begin():
+        await session.execute(
+            text("UPDATE connector SET updated_at = now() - interval '8 days' WHERE id = :id"),
+            {"id": connector_id},
+        )
+    overdue = await checks(database_url, attention_days=7)
+    assert overdue["connectors_needing_attention"].value == before + 1
+
+    async with factory() as session, session.begin():
+        await session.execute(text("DELETE FROM connector WHERE id = :id"), {"id": connector_id})
+        await session.execute(text("DELETE FROM site WHERE id = :id"), {"id": site_id})
