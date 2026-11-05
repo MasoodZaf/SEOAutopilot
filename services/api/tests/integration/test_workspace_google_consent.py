@@ -50,6 +50,7 @@ def settings() -> Settings:
         "google_connectors_enabled": True,
         "google_client_id": "client.apps.googleusercontent.com",
         "google_client_secret": "secret",
+        "search_query_hash_key": "h" * 32,
         "connector_secret_backend": "database_envelope",
         "connector_secret_encryption_key": "a" * 43 + "=",
     }

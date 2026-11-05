@@ -7,6 +7,8 @@ from typing import Any
 from urllib.parse import unquote
 from uuid import UUID
 
+from app.domain.repo_paths import path_kind
+
 
 def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -94,6 +96,12 @@ def _check_target_path(target_type: str, target_path: str) -> ValidationCheck:
         if decoded.startswith("/"):
             return ValidationCheck(
                 name, False, "Repository file paths must be relative to the repository root."
+            )
+        if path_kind(decoded) == "ci":
+            # A workflow runs with the repository's secrets as soon as it is
+            # pushed to any branch, before anyone reviews the pull request.
+            return ValidationCheck(
+                name, False, "CI and workflow files are outside what an SEO change may touch."
             )
     elif decoded.startswith("//"):
         return ValidationCheck(
@@ -347,6 +355,10 @@ def evaluate_proposal_policy(
         risk = "high"
     elif directive_changes:
         # Canonical, robots, and redirect directives are never a low-risk edit.
+        risk = "high"
+    elif target_type == "github_file" and path_kind(target_path) is not None:
+        # Dependency manifests, server config and template-wide files: one
+        # small edit changes every page or what the site runs. Never routine.
         risk = "high"
     elif target_type in {"content_edit", "github_file"} and before_content == "":
         # A file that does not exist yet is a whole new page on the site,
