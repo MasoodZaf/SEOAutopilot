@@ -99,19 +99,47 @@ def build_post_page(
         f'<meta property="og:title" content="{html.escape(title, quote=True)}">\n'
         f'<meta property="og:url" content="{html.escape(post_url, quote=True)}">\n'
         f'<script type="application/ld+json">{schema}</script>\n'
+        f"{POST_STYLE}"
     )
     page = HEAD_CLOSE.sub(lambda match: head + match.group(0), page, count=1)
 
     article = (
-        "\n<article>\n"
+        "\n<article class=\"seo-post\">\n"
         f"<h1>{html.escape(title)}</h1>\n"
-        f"<p><small>By {html.escape(author)} · "
+        f'<p class="seo-post-byline">By {html.escape(author)} · '
         f'<time datetime="{html.escape(published_on, quote=True)}">{html.escape(published_on)}</time>'
-        "</small></p>\n"
+        "</p>\n"
         f"{render_markdown(body_markdown)}\n"
         "</article>\n"
     )
     return MAIN.sub(lambda match: match.group(1) + article + match.group(3), page, count=1)
+
+
+# The site's own stylesheet rarely styles a bare article: hand-written sites
+# style each page's content inline, so a post with plain markup renders as
+# browser defaults, edge to edge. These rules are scoped to the post and use the
+# site's colour and font variables where it has them, else inherit.
+POST_STYLE = (
+    "<style>"
+    ".seo-post{max-width:760px;margin:3rem auto 4rem;padding:0 1.5rem;box-sizing:border-box;"
+    "color:var(--ink2,inherit);font-family:var(--font-sans,inherit);font-size:16px;line-height:1.75;"
+    "overflow-wrap:break-word}"
+    ".seo-post h1,.seo-post h2,.seo-post h3{font-family:var(--font-serif,inherit);color:var(--ink,inherit);"
+    "line-height:1.2;text-wrap:balance}"
+    ".seo-post h1{font-size:clamp(28px,4vw,40px);margin:0 0 .5rem}"
+    ".seo-post h2{font-size:24px;margin:2.5rem 0 .75rem}"
+    ".seo-post h3{font-size:19px;margin:2rem 0 .5rem}"
+    ".seo-post p,.seo-post ul,.seo-post ol,.seo-post pre{margin:0 0 1.25rem}"
+    ".seo-post .seo-post-byline{color:var(--ink3,inherit);font-size:14px;margin-bottom:2rem}"
+    ".seo-post ul,.seo-post ol{padding-left:1.5rem}"
+    ".seo-post li{margin:.35rem 0}"
+    ".seo-post li>ul,.seo-post li>ol{margin:.35rem 0 0}"
+    ".seo-post pre{overflow-x:auto;padding:1rem 1.25rem;border:1px solid var(--border,currentColor);"
+    "border-radius:var(--radius-sm,6px);background:var(--surface,transparent);line-height:1.5}"
+    ".seo-post code{font-family:var(--font-mono,ui-monospace,monospace);font-size:.9em}"
+    ".seo-post a{color:var(--accent,inherit);text-decoration:underline;text-underline-offset:2px}"
+    "</style>\n"
+)
 
 
 TOP = re.compile(r"</(?:nav|header)\s*>", re.IGNORECASE)

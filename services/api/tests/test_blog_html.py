@@ -129,7 +129,7 @@ def test_a_page_with_no_main_uses_what_lies_between_its_nav_and_footer():
         post_url="https://thecalchive.com/blog/how-emi-works", title="How EMI works",
         description="d", author="a", published_on="2026-11-04", body_markdown="Body.",
     )
-    assert '<nav><a href="/">CalcHive</a></nav>\n<main>\n<article>' in page
+    assert '<nav><a href="/">CalcHive</a></nav>\n<main>\n<article class="seo-post">' in page
     assert "home-view" not in page and "top-bar" not in page
     assert "<footer><p>(c) CalcHive</p></footer>" in page
     assert '<script src="/app.js"></script>' in page
@@ -170,3 +170,20 @@ def test_the_byline_author_replaces_the_template_pages_author():
     assert '<meta name="author" content="Masood Zafar">' in page
     assert "CalcHive\"" not in page.split("</head>")[0]
     assert 'name="keywords"' not in page
+
+
+def test_the_post_carries_its_own_layout_because_the_site_css_has_none_for_it():
+    # TheCalcHive styles each page's content inline; a bare article rendered as
+    # unstyled text running to the screen edge.
+    page = build_post_page(
+        TEMPLATE, template_url="https://calc.example/emi-calculator", post_url="https://calc.example/blog/p",
+        title="T", description="D", author="Masood Zafar", published_on="2026-11-04",
+        body_markdown="## Formula\n\n```\nEMI = x\n```",
+    )
+    head, body = page.split("</head>", 1)
+    assert "<style>.seo-post{max-width:760px;margin:3rem auto 4rem" in head
+    assert "var(--ink2,inherit)" in head  # the site's colours where it has them
+    assert ".seo-post pre{overflow-x:auto" in head
+    assert '<article class="seo-post">' in body
+    assert '<p class="seo-post-byline">By Masood Zafar · <time datetime="2026-11-04">' in body
+    assert "<small>" not in body
