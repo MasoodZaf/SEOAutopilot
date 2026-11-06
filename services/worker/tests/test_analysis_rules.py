@@ -366,6 +366,24 @@ def test_answered_questions_without_answer_markup_are_reported() -> None:
     assert geo_codes(page) == ["geo.qa_content_without_schema"]
 
 
+def test_a_wh_heading_without_a_question_mark_is_not_declarable() -> None:
+    # The crawler flags "How to Use This Online Tool" as a question for the
+    # direct-answer rule; FAQ markup may only declare what is asked.
+    qa = outline(("What is the ROI Calculator?", 60, "paragraph"))
+    qa["headings"].append(  # type: ignore[union-attr]
+        {"level": 2, "text": "How to Use This Online Tool", "question": True,
+         "answer_words": 60, "answer_kind": "paragraph"}
+    )
+    assert "geo.qa_content_without_schema" not in geo_codes(page_evidence(answer_outline=qa))
+
+
+def test_questions_the_site_repeats_on_other_pages_are_not_this_pages_faq() -> None:
+    qa = outline(("What is the ROI Calculator?", 60, "paragraph"), ("Why Choose CalcHive?", 50, "paragraph"))
+    shared = frozenset({"why choose calchive?"})
+    assert geo_codes(page_evidence(answer_outline=qa, shared_headings=shared)) == []
+    assert geo_codes(page_evidence(answer_outline=qa)) == ["geo.qa_content_without_schema"]
+
+
 def test_answer_markup_inside_a_graph_counts() -> None:
     page = page_evidence(
         answer_outline=outline(("What is it?", 30, "paragraph"), ("Is it free?", 20, "paragraph")),

@@ -17,7 +17,9 @@ from __future__ import annotations
 import html
 import json
 import re
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 _HEADING = re.compile(
     r"<(?P<tag>h[23])(?P<attrs>\s[^>]*)?>(?P<inner>.*?)</(?P=tag)\s*>", re.IGNORECASE | re.DOTALL
@@ -185,7 +187,37 @@ def _is_question(text: str) -> bool:
     return text.endswith("?") or first in _WH_WORDS
 
 
-def faq_from_page(document: str, target_path: str) -> AnswerBlockEdit:
+def comparable_question(text: str) -> str:
+    """Compare headings by the words a reader sees: the worker's normalize_heading."""
+    return " ".join(text.split()).casefold()
+
+
+def shared_questions(outlines: Iterable[Mapping[str, Any] | None]) -> frozenset[str]:
+    """Question headings that appear on more than one page of one crawl.
+
+    Google's FAQ rules: a question and answer repeated across a site is marked
+    up on one page at most, and the markup is not for advertising. A heading a
+    site's template repeats on every page -- "How to Use This Online Tool",
+    "Why Choose <brand>?" -- is both, so it is never declared as a question.
+    """
+    pages: dict[str, int] = {}
+    for outline in outlines:
+        headings = outline.get("headings") if isinstance(outline, Mapping) else None
+        if not isinstance(headings, list):
+            continue
+        seen = {
+            comparable_question(str(item.get("text", "")))
+            for item in headings
+            if isinstance(item, Mapping) and item.get("text")
+        }
+        for text in seen:
+            pages[text] = pages.get(text, 0) + 1
+    return frozenset(text for text, count in pages.items() if count > 1)
+
+
+def faq_from_page(
+    document: str, target_path: str, shared: Collection[str] = frozenset()
+) -> AnswerBlockEdit:
     """FAQPage JSON-LD for the questions a page already answers, and nothing else.
 
     No model is involved: each question is a heading's visible text and its
@@ -209,7 +241,10 @@ def faq_from_page(document: str, target_path: str) -> AnswerBlockEdit:
         if jsx and _JSX_EXPRESSION.search(inner):
             continue
         question = _shown(inner)
-        if not _is_question(question):
+        # Declared as a question only when it is written as one: "How to Use
+        # This Tool" opens with a wh-word and asks nothing. A heading the site
+        # repeats on other pages is boilerplate, not this page's FAQ.
+        if not question.endswith("?") or comparable_question(question) in shared:
             continue
         paragraph = _PARAGRAPH.search(document, heading.end())
         if paragraph is None:

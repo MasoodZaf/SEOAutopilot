@@ -216,6 +216,21 @@ async def analyze_crawl(
             if len(headings) == 1:
                 h1_page_counts[normalize_heading(headings[0])] += 1
 
+        # The same reasoning for H2/H3s: a heading on many pages is the site's
+        # template, never one page's question.
+        heading_page_counts: dict[str, int] = defaultdict(int)
+        for observation in observations:
+            outline = parse_mapping(observation.get("answer_outline_json"))
+            headings = outline.get("headings") if outline else None
+            if isinstance(headings, list):
+                for text in {
+                    normalize_heading(str(item.get("text", "")))
+                    for item in headings
+                    if isinstance(item, Mapping) and item.get("text")
+                }:
+                    heading_page_counts[text] += 1
+        shared_headings = frozenset(text for text, count in heading_page_counts.items() if count > 1)
+
         finding_count = 0
         opportunity_count = 0
         for row in observations:
@@ -262,6 +277,7 @@ async def analyze_crawl(
                 pages_sharing_h1=_pages_sharing_h1(row, h1_page_counts),
                 server_word_count=row.get("server_word_count"),
                 answer_outline=parse_mapping(row.get("answer_outline_json")),
+                shared_headings=shared_headings,
             )
 
             if active_version_code == "multiagent-v1":

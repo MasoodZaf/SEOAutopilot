@@ -28,6 +28,9 @@ class PageEvidence:
     # H2/H3 headings with the size and shape of the copy under each, and the
     # page's FAQ markup against its visible text. None on crawls before it.
     answer_outline: Mapping[str, Any] | None = None
+    # H2/H3 texts (normalize_heading) found on more than one page of this crawl:
+    # template boilerplate, which Google's FAQ rules keep out of FAQ markup.
+    shared_headings: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +193,17 @@ def question_headings(outline: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     if not isinstance(headings, list):
         return []
     return [item for item in headings if isinstance(item, Mapping) and item.get("question") is True]
+
+
+def declarable_question(heading: Mapping[str, Any], shared: frozenset[str]) -> bool:
+    """A heading FAQ markup may declare: written as a question, and this page's own.
+
+    "How to Use This Tool" opens with a wh-word and asks nothing; "Why Choose
+    <brand>?" repeated on every page is advertising. Kept in step with
+    faq_from_page in services/api/app/domain/answer_block.py.
+    """
+    text = " ".join(str(heading.get("text", "")).split())
+    return text.endswith("?") and text.casefold() not in shared
 
 
 def lacks_direct_answer(heading: Mapping[str, Any]) -> bool:
@@ -439,7 +453,11 @@ def evaluate_multiagent_page(evidence: MultiAgentPageEvidence) -> tuple[int, lis
                 (0.45, 0.85, 0.45, 0.35, "medium"),
                 "geo_visibility",
             )
-        answered = len(questions) - len(unanswered)
+        answered = sum(
+            1
+            for item in questions
+            if not lacks_direct_answer(item) and declarable_question(item, page.shared_headings)
+        )
         if answered >= QA_CONTENT_MIN_QUESTIONS and not structured_data_types(page.structured_data) & ANSWER_ENGINE_TYPES:
             add(
                 "geo.qa_content_without_schema",
