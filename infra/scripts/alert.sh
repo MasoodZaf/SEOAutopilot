@@ -19,6 +19,11 @@ case "$ALERT_WEBHOOK_URL" in
   https://hooks.slack.com/*)
     body="$(printf '%s' "$message" | python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read()}))')"
     curl -fsS --max-time 15 -H 'Content-Type: application/json' -d "$body" "$ALERT_WEBHOOK_URL" >/dev/null ;;
+  https://signal.callmebot.com/*)
+    # Set ALERT_WEBHOOK_URL to .../signal/send.php?phone=+NUMBER&apikey=KEY
+    # The URL holds the key, so curl reads it from stdin to keep it out of `ps`.
+    printf 'url = "%s"\n' "$ALERT_WEBHOOK_URL" | curl -fsS --max-time 15 --get --config - \
+      --data-urlencode "text=$message" >/dev/null ;;
   https://*)
     curl -fsS --max-time 15 -H 'Title: SEO Autopilot alert' -H 'Priority: high' \
       --data-binary "$message" "$ALERT_WEBHOOK_URL" >/dev/null ;;
