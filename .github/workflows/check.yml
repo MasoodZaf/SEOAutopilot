@@ -17,6 +17,7 @@ concurrency:
 jobs:
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,6 +26,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The crawler's rendering tests drive a real browser.
+      - run: pnpm --filter @seo-autopilot/crawler exec playwright install --with-deps chromium
       - run: pnpm check
       # `next build` catches what tsc does not, such as a non-async "use server" export.
       - run: pnpm --filter @seo-autopilot/contracts build
@@ -32,6 +35,7 @@ jobs:
 
   api:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17.6-alpine
@@ -59,6 +63,7 @@ jobs:
 
   worker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       PYTHONPATH: services/worker
     steps:
@@ -75,6 +80,7 @@ jobs:
   images:
     # Proves the lockfiles still install: a stale one fails here, not during a deploy.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
