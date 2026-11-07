@@ -7,6 +7,11 @@ import {ApiError, apiJson} from "@/lib/server-api";
 
 const PAGE = "/settings/billing";
 
+function redirectFresh(path: string): never {
+  revalidatePath(PAGE, "page");
+  redirect(path);
+}
+
 async function goToStripe(path: string): Promise<never> {
   let url: string;
   try {
@@ -14,11 +19,9 @@ async function goToStripe(path: string): Promise<never> {
   } catch (error) {
     unstable_rethrow(error);
     const code = error instanceof ApiError ? error.code : "unexpected_error";
-    revalidatePath(PAGE, "page");
-    redirect(`${PAGE}?error=${encodeURIComponent(code)}`);
+    redirectFresh(`${PAGE}?error=${encodeURIComponent(code)}`);
   }
-  revalidatePath(PAGE, "page");
-  redirect(url);
+  redirectFresh(url);
 }
 
 export async function startCheckoutAction(): Promise<never> {
