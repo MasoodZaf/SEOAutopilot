@@ -3,7 +3,13 @@ import re
 
 import pytest
 
-from app.domain.answer_block import AnswerBlockError, AnswerItem, faq_from_page, place_answers
+from app.domain.answer_block import (
+    AnswerBlockError,
+    AnswerItem,
+    faq_from_page,
+    place_answers,
+    shared_questions,
+)
 
 PAGE = """<!doctype html>
 <html>
@@ -139,3 +145,36 @@ def test_faq_markup_refusals(page, code):
     with pytest.raises(AnswerBlockError) as refused:
         faq_from_page(page, "x.html")
     assert str(refused.value) == code
+
+
+# TheCalcHive, 2026-11-05: every calculator page carried these two template
+# headings, and all 20 FAQ proposals declared them as the page's questions.
+CALC_PAGE = (
+    "<html><head></head><body>\n"
+    f"<h2>What is the ROI Calculator?</h2>\n<p>{ANSWER}</p>\n"
+    f"<h2>How to Use This Online Tool</h2>\n<p>{ANSWER}</p>\n"
+    f"<h2>Why Choose CalcHive?</h2>\n<p>{ANSWER}</p>\n"
+    f"<h2>Is the result exact?</h2>\n<p>{ANSWER}</p>\n"
+    "</body></html>"
+)
+
+
+def test_faq_markup_declares_only_headings_written_as_questions():
+    edit = faq_from_page(CALC_PAGE, "roi.html")
+    data = json.loads(re.search(r'ld\+json">(.*?)</script>', edit.after).group(1))
+    assert "How to Use This Online Tool" not in [q["name"] for q in data["mainEntity"]]
+
+
+def test_faq_markup_leaves_out_headings_the_site_repeats():
+    shared = shared_questions([
+        {"headings": [{"text": "Why Choose  CalcHive?"}, {"text": "What is the Debt Planner?"}]},
+        {"headings": [{"text": "why choose calchive?"}, {"text": "What is the ROI Calculator?"}]},
+        None,
+    ])
+    assert shared == {"why choose calchive?"}
+    edit = faq_from_page(CALC_PAGE, "roi.html", shared)
+    data = json.loads(re.search(r'ld\+json">(.*?)</script>', edit.after).group(1))
+    assert [q["name"] for q in data["mainEntity"]] == ["What is the ROI Calculator?", "Is the result exact?"]
+    # With only one question of its own left, the page has no FAQ to declare.
+    with pytest.raises(AnswerBlockError, match="page_has_too_few_answered_questions"):
+        faq_from_page(CALC_PAGE, "roi.html", shared | {"is the result exact?"})

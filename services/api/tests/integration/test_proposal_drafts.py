@@ -449,6 +449,27 @@ async def test_faq_markup_needs_two_answered_questions(app_engine, evidence) -> 
     assert raised.value.detail == "page_has_too_few_answered_questions"
 
 
+async def test_a_question_the_site_repeats_on_another_page_is_not_this_pages_faq(
+    app_engine, evidence
+) -> None:
+    # The crawl that read the page also read another page under the same
+    # heading: template copy, which Google's FAQ rules keep out of the markup.
+    async with scoped(app_engine, evidence["tenant_id"]) as session:
+        outline = '{"headings":[{"text":"How often is interest  compounded?"}]}'
+        await session.execute(
+            text(
+                "UPDATE page_observation SET answer_outline_json=CAST(:outline AS jsonb)"
+                " WHERE page_id IN (:faq,:other)"
+            ),
+            {"outline": outline, "faq": evidence["page_faq"], "other": evidence["page_thin"]},
+        )
+        with pytest.raises(HTTPException) as raised:
+            await drafts(session, evidence).draft_from_opportunity(
+                evidence["opportunity_faq"], read_repository
+            )
+    assert raised.value.detail == "page_has_too_few_answered_questions"
+
+
 async def test_only_opportunities_with_a_repair_are_offered_as_draftable(
     app_engine, evidence
 ) -> None:

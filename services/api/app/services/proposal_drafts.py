@@ -33,7 +33,7 @@ from app.db.models import (
     PageObservation,
     Proposal,
 )
-from app.domain.answer_block import AnswerBlockError, faq_from_page
+from app.domain.answer_block import AnswerBlockError, faq_from_page, shared_questions
 from app.domain.h1_repair import H1Repair, H1RepairError, is_site_root, plan_repair
 from app.domain.title_repair import TitleRepair
 from app.domain.title_repair import repair_document as repair_title
@@ -161,7 +161,7 @@ class ProposalDraftService:
                 detail=f"draft_target_not_found:{target_path}",
             )
         try:
-            edit = faq_from_page(document, target_path)
+            edit = faq_from_page(document, target_path, await self._shared_questions(page.id))
         except AnswerBlockError as error:
             raise self._refuse(str(error)) from error
         return ProposalCreate(
@@ -177,6 +177,28 @@ class ProposalDraftService:
             before_content=edit.before,
             after_content=edit.after,
         )
+
+    async def _shared_questions(self, page_id: UUID) -> frozenset[str]:
+        """Headings repeated across the crawl that last read this page."""
+        crawl_id = await self.session.scalar(
+            select(PageObservation.crawl_job_id)
+            .where(
+                PageObservation.tenant_id == self.context.tenant_id,
+                PageObservation.page_id == page_id,
+            )
+            .order_by(PageObservation.observed_at.desc(), PageObservation.id.desc())
+            .limit(1)
+        )
+        if crawl_id is None:
+            return frozenset()
+        outlines = await self.session.scalars(
+            select(PageObservation.answer_outline_json).where(
+                PageObservation.tenant_id == self.context.tenant_id,
+                PageObservation.crawl_job_id == crawl_id,
+                PageObservation.answer_outline_json.is_not(None),
+            )
+        )
+        return shared_questions(outlines)
 
     def _title_proposal(
         self,
