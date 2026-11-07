@@ -171,10 +171,14 @@ async def test_the_citation_scan_can_run_weekly_but_never_daily(tenant_session_f
     async with tenant_session_factory(workspace["tenant"]) as session:
         service = RoutineService(session, ctx(workspace))
         with pytest.raises(HTTPException) as refused:
-            await service.upsert(workspace["site"], RoutineUpsert(kind="ai_citation_scan", cadence="daily"))
+            await service.upsert(
+                workspace["site"],
+                RoutineUpsert(kind="ai_citation_scan", cadence="daily"),  # pyright: ignore[reportArgumentType]
+            )
         assert refused.value.detail == "paid_routine_cadence_too_frequent"
         routine = await service.upsert(
-            workspace["site"], RoutineUpsert(kind="ai_citation_scan", cadence="weekly", schedule_isodow=1)
+            workspace["site"],
+            RoutineUpsert(kind="ai_citation_scan", cadence="weekly", schedule_isodow=1),  # pyright: ignore[reportArgumentType]
         )
         assert routine.cadence == "weekly"
 

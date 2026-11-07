@@ -8,6 +8,7 @@ blocked site still leaves a `skipped` record with a reason.
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -38,9 +39,15 @@ DUE_ROUTINES_SQL = """
 SELECT r.id, r.tenant_id, r.site_id, r.kind, r.cadence,
        r.schedule_hour_utc, r.schedule_minute_utc, r.schedule_isodow, r.schedule_dom,
        r.next_run_at, r.consecutive_failures,
-       s.status AS site_status, s.verified_at, s.emergency_freeze
+       s.status AS site_status, s.verified_at, s.emergency_freeze,
+       COALESCE(
+         b.status IN ('comped','active','past_due')
+           OR (b.status = 'trialing' AND b.trial_ends_at > $1),
+         false
+       ) AS billing_ok
 FROM routine r
 JOIN site s ON s.id = r.site_id AND s.tenant_id = r.tenant_id
+LEFT JOIN tenant_billing b ON b.tenant_id = r.tenant_id
 WHERE r.enabled AND r.next_run_at <= $1
 ORDER BY r.next_run_at
 FOR UPDATE OF r SKIP LOCKED
@@ -48,8 +55,14 @@ LIMIT $2
 """
 
 
-def skip_reason_for(row: Any) -> str | None:
+def billing_enforced() -> bool:
+    return os.environ.get("BILLING_ENFORCED", "false").lower() == "true"
+
+
+def skip_reason_for(row: Any, enforce_billing: bool = False) -> str | None:
     """Fail closed: a routine must not become a path around site governance."""
+    if enforce_billing and not row["billing_ok"]:
+        return "subscription_required"
     if row["site_status"] != "active" or row["verified_at"] is None:
         return "site_not_verified"
     if row["emergency_freeze"]:
@@ -71,7 +84,7 @@ async def claim_due_routines(
             slot = row["next_run_at"]
             schedule = schedule_from_row(row)
             following = advance_from_slot(schedule, slot, moment)
-            reason = skip_reason_for(row)
+            reason = skip_reason_for(row, billing_enforced())
 
             run_id = await connection.fetchval(
                 """

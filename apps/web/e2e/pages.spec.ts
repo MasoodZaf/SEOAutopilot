@@ -8,6 +8,7 @@ for (const [path, heading] of [
   ["/settings/sites", /sites/i],
   ["/settings/keys", /./],
   ["/settings/members", /members/i],
+  ["/settings/billing", /billing/i],
   ["/settings/connectors", /./],
   ["/onboarding", /./],
 ] as const) {

@@ -29,8 +29,10 @@
 - `POST /v1/sites`
 - `GET /v1/sites/{site_id}`
 - `PATCH /v1/sites/{site_id}`
+- `GET /v1/billing`; `POST /v1/billing/checkout`, `POST /v1/billing/portal` (owner only)
+- `POST /v1/billing/webhooks/stripe` (signed by Stripe; no session)
 - `POST /v1/sites/{site_id}/verification-challenges`
-- `POST /v1/sites/{site_id}/verify`
+- `POST /v1/sites/{site_id}/verify` — `method` is `dns_txt` (default), `file` or `meta_tag`
 
 Create site request:
 

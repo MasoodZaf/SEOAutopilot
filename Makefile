@@ -38,3 +38,8 @@ check: test-db-up
 	.venv-worker/bin/pyright --pythonpath .venv-worker/bin/python services/worker
 	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" PYTHONPATH=services/api .venv-api/bin/pytest services/api/tests
 	PYTHONPATH=services/worker .venv-worker/bin/pytest services/worker/tests
+
+# Refresh the hash-pinned Python lockfiles the Dockerfiles install from.
+lock:
+	uv pip compile services/api/pyproject.toml --universal --python-version 3.13 --generate-hashes --no-header --annotation-style line -o services/api/requirements.lock
+	uv pip compile services/worker/pyproject.toml --universal --python-version 3.13 --generate-hashes --no-header --annotation-style line -o services/worker/requirements.lock

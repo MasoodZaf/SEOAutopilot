@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     relay_database_url: str | None = None
     app_base_url: str = "http://localhost:3000"
     deployments_enabled: bool = False
+    # Billing is dormant until all three Stripe values are set, and nothing is
+    # refused until billing_enforced is also on. See ADR-010.
+    stripe_secret_key: SecretStr | None = None
+    stripe_webhook_secret: SecretStr | None = None
+    stripe_price_id: str | None = None
+    billing_enforced: bool = False
+    billing_trial_days: int = 14
     autopilot_enabled: bool = False
     # Real identity. `oidc_issuer_url` used to select an error string and
     # nothing else; it now names the provider that issues the tokens this API
@@ -150,8 +157,15 @@ class Settings(BaseSettings):
     local_pilot_reviewer_token: SecretStr | None = None
     local_pilot_reviewer_id: UUID = LOCAL_PILOT_REVIEWER_ID
 
+    @property
+    def billing_configured(self) -> bool:
+        return bool(self.stripe_secret_key and self.stripe_webhook_secret and self.stripe_price_id)
+
     @model_validator(mode="after")
     def require_production_cursor_key(self) -> "Settings":
+        if self.billing_enforced and not self.billing_configured:
+            # Enforcing with no way to pay would lock out every lapsed workspace.
+            raise ValueError("BILLING_ENFORCED requires the Stripe key, webhook secret and price")
         if (
             self.app_env in {"staging", "production"}
             and self.cursor_signing_key == LOCAL_CURSOR_KEY

@@ -1,5 +1,4 @@
 import pytest
-
 from app.content_drafts.answers import (
     AnswerInput,
     answer_flags,

@@ -31,6 +31,8 @@ const REASONS: Record<string, string> = {
   site_fields_required: "Enter a name and the site's address.",
   dns_proof_not_found:
     "The record is not visible to our resolver yet. DNS changes can take anywhere from a minute to a few hours to publish — leave it in place and check again.",
+  site_proof_not_found:
+    "We could not find the proof on your site. Check it opens in a private window over https, then try again.",
   verification_challenge_invalid:
     "That challenge has expired or was already used. Issue a new record below.",
   verification_challenge_missing:
@@ -62,6 +64,8 @@ export default async function SitesPage({searchParams}: PageProps) {
   }
 
   const challenge = await readChallenge();
+  const proofToken = challenge?.recordValue.replace("seo-autopilot-verification=", "") ?? "";
+  const proofHost = challenge?.recordName.replace("_seo-autopilot.", "") ?? "";
   const pending = sites.filter((site) => site.status !== "active");
 
   return (
@@ -69,7 +73,7 @@ export default async function SitesPage({searchParams}: PageProps) {
       <header className="flex flex-col gap-2">
         <h1 className="font-display text-[32px] leading-tight font-light tracking-tight text-ink">Your sites</h1>
         <p className="text-pretty text-sm text-ink-soft">
-          Add a site you control, then prove it with a DNS record. Nothing is crawled and no
+          Add a site you control, then prove it with a file, a meta tag or a DNS record. Nothing is crawled and no
           connector will bind until that proof exists — which is what stops anybody pointing
           this at a domain that is not theirs.
         </p>
@@ -144,14 +148,47 @@ export default async function SitesPage({searchParams}: PageProps) {
         >
           <div>
             <h2 id="verify-heading" className="font-display text-[17px] font-medium tracking-tight text-ink">
-              Publish this DNS record
+              Prove this domain is yours
             </h2>
             <p className="mt-1 text-pretty text-sm text-ink-soft">
-              Add the TXT record below at whoever hosts your DNS — Cloudflare, Route&nbsp;53,
-              GoDaddy, Namecheap, your own BIND zone, it makes no difference. Then come back and
-              check it.
+              Pick whichever is easiest. A file or meta tag works as soon as your site is live; a
+              DNS record can take longer to appear.
             </p>
           </div>
+
+          <div className="flex flex-col gap-3 rounded-xl border border-warn-rule bg-surface p-4 text-sm">
+            <h3 className="font-medium text-ink">Upload a file</h3>
+            <p className="text-pretty text-ink-soft">
+              Publish a text file at{" "}
+              <span className="font-mono break-all text-ink">
+                https://{proofHost}/.well-known/seo-autopilot-verification.txt
+              </span>{" "}
+              containing only:
+            </p>
+            <p className="font-mono break-all text-ink">{proofToken}</p>
+            <form action={verifySiteAction}>
+              <input type="hidden" name="site_id" value={challenge.siteId} />
+              <input type="hidden" name="method" value="file" />
+              <button type="submit" className={submit}>Check the file</button>
+            </form>
+          </div>
+
+          <div className="flex flex-col gap-3 rounded-xl border border-warn-rule bg-surface p-4 text-sm">
+            <h3 className="font-medium text-ink">Add a meta tag</h3>
+            <p className="text-pretty text-ink-soft">
+              Put this inside the <span className="font-mono">&lt;head&gt;</span> of your home page:
+            </p>
+            <p className="font-mono break-all text-ink">
+              {`<meta name="seo-autopilot-verification" content="${proofToken}">`}
+            </p>
+            <form action={verifySiteAction}>
+              <input type="hidden" name="site_id" value={challenge.siteId} />
+              <input type="hidden" name="method" value="meta_tag" />
+              <button type="submit" className={submit}>Check the tag</button>
+            </form>
+          </div>
+
+          <h3 className="text-sm font-medium text-ink">Or add a DNS record</h3>
 
           <dl className="grid gap-3 rounded-xl border border-warn-rule bg-surface p-4 text-sm sm:grid-cols-[7rem_1fr]">
             <dt className="font-medium text-ink-soft">Type</dt>

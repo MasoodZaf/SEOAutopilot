@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.db.models import ContentDraft, Proposal, Site
 from app.db.session import TenantSession
 from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
+from app.services.billing import RequireSubscription
 from app.services.content_drafts import ContentDraftService
 from app.services.github_connector import credential_for_site
 
@@ -38,6 +39,7 @@ async def _read(session: TenantSession, draft: ContentDraft) -> ContentDraftRead
     "/content-briefs/{brief_id}/drafts",
     response_model=ContentDraftEnvelope,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[RequireSubscription],
 )
 async def request_content_draft(
     brief_id: UUID,
@@ -59,6 +61,7 @@ async def request_content_draft(
     "/pages/{page_id}/answer-drafts",
     response_model=ContentDraftEnvelope,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[RequireSubscription],
 )
 async def request_answer_draft(
     page_id: UUID,

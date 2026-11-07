@@ -50,9 +50,9 @@ const steps: Step[] = [
     title: "Add a site and prove you own it",
     where: {label: "Settings → Sites", href: "/settings/sites"},
     summary:
-      "Enter a name and the site's address (scheme and host, no path). You get a one-time DNS TXT record to add at your DNS host.",
+      "Enter a name and the site's address (scheme and host, no path). You get a one-time token to prove the site is yours.",
     actions: [
-      "Add the TXT record exactly as shown. Each value has a copy box.",
+      "Publish it as a file, a meta tag on your home page, or a DNS TXT record, exactly as shown.",
       "Press Verify. DNS can take a few minutes to propagate, and retrying is safe.",
       "On Cloudflare, the DNS provider assistant can create the record for you with a scoped token.",
     ],

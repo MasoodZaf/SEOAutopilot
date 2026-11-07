@@ -21,6 +21,7 @@ from app.core.config import Settings, get_settings
 from app.db.session import TenantSession
 from app.domain.skills import SkillEffect
 from app.services.agent import AgentService, visible_skills
+from app.services.billing import RequireSubscription
 from app.services.connector_secrets import decode_encryption_key
 
 router = APIRouter(prefix="/v1", tags=["agent"])
@@ -113,6 +114,7 @@ async def list_agent_messages(
     "/agent-sessions/{session_id}/messages",
     response_model=AgentTurnEnvelope,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[RequireSubscription],
 )
 async def post_agent_message(
     session_id: UUID,

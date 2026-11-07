@@ -19,8 +19,6 @@ import asyncpg
 import httpx
 import pytest
 import pytest_asyncio
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 from app.citations.models import (
     SEARCH_PRICE_MICROS,
     CitationAnswer,
@@ -40,6 +38,7 @@ from app.citations.scan import (
 )
 from app.connectors.tenant_clients import credential_aad
 from app.routines.runner import CitationSettings, process_run
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 pytestmark = pytest.mark.asyncio
 

@@ -461,3 +461,10 @@ async def test_a_claimable_ungated_run_lost_to_a_race_is_left_alone() -> None:
     connection = UnclaimableConnection()
     await process_run(connection, TENANT, RUN)
     assert connection.finished_as() == []
+
+
+def test_a_lapsed_workspace_skips_routines_only_when_billing_is_enforced() -> None:
+    lapsed = routine_row(billing_ok=False)
+    assert skip_reason_for(lapsed) is None
+    assert skip_reason_for(lapsed, enforce_billing=True) == "subscription_required"
+    assert skip_reason_for(routine_row(billing_ok=True), enforce_billing=True) is None

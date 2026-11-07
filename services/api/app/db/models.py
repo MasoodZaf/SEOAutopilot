@@ -36,6 +36,32 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class TenantBilling(Base):
+    """The workspace's subscription as Stripe last reported it. Never card details."""
+
+    __tablename__ = "tenant_billing"
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(24))
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BillingEvent(Base):
+    """A Stripe event id already applied, so a redelivery does nothing."""
+
+    __tablename__ = "billing_event"
+    stripe_event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(120))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class TenantCredential(Base):
     """A tenant's own credential for a third-party provider.
 

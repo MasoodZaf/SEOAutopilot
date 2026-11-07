@@ -12,7 +12,7 @@ const CONTACT = "support@oryxenlabs.com";
 
 export default function PrivacyPage() {
   return (
-    <Legal title="Privacy Policy" updated="5 November 2026">
+    <Legal title="Privacy Policy" updated="7 November 2026">
       <Section heading="Who this covers">
         <p>
           SEO Autopilot is an SEO operations tool. You connect sites you control, it gathers
@@ -71,6 +71,14 @@ export default function PrivacyPage() {
           What the provider does with it is governed by its API terms, which you accept with it
           directly. Model output is never published on its own: every change it suggests becomes a
           proposal a person reviews, and Reddit drafts are handed to you to post yourself.
+        </p>
+      </Section>
+
+      <Section heading="Payments">
+        <p>
+          If you subscribe, Stripe collects and holds your card details under its own privacy
+          policy. We never see or store them. We keep only Stripe&rsquo;s reference for your
+          workspace, the subscription status and its dates.
         </p>
       </Section>
 

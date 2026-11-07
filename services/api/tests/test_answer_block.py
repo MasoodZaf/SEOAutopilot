@@ -11,6 +11,13 @@ from app.domain.answer_block import (
     shared_questions,
 )
 
+
+def _json_ld(html: str) -> str:
+    found = re.search(r'ld\+json">(.*?)</script>', html)
+    assert found is not None
+    return found.group(1)
+
+
 PAGE = """<!doctype html>
 <html>
   <head>
@@ -112,11 +119,11 @@ def test_faq_markup_copies_only_questions_answered_directly_beneath_them():
         "</body></html>"
     )
     edit = faq_from_page(page, "emi.html")
-    data = json.loads(re.search(r'ld\+json">(.*?)</script>', edit.after).group(1))
+    data = json.loads(_json_ld(edit.after))
     assert [q["name"] for q in data["mainEntity"]] == ["What is an EMI?", "How is it calculated?"]
     assert data["mainEntity"][1]["acceptedAnswer"]["text"].endswith("Second line of the same answer here.")
     # Only the markup is added.
-    assert edit.after.replace(re.search(r'  <script type="application/ld\+json">.*?</script>\n', edit.after).group(0), "") == page
+    assert re.sub(r'  <script type="application/ld\+json">.*?</script>\n', "", edit.after, count=1) == page
 
 
 def test_faq_markup_in_jsx_skips_expressions_and_lands_after_the_last_answer():
@@ -161,7 +168,7 @@ CALC_PAGE = (
 
 def test_faq_markup_declares_only_headings_written_as_questions():
     edit = faq_from_page(CALC_PAGE, "roi.html")
-    data = json.loads(re.search(r'ld\+json">(.*?)</script>', edit.after).group(1))
+    data = json.loads(_json_ld(edit.after))
     assert "How to Use This Online Tool" not in [q["name"] for q in data["mainEntity"]]
 
 
@@ -173,7 +180,7 @@ def test_faq_markup_leaves_out_headings_the_site_repeats():
     ])
     assert shared == {"why choose calchive?"}
     edit = faq_from_page(CALC_PAGE, "roi.html", shared)
-    data = json.loads(re.search(r'ld\+json">(.*?)</script>', edit.after).group(1))
+    data = json.loads(_json_ld(edit.after))
     assert [q["name"] for q in data["mainEntity"]] == ["What is the ROI Calculator?", "Is the result exact?"]
     # With only one question of its own left, the page has no FAQ to declare.
     with pytest.raises(AnswerBlockError, match="page_has_too_few_answered_questions"):
