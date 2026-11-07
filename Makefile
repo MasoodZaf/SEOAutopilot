@@ -4,7 +4,9 @@ install:
 	pnpm install
 	python3 -m venv .venv-api
 	python3 -m venv .venv-worker
+	.venv-api/bin/pip install --require-hashes -r services/api/requirements.lock
 	.venv-api/bin/pip install -e 'services/api[dev]'
+	.venv-worker/bin/pip install --require-hashes -r services/worker/requirements.lock
 	.venv-worker/bin/pip install -e 'services/worker[dev]'
 
 dev:
