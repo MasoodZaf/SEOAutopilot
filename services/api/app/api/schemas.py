@@ -84,6 +84,9 @@ class VerificationChallengeRead(BaseModel):
     record_value: str
     token: str
     expires_at: datetime
+    # The same token can instead be proved from the site itself.
+    file_url: str
+    meta_tag: str
 
 
 class VerificationChallengeEnvelope(BaseModel):
@@ -93,6 +96,7 @@ class VerificationChallengeEnvelope(BaseModel):
 
 class SiteVerify(BaseModel):
     token: str = Field(min_length=32, max_length=256)
+    method: Literal["dns_txt", "file", "meta_tag"] = "dns_txt"
 
 
 class CrawlCreate(BaseModel):
@@ -2014,4 +2018,29 @@ class RedditHandOff(BaseModel):
 class RedditHandOffEnvelope(BaseModel):
     data: RedditHandOff
     draft: RedditDraftRead
+    meta: dict[str, str]
+
+
+class BillingRead(BaseModel):
+    configured: bool
+    enforced: bool
+    status: str
+    has_access: bool
+    trial_ends_at: datetime | None
+    current_period_end: datetime | None
+    cancel_at_period_end: bool
+    has_billing_account: bool
+
+
+class BillingEnvelope(BaseModel):
+    data: BillingRead
+    meta: dict[str, str]
+
+
+class BillingRedirectRead(BaseModel):
+    url: str
+
+
+class BillingRedirectEnvelope(BaseModel):
+    data: BillingRedirectRead
     meta: dict[str, str]

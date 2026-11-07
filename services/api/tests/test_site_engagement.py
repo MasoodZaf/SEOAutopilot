@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import date
 from types import SimpleNamespace
 from typing import cast
@@ -18,7 +19,7 @@ def context() -> TenantContext:
     return TenantContext(tenant_id=uuid4(), actor_id=uuid4(), role=Role.VIEWER, trace_id="trace")
 
 
-def session_returning(site: Site | None, totals: object, pages: list[object]) -> MagicMock:
+def session_returning(site: Site | None, totals: object, pages: Sequence[object]) -> MagicMock:
     totals_result = MagicMock()
     totals_result.one.return_value = totals
     pages_result = MagicMock()

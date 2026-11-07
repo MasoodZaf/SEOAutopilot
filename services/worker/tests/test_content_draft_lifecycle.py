@@ -16,12 +16,11 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 import pytest_asyncio
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 from app.connectors.tenant_clients import credential_aad
 from app.content_drafts.consumer import process_draft
 from app.content_drafts.model import DraftModelError, ModelAnswer
 from app.keywords.secrets import seal_query
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 pytestmark = [
     pytest.mark.asyncio,

@@ -27,7 +27,7 @@ export function TipDescriptions() {
       <span id="tip-6b68f954a1">{"Sign in with GitHub, then pick this site's repository from a list. No token to copy."}</span>
       <span id="tip-c43e3ddcbe">{"Shown on your GitHub App's settings page, under About."}</span>
       <span id="tip-315c078734">{"Generate one under Client secrets on the same page. It lets people sign in so only repositories they can push to are offered."}</span>
-      <span id="tip-26b5b277ea">{"Add a domain you control and prove it with a DNS record."}</span>
+      <span id="tip-9f5b567951">{"Add a domain you control and prove it with a file, a meta tag or a DNS record."}</span>
       <span id="tip-6f07753cce">{"Apply the selected mode. Recorded with your reason; nothing publishes without approval unless you chose autopilot."}</span>
       <span id="tip-e68345520a">{"Authorise Google Analytics 4 for this site through your own Google OAuth client."}</span>
       <span id="tip-e734f40795">{"Authorise Search Console for this site through your own Google OAuth client."}</span>

@@ -43,7 +43,7 @@ const capabilities = [
 /* How a site gets connected. Each step is one action. */
 const connect = [
   ["Sign in with Google", "Your workspace, its sites and its keys belong to you alone."],
-  ["Verify your domain", "One DNS record proves the site is yours."],
+  ["Verify your domain", "A file, a meta tag or a DNS record proves the site is yours."],
   ["Connect Google once", "Search Console and Analytics in a single consent, read-only."],
   ["Pick a repository", "Sign in to GitHub and choose the repo the site is built from."],
 ] as const;

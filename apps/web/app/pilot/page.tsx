@@ -168,6 +168,7 @@ export const metadata: Metadata = {
 };
 
 const errorMessages: Record<string, string> = {
+  subscription_required: "This workspace needs a subscription for that. Go to Settings, then Billing.",
   dns_proof_not_found: "The TXT record is not visible yet. DNS changes can take a few minutes.",
   "verification-challenge-expired": "The verification record expired. Generate a fresh record.",
   "pilot-session-not-configured": "The local pilot session is not configured yet.",
@@ -753,13 +754,13 @@ export default async function PilotPage({searchParams}: PageProps) {
           <Panel className="dot-field px-6 py-16 text-center">
             <h2 className="font-display text-[28px] font-light tracking-tight text-ink">No site selected</h2>
             <p className="mx-auto mt-3 max-w-md text-[13px] leading-6 text-pretty text-ink-soft">
-              Add a site you control and prove it with a DNS record. Adding one lives in settings,
+              Add a site you control and prove it with a file, a meta tag or a DNS record. Adding one lives in settings,
               because it needs the address and a name only you can give.
             </p>
             <Link
               href="/settings/sites"
               className={cn(button.primary, "mt-6")}
-            data-tip="Add a domain you control and prove it with a DNS record." aria-describedby="tip-26b5b277ea">
+            data-tip="Add a domain you control and prove it with a file, a meta tag or a DNS record." aria-describedby="tip-9f5b567951">
               Add a site
             </Link>
           </Panel>

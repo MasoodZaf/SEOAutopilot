@@ -40,7 +40,7 @@ def build_diverse_top_query(
     opportunity_type: str | None = None,
     min_score: float | None = None,
     evidence_crawl_id: UUID | None = None,
-) -> Select[tuple[Opportunity]]:
+) -> Select[Opportunity]:
     """Rank repeated rule/page opportunities in deterministic rounds.
 
     A high-volume rule must not monopolize the decision list. The public API
@@ -99,7 +99,7 @@ def build_diverse_top_query(
     )
 
 
-def build_latest_analyzed_crawl_query(*, tenant_id: UUID, site_id: UUID) -> Select[tuple[UUID]]:
+def build_latest_analyzed_crawl_query(*, tenant_id: UUID, site_id: UUID) -> Select[UUID]:
     """The crawl behind the site's most recent completed analysis."""
     return (
         select(AnalysisRun.crawl_job_id)
@@ -115,7 +115,7 @@ def build_latest_analyzed_crawl_query(*, tenant_id: UUID, site_id: UUID) -> Sele
 
 def build_not_rechecked_count_query(
     *, tenant_id: UUID, site_id: UUID, evidence_crawl_id: UUID
-) -> Select[tuple[int]]:
+) -> Select[int]:
     """Open opportunities whose evidence predates the given crawl."""
     return select(func.count(Opportunity.id)).where(
         Opportunity.tenant_id == tenant_id,
@@ -129,7 +129,7 @@ def build_not_rechecked_count_query(
 
 def build_page_url_query(
     *, tenant_id: UUID, site_id: UUID, page_ids: list[UUID]
-) -> Select[tuple[UUID, str]]:
+) -> Select[UUID, str]:
     return select(Page.id, Page.normalized_url).where(
         Page.tenant_id == tenant_id,
         Page.site_id == site_id,

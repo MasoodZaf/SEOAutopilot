@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import CrawlCreate, SiteCreate
 from app.core.context import Role, TenantContext
 from app.db.models import AuditEvent, CrawlJob, OutboxEvent, Site, SiteVerificationChallenge
-from app.services.verification import DnsTxtVerifier
+from app.services.verification import SiteVerifier
 
 # How long a DNS proof stays claimable.
 #
@@ -118,7 +118,9 @@ class SiteService:
         )
         return challenge, token
 
-    async def verify_site(self, site_id: UUID, token: str, verifier: DnsTxtVerifier) -> Site:
+    async def verify_site(
+        self, site_id: UUID, token: str, verifier: SiteVerifier, method: str = "dns_txt"
+    ) -> Site:
         self.context.require(Role.OWNER, Role.ADMIN, Role.SEO_MANAGER)
         site = await self.get_site(site_id)
         if site is None:
@@ -138,8 +140,12 @@ class SiteService:
                 status_code=status.HTTP_409_CONFLICT, detail="verification_challenge_invalid"
             )
         if not await verifier.verify(site.normalized_host, token):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="dns_proof_not_found")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="dns_proof_not_found" if method == "dns_txt" else "site_proof_not_found",
+            )
         now = datetime.now(UTC)
+        challenge.method = method
         challenge.status = "verified"
         challenge.verified_at = now
         site.status = "active"
@@ -149,7 +155,7 @@ class SiteService:
             "site.verified",
             "site",
             site.id,
-            {"site_id": str(site.id), "method": "dns_txt"},
+            {"site_id": str(site.id), "method": method},
         )
         return site
 

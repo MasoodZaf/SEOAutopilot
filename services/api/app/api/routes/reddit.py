@@ -20,6 +20,7 @@ from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
 from app.db.models import RedditDraft
 from app.db.session import TenantSession
+from app.services.billing import RequireSubscription
 from app.services.reddit import RedditService
 
 router = APIRouter(prefix="/v1", tags=["reddit"])
@@ -60,6 +61,7 @@ async def list_reddit_drafts(
     "/sites/{site_id}/reddit/drafts",
     response_model=RedditDraftEnvelope,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[RequireSubscription],
 )
 async def create_reddit_draft(
     site_id: UUID,

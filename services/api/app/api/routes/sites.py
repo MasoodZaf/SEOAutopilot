@@ -39,8 +39,10 @@ from app.api.schemas import (
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
+from app.core.context import Role
 from app.core.cursors import CursorError, decode_page_cursor, encode_page_cursor
 from app.db.session import TenantSession
+from app.services.billing import RequireSubscription, require_room_for_site
 from app.services.calibrations import CalibrationService
 from app.services.keywords import term_encryption_key
 from app.services.opportunities import OpportunityService
@@ -49,7 +51,13 @@ from app.services.performance import PerformanceService
 from app.services.search_performance import SearchPerformanceService
 from app.services.site_engagement import SiteEngagementService
 from app.services.sites import SiteService
-from app.services.verification import DnsTxtVerifier, get_site_verifier
+from app.services.verification import (
+    PROOF_FILE_PATH,
+    PROOF_META_NAME,
+    DnsTxtVerifier,
+    get_site_verifier,
+    verifier_for,
+)
 from app.services.visibility import VisibilityService
 
 router = APIRouter(prefix="/v1/sites", tags=["sites"])
@@ -239,6 +247,8 @@ async def create_site(
     session: TenantSession,
     response: Response,
 ) -> SiteEnvelope:
+    context.require(Role.OWNER, Role.ADMIN, Role.SEO_MANAGER)
+    await require_room_for_site(session, context, get_settings())
     site = await SiteService(session, context).create_site(command)
     response.headers["ETag"] = f'"{site.version}"'
     return SiteEnvelope(data=SiteRead.model_validate(site), meta={"trace_id": context.trace_id})
@@ -275,6 +285,8 @@ async def create_verification_challenge(
             record_value=f"seo-autopilot-verification={token}",
             token=token,
             expires_at=challenge.expires_at,
+            file_url=f"https://{site.normalized_host}{PROOF_FILE_PATH}",
+            meta_tag=f'<meta name="{PROOF_META_NAME}" content="{token}">',
         ),
         meta={"trace_id": context.trace_id},
     )
@@ -288,12 +300,15 @@ async def verify_site(
     session: TenantSession,
     verifier: Annotated[DnsTxtVerifier, Depends(get_site_verifier)],
 ) -> SiteEnvelope:
-    site = await SiteService(session, context).verify_site(site_id, command.token, verifier)
+    site = await SiteService(session, context).verify_site(
+        site_id, command.token, verifier_for(command.method, verifier), command.method
+    )
     return SiteEnvelope(data=SiteRead.model_validate(site), meta={"trace_id": context.trace_id})
 
 
 @router.post(
-    "/{site_id}/crawls", response_model=CrawlEnvelope, status_code=status.HTTP_202_ACCEPTED
+    "/{site_id}/crawls", response_model=CrawlEnvelope, status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[RequireSubscription],
 )
 async def create_crawl(
     site_id: UUID,

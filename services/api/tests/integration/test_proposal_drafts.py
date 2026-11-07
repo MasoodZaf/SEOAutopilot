@@ -521,5 +521,5 @@ async def test_draftable_does_not_reach_another_tenants_opportunities(
                 tenant_id=other, actor_id=evidence["actor_id"],
                 role=Role.OWNER, trace_id="integration",
             ),
-        ).draftable_ids(listed)
+        ).draftable_ids(listed)  # pyright: ignore[reportArgumentType]
     assert draftable == set()

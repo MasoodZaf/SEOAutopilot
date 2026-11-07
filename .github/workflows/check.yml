@@ -1,0 +1,94 @@
+# The same gate as `make check`, on every pull request and every push to main.
+# Public repository: no secrets are used, and pull_request runs with a read-only token.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The crawler's rendering tests drive a real browser.
+      - run: pnpm --filter @seo-autopilot/crawler exec playwright install --with-deps chromium
+      - run: pnpm check
+      # `next build` catches what tsc does not, such as a non-async "use server" export.
+      - run: pnpm --filter @seo-autopilot/contracts build
+      - run: pnpm --filter @seo-autopilot/web build
+
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_DB: seo_autopilot_test
+          POSTGRES_USER: seo_autopilot
+          POSTGRES_PASSWORD: seo_autopilot
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U seo_autopilot -d seo_autopilot_test"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://seo_autopilot:seo_autopilot@127.0.0.1:5433/seo_autopilot_test
+      PYTHONPATH: services/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --require-hashes -r services/api/requirements.lock
+      - run: pip install -e 'services/api[dev]'
+      - run: ruff check services/api
+      - run: pyright services/api
+      - run: pytest services/api/tests
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: services/worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --require-hashes -r services/worker/requirements.lock
+      - run: pip install -e 'services/worker[dev]'
+      - run: ruff check services/worker
+      - run: pyright services/worker
+      - run: pytest services/worker/tests
+
+  images:
+    # Proves the lockfiles still install: a stale one fails here, not during a deploy.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - services/api/Dockerfile
+          - services/worker/Dockerfile
+          - services/crawler/Dockerfile
+          - apps/web/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f ${{ matrix.dockerfile }} .
