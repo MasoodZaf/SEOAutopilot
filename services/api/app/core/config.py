@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     stripe_price_id: str | None = None
     billing_enforced: bool = False
     billing_trial_days: int = 14
+    billing_site_limit: int = 3
     autopilot_enabled: bool = False
     # Real identity. `oidc_issuer_url` used to select an error string and
     # nothing else; it now names the provider that issues the tokens this API

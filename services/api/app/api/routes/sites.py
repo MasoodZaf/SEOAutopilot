@@ -39,9 +39,10 @@ from app.api.schemas import (
 )
 from app.core.auth import TenantContextDependency
 from app.core.config import get_settings
+from app.core.context import Role
 from app.core.cursors import CursorError, decode_page_cursor, encode_page_cursor
 from app.db.session import TenantSession
-from app.services.billing import RequireSubscription
+from app.services.billing import RequireSubscription, require_room_for_site
 from app.services.calibrations import CalibrationService
 from app.services.keywords import term_encryption_key
 from app.services.opportunities import OpportunityService
@@ -246,6 +247,8 @@ async def create_site(
     session: TenantSession,
     response: Response,
 ) -> SiteEnvelope:
+    context.require(Role.OWNER, Role.ADMIN, Role.SEO_MANAGER)
+    await require_room_for_site(session, context, get_settings())
     site = await SiteService(session, context).create_site(command)
     response.headers["ETag"] = f'"{site.version}"'
     return SiteEnvelope(data=SiteRead.model_validate(site), meta={"trace_id": context.trace_id})

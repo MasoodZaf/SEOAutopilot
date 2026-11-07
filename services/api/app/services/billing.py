@@ -17,14 +17,14 @@ from uuid import UUID
 
 import httpx
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import TenantContextDependency
 from app.core.config import Settings, get_settings
 from app.core.context import Role, TenantContext
-from app.db.models import AuditEvent, BillingEvent, TenantBilling
+from app.db.models import AuditEvent, BillingEvent, Site, TenantBilling
 from app.db.session import TenantSession
 from app.services.sites import stable_hash
 
@@ -344,3 +344,26 @@ async def _require_active_subscription(
 
 
 RequireSubscription = Depends(_require_active_subscription)
+
+
+async def require_room_for_site(
+    session: AsyncSession, context: TenantContext, settings: Settings
+) -> None:
+    """A paid plan covers a limited number of sites. Comped workspaces have no limit.
+
+    The billing row is locked so two requests at once cannot both take the last place.
+    """
+    if not settings.billing_enforced:
+        return
+    row = await session.scalar(
+        select(TenantBilling)
+        .where(TenantBilling.tenant_id == context.tenant_id)
+        .with_for_update()
+    )
+    if row is not None and row.status == "comped":
+        return
+    count = await session.scalar(
+        select(func.count()).select_from(Site).where(Site.tenant_id == context.tenant_id)
+    )
+    if int(count or 0) >= settings.billing_site_limit:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "site_limit_reached")

@@ -6,15 +6,17 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.api.routes.sites import create_site
+from app.api.schemas import SiteCreate
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
 from app.db.models import TenantBilling
-from app.services.billing import BillingService, apply_event, parse_event
+from app.services.billing import BillingService, apply_event, parse_event, require_room_for_site
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.asyncio, requires_database]
@@ -186,3 +188,58 @@ async def test_the_scheduler_query_reads_billing_as_postgres_understands_it(engi
     async with engine.connect() as connection:
         raw = await connection.get_raw_connection()
         await raw.driver_connection.prepare(query)
+
+
+async def _add_sites(engine, tenant_id: UUID, count: int) -> None:
+    async with engine.begin() as connection:
+        for _ in range(count):
+            host = f"{uuid4().hex}.example"
+            await connection.execute(
+                text(
+                    "INSERT INTO site (tenant_id, name, canonical_origin, normalized_host)"
+                    " VALUES (:tenant, 'S', :origin, :host)"
+                ),
+                {"tenant": tenant_id, "origin": f"https://{host}", "host": host},
+            )
+
+
+ENFORCED = SETTINGS.model_copy(update={"billing_enforced": True})
+
+
+async def test_a_plan_stops_at_its_site_limit(engine, app_engine) -> None:
+    tenant_id = await _tenant(engine)
+    await _add_sites(engine, tenant_id, 2)
+    async with _Scoped(app_engine, tenant_id) as session:
+        await require_room_for_site(session, _context(tenant_id), ENFORCED)
+    await _add_sites(engine, tenant_id, 1)
+    async with _Scoped(app_engine, tenant_id) as session:
+        with pytest.raises(HTTPException) as refused:
+            await require_room_for_site(session, _context(tenant_id), ENFORCED)
+    assert refused.value.status_code == 402
+    assert refused.value.detail == "site_limit_reached"
+
+
+async def test_comped_workspaces_and_unenforced_billing_have_no_site_limit(
+    engine, app_engine
+) -> None:
+    comped = await _tenant(engine, "comped")
+    await _add_sites(engine, comped, 5)
+    async with _Scoped(app_engine, comped) as session:
+        await require_room_for_site(session, _context(comped), ENFORCED)
+    trial = await _tenant(engine)
+    await _add_sites(engine, trial, 5)
+    async with _Scoped(app_engine, trial) as session:
+        await require_room_for_site(session, _context(trial), SETTINGS)
+
+
+async def test_the_create_site_route_applies_the_limit(engine, app_engine, monkeypatch) -> None:
+    """Calls the route itself, which the helper tests above would not catch breaking."""
+    tenant_id = await _tenant(engine)
+    await _add_sites(engine, tenant_id, 3)
+    monkeypatch.setattr("app.api.routes.sites.get_settings", lambda: ENFORCED)
+    command = SiteCreate(name="Fourth", canonical_origin="https://fourth.example")
+    async with _Scoped(app_engine, tenant_id) as session:
+        with pytest.raises(HTTPException) as refused:
+            await create_site(command, _context(tenant_id), session, Response())
+    assert refused.value.detail == "site_limit_reached"
+

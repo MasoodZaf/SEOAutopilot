@@ -42,6 +42,7 @@ const REASONS: Record<string, string> = {
     "DNS provider automation is not enabled on this deployment. Add the record at your registrar instead.",
   dns_provider_not_supported:
     "Only Cloudflare can publish the record for you. Every other registrar works by adding the record yourself.",
+  site_limit_reached: "Your plan covers 3 sites. Contact us to add more.",
   site_already_exists: "That host is already a site in this workspace.",
   unexpected_error: "That did not work. Try again.",
 };

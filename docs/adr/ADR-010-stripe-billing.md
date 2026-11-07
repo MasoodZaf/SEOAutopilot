@@ -17,6 +17,7 @@ billing are comped.
   customer is ignored.
 - `BILLING_ENFORCED` is separate from configuration, so a checkout can be tested first. The API will
   not start with enforcement on and no way to pay.
+- A plan covers 3 sites (`BILLING_SITE_LIMIT`). Comped workspaces have no limit.
 - Lapsed workspaces keep read access. Crawls, deploys, publishing, the assistant, drafting and
   scheduled routines stop with `subscription_required`.
 

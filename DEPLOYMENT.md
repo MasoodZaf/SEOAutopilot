@@ -206,7 +206,7 @@ one long insert.
 
 Dormant until configured, and nothing is refused until `BILLING_ENFORCED=true`. See ADR-010.
 
-1. In Stripe, create one recurring price. Add a webhook endpoint at
+1. In Stripe, create one recurring price (launch price: USD 49 a month). Add a webhook endpoint at
    `https://seo.oryxenlabs.com/api/v1/billing/webhooks/stripe` for
    `checkout.session.completed` and `customer.subscription.created`, `.updated` and `.deleted`.
    Turn on the customer portal.

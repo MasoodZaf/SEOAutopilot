@@ -23,7 +23,7 @@ export default function TermsPage() {
       <Section heading="Paid plans">
         <p>
           If we start charging, the price is shown before you subscribe. Payments are handled by
-          Stripe. You can cancel from Settings, then Billing, and access continues to the end of the
+          Stripe. A plan covers up to 3 sites per workspace. You can cancel from Settings, then Billing, and access continues to the end of the
           period you paid for. If a trial or subscription ends you can still read your workspace,
           but crawls, publishing and AI features stop until you subscribe.
         </p>
