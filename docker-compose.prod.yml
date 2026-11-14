@@ -46,6 +46,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Admits other projects' site files one at a time; see infra/caddy/start.sh.
+    command: ["sh", "/etc/caddy/start.sh", "run"]
     ports: ["80:80", "443:443"]
     # env_file (not environment:) so the bcrypt hash's $ characters are
     # passed through literally instead of being read as compose variables.
@@ -66,9 +68,9 @@ services:
       # `caddy reload` is enough. Read-only is safe: Caddy writes
       # certificates to /data and its autosave to /config, never here.
       - ./infra/caddy:/etc/caddy:ro
-      # Site blocks owned by other projects (VOCA, ...), one file each, so a
-      # deploy of this repo can never delete them. Caddyfile imports
-      # /etc/caddy-sites/*.caddy. Each project validates before reloading.
+      # Site blocks owned by other projects (VOCA, NexHR, ...), one file each,
+      # so a deploy of this repo can never delete them. start.sh admits only
+      # the ones that validate; a broken one drops only its own sites.
       - /opt/edge/sites:/etc/caddy-sites:ro
       - caddy-data:/data
       - caddy-config:/config
