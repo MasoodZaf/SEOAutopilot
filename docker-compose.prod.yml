@@ -66,6 +66,10 @@ services:
       # `caddy reload` is enough. Read-only is safe: Caddy writes
       # certificates to /data and its autosave to /config, never here.
       - ./infra/caddy:/etc/caddy:ro
+      # Site blocks owned by other projects (VOCA, ...), one file each, so a
+      # deploy of this repo can never delete them. Caddyfile imports
+      # /etc/caddy-sites/*.caddy. Each project validates before reloading.
+      - /opt/edge/sites:/etc/caddy-sites:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on: [web, api]
@@ -77,6 +81,10 @@ services:
       # of this container silently took BidLenz off the air until somebody
       # ran `docker network connect` again from memory.
       - bidlenz
+      # Project-neutral network (created once with `docker network create
+      # edge`, owned by no compose project) for upstreams of the imported
+      # site files. No project's `down` can remove it.
+      - edge
 
 networks:
   # External on purpose: this overlay only runs on the host that also runs
@@ -86,6 +94,9 @@ networks:
   bidlenz:
     external: true
     name: bidlenz_default
+  edge:
+    external: true
+    name: edge
 
 volumes:
   caddy-data:
