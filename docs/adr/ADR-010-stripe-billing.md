@@ -15,6 +15,12 @@ billing are comped.
 - A signed webhook is the only thing that changes subscription status. The signature is checked,
   each event id applies once, an older event cannot undo a newer one, and an event naming another
   customer is ignored.
+- Each stored customer records the Stripe mode (sandbox or live) it was made in, read from the
+  key prefix. Stripe ids do not carry the mode, and the live API refuses a sandbox customer. Under
+  the other mode's key, stored Stripe state counts for nothing: only the local trial grants
+  access, checkout makes a fresh customer, the portal is not offered, and events from the other
+  mode are ignored. The worker's scheduler applies the same rule. The API refuses to start with a
+  key whose mode it cannot read.
 - `BILLING_ENFORCED` is separate from configuration, so a checkout can be tested first. The API will
   not start with enforcement on and no way to pay.
 - A plan covers 3 sites (`BILLING_SITE_LIMIT`). Comped workspaces have no limit.

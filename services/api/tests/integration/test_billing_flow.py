@@ -1,5 +1,7 @@
 """Billing against a real database, as the role that cannot bypass row-level security."""
 
+import ast
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -9,14 +11,21 @@ import pytest
 from fastapi import HTTPException, Response
 from pydantic import SecretStr
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.routes.sites import create_site
 from app.api.schemas import SiteCreate
 from app.core.config import Settings
 from app.core.context import Role, TenantContext
 from app.db.models import TenantBilling
-from app.services.billing import BillingService, apply_event, parse_event, require_room_for_site
+from app.services.billing import (
+    BillingService,
+    apply_event,
+    billing_row,
+    new_trial,
+    parse_event,
+    require_room_for_site,
+)
 from tests.conftest import requires_database
 
 pytestmark = [pytest.mark.asyncio, requires_database]
@@ -179,15 +188,200 @@ async def test_the_schema_allows_file_and_meta_tag_proof(engine) -> None:
     assert "file" in definition and "meta_tag" in definition
 
 
-async def test_the_scheduler_query_reads_billing_as_postgres_understands_it(engine) -> None:
-    """The worker has no database in its own tests, so its SQL is parsed here."""
+def _scheduler_queries() -> dict[str, str]:
+    """The worker's claim queries, read from its source: the API tests cannot import the worker."""
     source = (
         Path(__file__).resolve().parents[3] / "worker" / "app" / "routines" / "scheduler.py"
     ).read_text()
-    query = source.split('DUE_ROUTINES_SQL = """')[1].split('"""')[0]
+    names = {
+        "_DUE_ROUTINES_TEMPLATE",
+        "_STATUS_GRANTS_ACCESS",
+        "DUE_ROUTINES_SQL_NO_STRIPE",
+        "DUE_ROUTINES_SQL",
+    }
+    wanted: list[ast.stmt] = [
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id in names
+    ]
+    namespace: dict[str, str] = {}
+    # Only this repo's own string constants are evaluated, never input from outside.
+    module = compile(ast.Module(body=wanted, type_ignores=[]), "scheduler.py", "exec")
+    exec(module, namespace)  # noqa: S102
+    return {"live": namespace["DUE_ROUTINES_SQL"], "none": namespace["DUE_ROUTINES_SQL_NO_STRIPE"]}
+
+
+async def test_the_scheduler_query_reads_billing_as_postgres_understands_it(engine) -> None:
+    """The worker has no database in its own tests, so its SQL is parsed here."""
     async with engine.connect() as connection:
         raw = await connection.get_raw_connection()
-        await raw.driver_connection.prepare(query)
+        for query in _scheduler_queries().values():
+            await raw.driver_connection.prepare(query)
+
+
+async def test_signup_and_the_billing_page_work_before_migration_0060(engine, app_engine) -> None:
+    """With no Stripe key the API must not name stripe_livemode, so it can ship ahead of 0060."""
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            await connection.execute(text("ALTER TABLE tenant_billing DROP COLUMN stripe_livemode"))
+            tenant_id = uuid4()
+            await connection.execute(
+                text("INSERT INTO tenant (id, name, slug) VALUES (:id, 'Pre-0060', :slug)"),
+                {"id": tenant_id, "slug": tenant_id.hex},
+            )
+            session = AsyncSession(bind=connection)
+            session.add(new_trial(tenant_id, OFF))
+            await session.flush()
+            row = await session.scalar(billing_row(tenant_id, OFF.stripe_livemode))
+            assert row is not None and row.status == "trialing"
+            await session.close()
+        finally:
+            await transaction.rollback()
+
+
+async def test_the_scheduler_query_without_stripe_runs_before_migration_0060(engine) -> None:
+    """With billing off, deploying the worker ahead of the migration must not stop routines."""
+    query = _scheduler_queries()["none"]
+    assert "stripe_livemode" not in query
+    async with engine.connect() as connection:
+        raw = await connection.get_raw_connection()
+        transaction = raw.driver_connection.transaction()
+        await transaction.start()
+        try:
+            await raw.driver_connection.execute(
+                "ALTER TABLE tenant_billing DROP COLUMN stripe_livemode"
+            )
+            await raw.driver_connection.fetch(query, NOW, 1)
+        finally:
+            await transaction.rollback()
+
+
+LIVE = SETTINGS.model_copy(update={"stripe_secret_key": SecretStr("rk_live_x")})
+OFF = SETTINGS.model_copy(update={"stripe_secret_key": None})
+
+
+async def _sandbox_subscriber(engine, status: str = "active", trial: datetime | None = None) -> UUID:
+    """A workspace that subscribed with sandbox keys, as a test checkout would leave it."""
+    tenant_id = await _tenant(engine)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE tenant_billing SET status = :status, trial_ends_at = :trial,"
+                " stripe_customer_id = :customer, stripe_subscription_id = :sub,"
+                " stripe_livemode = false WHERE tenant_id = :id"
+            ),
+            {
+                "id": tenant_id,
+                "status": status,
+                "trial": trial,
+                "customer": "cus_test_" + tenant_id.hex,
+                "sub": "sub_test_" + tenant_id.hex,
+            },
+        )
+    return tenant_id
+
+
+async def test_live_keys_replace_a_sandbox_customer_at_checkout(engine, app_engine) -> None:
+    tenant_id = await _sandbox_subscriber(engine)
+    requests: list[httpx.Request] = []
+
+    def stripe(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/customers"):
+            return httpx.Response(200, json={"id": "cus_live_" + tenant_id.hex})
+        return httpx.Response(200, json={"url": "https://checkout.stripe.com/c/live"})
+
+    async with _Scoped(app_engine, tenant_id) as session:
+        url = await BillingService(
+            session, _context(tenant_id), LIVE, httpx.MockTransport(stripe)
+        ).start_checkout()
+    assert url == "https://checkout.stripe.com/c/live"
+    assert [request.url.path for request in requests] == ["/v1/customers", "/v1/checkout/sessions"]
+    assert f"cus_live_{tenant_id.hex}" in requests[-1].content.decode()
+
+    async with _Scoped(app_engine, tenant_id) as session:
+        row = await session.scalar(billing_row(tenant_id, True))
+        assert row is not None
+        assert row.stripe_customer_id == "cus_live_" + tenant_id.hex
+        assert row.stripe_subscription_id is None
+        assert row.stripe_livemode is True
+        assert row.status == "canceled"
+        audited = await session.scalar(
+            text(
+                "SELECT count(*) FROM audit_event"
+                " WHERE tenant_id = :id AND action = 'billing.stripe_mode_reset'"
+            ),
+            {"id": tenant_id},
+        )
+    assert audited == 1
+
+
+async def test_live_keys_do_not_open_the_portal_for_a_sandbox_customer(engine, app_engine) -> None:
+    tenant_id = await _sandbox_subscriber(engine)
+
+    def stripe(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Stripe must not be called with a sandbox customer")
+
+    async with _Scoped(app_engine, tenant_id) as session:
+        with pytest.raises(HTTPException) as refused:
+            await BillingService(
+                session, _context(tenant_id), LIVE, httpx.MockTransport(stripe)
+            ).open_portal()
+    assert refused.value.detail == "no_billing_account"
+
+
+async def test_an_event_from_the_other_mode_is_not_applied(engine, app_engine) -> None:
+    tenant_id = await _tenant(engine)
+    event = _event(tenant_id)
+    sandbox = replace(event, livemode=False)
+    async with _Scoped(app_engine, tenant_id) as session:
+        assert await apply_event(session, sandbox, "t", live=True) == "other_mode"
+    assert await _status(app_engine, tenant_id) == "trialing"
+
+    async with _Scoped(app_engine, tenant_id) as session:
+        assert await apply_event(session, sandbox, "t", live=False) == "applied"
+    async with _Scoped(app_engine, tenant_id) as session:
+        row = await session.scalar(billing_row(tenant_id, False))
+        assert row is not None and row.stripe_livemode is False
+
+
+async def test_the_scheduler_gives_a_sandbox_subscription_nothing_under_live_keys(engine) -> None:
+    """Runs the worker's own query, because the worker reads tenant_billing without the API."""
+    paid = await _sandbox_subscriber(engine)
+    trial = await _sandbox_subscriber(engine, "trialing", NOW + timedelta(days=3))
+    routines = {}
+    for tenant_id in (paid, trial):
+        await _add_sites(engine, tenant_id, 1)
+        async with engine.begin() as connection:
+            routines[tenant_id] = await connection.scalar(
+                text(
+                    "INSERT INTO routine (tenant_id, site_id, kind, cadence, next_run_at, created_by)"
+                    " SELECT :tenant, id, 'site_audit', 'daily', :due, gen_random_uuid()"
+                    " FROM site WHERE tenant_id = :tenant RETURNING id"
+                ),
+                {"tenant": tenant_id, "due": NOW - timedelta(minutes=1)},
+            )
+    queries = _scheduler_queries()
+
+    async def billing_ok(live: bool | None) -> dict[UUID, bool]:
+        async with engine.connect() as connection:
+            raw = await connection.get_raw_connection()
+            if live is None:
+                rows = await raw.driver_connection.fetch(queries["none"], NOW, 10_000)
+            else:
+                rows = await raw.driver_connection.fetch(queries["live"], NOW, 10_000, live)
+            await connection.rollback()
+        return {
+            tenant_id: next(row["billing_ok"] for row in rows if row["id"] == routine_id)
+            for tenant_id, routine_id in routines.items()
+        }
+
+    assert await billing_ok(True) == {paid: False, trial: True}
+    assert await billing_ok(False) == {paid: True, trial: True}
+    assert await billing_ok(None) == {paid: True, trial: True}
 
 
 async def _add_sites(engine, tenant_id: UUID, count: int) -> None:

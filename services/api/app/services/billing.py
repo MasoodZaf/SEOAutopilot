@@ -17,9 +17,10 @@ from uuid import UUID
 
 import httpx
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from app.core.auth import TenantContextDependency
 from app.core.config import Settings, get_settings
@@ -56,6 +57,48 @@ def has_access(row: TenantBilling | None, now: datetime | None = None) -> bool:
     if row.status == "trialing":
         return row.trial_ends_at is not None and row.trial_ends_at > (now or datetime.now(UTC))
     return False
+
+
+def billing_row(tenant_id: UUID, live: bool | None) -> Select[tuple[TenantBilling]]:
+    """The workspace's billing row, with its Stripe mode only when a key is configured.
+
+    With no key the mode is never read or written, and leaving it unloaded means the
+    query does not need migration 0060.
+    """
+    query = select(TenantBilling).where(TenantBilling.tenant_id == tenant_id)
+    if live is not None:
+        query = query.options(undefer(TenantBilling.stripe_livemode))
+    return query
+
+
+def from_other_mode(row: TenantBilling | None, live: bool | None) -> bool:
+    """Stripe state stored under the other key mode, which the current keys cannot use.
+
+    A sandbox customer id is refused by the live API and the reverse, and no
+    event from the other mode will ever arrive to end that subscription.
+    """
+    return (
+        row is not None
+        and live is not None
+        and row.stripe_livemode is not None
+        and row.stripe_livemode != live
+    )
+
+
+def as_current_mode(row: TenantBilling | None, live: bool | None) -> TenantBilling | None:
+    """The row as the current keys see it: another mode's Stripe state counts for nothing.
+
+    Only the local trial survives, so a test subscription never grants paid
+    access under live keys. The copy is never added to a session.
+    """
+    if row is None or not from_other_mode(row, live):
+        return row
+    return TenantBilling(
+        tenant_id=row.tenant_id,
+        status="trialing" if row.trial_ends_at else "canceled",
+        trial_ends_at=row.trial_ends_at,
+        cancel_at_period_end=False,
+    )
 
 
 def new_trial(tenant_id: UUID, settings: Settings) -> TenantBilling:
@@ -146,7 +189,7 @@ class BillingService:
 
     async def get(self) -> TenantBilling | None:
         return await self.session.scalar(
-            select(TenantBilling).where(TenantBilling.tenant_id == self.context.tenant_id)
+            billing_row(self.context.tenant_id, self.settings.stripe_livemode)
         )
 
     async def _customer(self, stripe: StripeClient, row: TenantBilling) -> str:
@@ -160,8 +203,32 @@ class BillingService:
         )
         customer_id = str(customer["id"])
         row.stripe_customer_id = customer_id
+        row.stripe_livemode = self.settings.stripe_livemode
         await self.session.flush()
         return customer_id
+
+    async def _forget_other_mode(self, row: TenantBilling) -> None:
+        """Drop Stripe state the current keys cannot use, so a fresh customer can be made."""
+        previous = row.stripe_livemode
+        row.status = "trialing" if row.trial_ends_at else "canceled"
+        row.stripe_customer_id = None
+        row.stripe_subscription_id = None
+        row.current_period_end = None
+        row.cancel_at_period_end = False
+        row.last_event_at = None
+        row.stripe_livemode = None
+        row.updated_at = datetime.now(UTC)
+        self.session.add(
+            _audit(
+                self.context.tenant_id,
+                "billing.stripe_mode_reset",
+                "user",
+                str(self.context.actor_id),
+                self.context.trace_id,
+                {"tenant_id": str(self.context.tenant_id), "previous_livemode": previous},
+            )
+        )
+        await self.session.flush()
 
     async def start_checkout(self) -> str:
         self.context.require(Role.OWNER)
@@ -171,6 +238,8 @@ class BillingService:
             row = new_trial(self.context.tenant_id, self.settings)
             self.session.add(row)
             await self.session.flush()
+        if from_other_mode(row, self.settings.stripe_livemode):
+            await self._forget_other_mode(row)
         if row.status == "comped":
             raise HTTPException(status.HTTP_409_CONFLICT, "billing_not_required")
         if row.status in {"active", "past_due"}:
@@ -209,7 +278,7 @@ class BillingService:
     async def open_portal(self) -> str:
         self.context.require(Role.OWNER)
         stripe = StripeClient(_require_enabled(self.settings), self.transport)
-        row = await self.get()
+        row = as_current_mode(await self.get(), self.settings.stripe_livemode)
         if row is None or not row.stripe_customer_id:
             raise HTTPException(status.HTTP_409_CONFLICT, "no_billing_account")
         portal = await stripe.post(
@@ -231,6 +300,7 @@ class ParsedEvent:
     customer: str | None
     subscription: dict[str, Any] | None
     subscription_id: str | None
+    livemode: bool | None = None
 
 
 def parse_event(event: dict[str, Any]) -> ParsedEvent | None:
@@ -263,6 +333,7 @@ def parse_event(event: dict[str, Any]) -> ParsedEvent | None:
         customer=obj.get("customer"),
         subscription=subscription,
         subscription_id=subscription_id,
+        livemode=event["livemode"] if isinstance(event.get("livemode"), bool) else None,
     )
 
 
@@ -278,11 +349,18 @@ def _period_end(subscription: dict[str, Any]) -> datetime | None:
     return _timestamp(items[0].get("current_period_end")) if items else None
 
 
-async def apply_event(session: AsyncSession, event: ParsedEvent, trace_id: str) -> str:
-    """Apply one verified event in a session scoped to its tenant. Returns the outcome."""
-    row = await session.scalar(
-        select(TenantBilling).where(TenantBilling.tenant_id == event.tenant_id).with_for_update()
-    )
+async def apply_event(
+    session: AsyncSession, event: ParsedEvent, trace_id: str, live: bool | None = None
+) -> str:
+    """Apply one verified event in a session scoped to its tenant. Returns the outcome.
+
+    `live` is the mode of the configured key. An event from the other mode is
+    never applied, so sandbox state cannot reach a live workspace or the reverse.
+    """
+    if live is not None and event.livemode is not None and event.livemode != live:
+        logger.warning("billing event from the other stripe mode", extra={"event_id": event.event_id})
+        return "other_mode"
+    row = await session.scalar(billing_row(event.tenant_id, live).with_for_update())
     if row is None:
         return "unknown_workspace"
     if row.stripe_customer_id and event.customer and row.stripe_customer_id != event.customer:
@@ -302,6 +380,8 @@ async def apply_event(session: AsyncSession, event: ParsedEvent, trace_id: str) 
         return "duplicate"
     if event.customer:
         row.stripe_customer_id = event.customer
+        if event.livemode is not None:
+            row.stripe_livemode = event.livemode
     if event.subscription_id:
         row.stripe_subscription_id = event.subscription_id
     if event.subscription is not None:
@@ -336,10 +416,11 @@ async def apply_event(session: AsyncSession, event: ParsedEvent, trace_id: str) 
 async def _require_active_subscription(
     context: TenantContextDependency, session: TenantSession
 ) -> None:
-    if not get_settings().billing_enforced:
+    settings = get_settings()
+    if not settings.billing_enforced:
         return
-    row = await BillingService(session, context, get_settings()).get()
-    if not has_access(row):
+    row = await BillingService(session, context, settings).get()
+    if not has_access(as_current_mode(row, settings.stripe_livemode)):
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "subscription_required")
 
 

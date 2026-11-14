@@ -20,6 +20,7 @@ from app.db.session import TenantSession, tenant_scoped_session
 from app.services.billing import (
     BillingService,
     apply_event,
+    as_current_mode,
     has_access,
     parse_event,
     signature_is_valid,
@@ -32,7 +33,9 @@ router = APIRouter(prefix="/v1/billing", tags=["billing"])
 @router.get("", response_model=BillingEnvelope)
 async def get_billing(context: TenantContextDependency, session: TenantSession) -> BillingEnvelope:
     settings = get_settings()
-    row = await BillingService(session, context, settings).get()
+    row = as_current_mode(
+        await BillingService(session, context, settings).get(), settings.stripe_livemode
+    )
     return BillingEnvelope(
         data=BillingRead(
             configured=settings.billing_configured,
@@ -87,7 +90,9 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
         return {"outcome": "ignored"}
     try:
         async with tenant_scoped_session(event.tenant_id) as session:
-            outcome = await apply_event(session, event, f"stripe-{uuid4().hex[:12]}")
+            outcome = await apply_event(
+                session, event, f"stripe-{uuid4().hex[:12]}", settings.stripe_livemode
+            )
     except IntegrityError:
         # The customer id already belongs to another workspace. Retrying cannot fix that.
         logger.warning("billing event conflicted", extra={"event_id": event.event_id})

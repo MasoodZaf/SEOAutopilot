@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    FetchedValue,
     Float,
     ForeignKey,
     Index,
@@ -40,6 +41,9 @@ class TenantBilling(Base):
     """The workspace's subscription as Stripe last reported it. Never card details."""
 
     __tablename__ = "tenant_billing"
+    # No RETURNING of server-filled columns after an INSERT: it would name stripe_livemode.
+    # Nothing reads this row's timestamps in the session that creates it.
+    __mapper_args__ = {"eager_defaults": False}  # noqa: RUF012 -- SQLAlchemy reads it as-is
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenant.id"), primary_key=True)
     status: Mapped[str] = mapped_column(String(24))
     stripe_customer_id: Mapped[str | None] = mapped_column(String(255), unique=True)
@@ -48,6 +52,14 @@ class TenantBilling(Base):
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # True for live, False for sandbox; None when no Stripe object is stored yet.
+    # Which Stripe mode the customer was made in (migration 0060). Deferred, and marked as
+    # server-filled so the ORM leaves it out of INSERTs: with no Stripe key configured,
+    # nothing names the column, so this code also runs against a database without 0060.
+    # Only billing.py loads it, and only when a key is set.
+    stripe_livemode: Mapped[bool | None] = mapped_column(
+        Boolean, server_default=FetchedValue(), deferred=True, deferred_raiseload=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

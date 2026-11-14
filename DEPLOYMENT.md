@@ -217,6 +217,13 @@ Dormant until configured, and nothing is refused until `BILLING_ENFORCED=true`. 
 4. Set `BILLING_ENFORCED=true`, then recreate `api` and `worker`. The API refuses to start if
    enforcement is on without the Stripe values.
 
+Migration 0060 adds `tenant_billing.stripe_livemode`. Apply it with the deploy as usual. With no
+Stripe key set, neither `api` nor `worker` names the column, so sign-up, the billing page and
+scheduled routines keep working if the code lands first (integration tests drop the column to
+prove it). Once a key is set both read it: 0060 must be applied before the keys go in. Sandbox and live keys can be swapped without leaving a workspace
+stuck: Stripe state from the other mode is ignored and replaced at the next checkout (ADR-010).
+Test checkouts belong on a local stack all the same, so production only ever holds live ids.
+
 Workspaces that existed before migration 0059 are `comped`. To charge one, change its
 `tenant_billing.status` deliberately. Deleting a workspace does not cancel its Stripe
 subscription: cancel it in Stripe first.
