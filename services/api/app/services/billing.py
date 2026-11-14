@@ -59,7 +59,7 @@ def has_access(row: TenantBilling | None, now: datetime | None = None) -> bool:
     return False
 
 
-def billing_row(tenant_id: UUID, live: bool | None) -> Select[tuple[TenantBilling]]:
+def billing_row(tenant_id: UUID, live: bool | None) -> Select[TenantBilling]:
     """The workspace's billing row, with its Stripe mode only when a key is configured.
 
     With no key the mode is never read or written, and leaving it unloaded means the
