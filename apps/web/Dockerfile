@@ -4,7 +4,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
-RUN pnpm install --filter @seo-autopilot/web... --no-frozen-lockfile
+RUN pnpm install --filter @seo-autopilot/web... --frozen-lockfile
 COPY . .
 # Next.js inlines NEXT_PUBLIC_* at build time; without this the app
 # falls back to the seoautopilot.dev default in robots/sitemap/OG tags.

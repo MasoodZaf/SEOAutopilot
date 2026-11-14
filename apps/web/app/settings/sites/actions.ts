@@ -126,6 +126,8 @@ export async function refreshChallengeAction(formData: FormData): Promise<never>
  */
 export async function verifySiteAction(formData: FormData): Promise<never> {
   const siteId = String(formData.get("site_id") ?? "").trim();
+  const requested = String(formData.get("method") ?? "");
+  const method = requested === "file" || requested === "meta_tag" ? requested : "dns_txt";
   const stored = await readChallenge();
   if (!stored || stored.siteId !== siteId) {
     redirectFresh(`${PAGE}?error=verification_challenge_missing&site=${encodeURIComponent(siteId)}`);
@@ -133,7 +135,7 @@ export async function verifySiteAction(formData: FormData): Promise<never> {
   try {
     await apiJson(`/v1/sites/${siteId}/verify`, {
       method: "POST",
-      body: JSON.stringify({token: stored.token}),
+      body: JSON.stringify({token: stored.token, method}),
     });
     (await cookies()).delete(CHALLENGE_COOKIE);
   } catch (error) {

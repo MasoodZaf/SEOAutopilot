@@ -78,8 +78,10 @@ seo.oryxenlabs.com {
 # by syncing `infra/caddy/`, then validate and reload inside the container --
 # a reload does not restart it, so no vhost drops a connection:
 #
-#   docker exec seo-autopilot-caddy-1 caddy validate --config /etc/caddy/Caddyfile
-#   docker exec seo-autopilot-caddy-1 caddy reload   --config /etc/caddy/Caddyfile
+#   docker exec seo-autopilot-caddy-1 sh /etc/caddy/start.sh reload
+#
+# start.sh validates this file first and admits other projects' site files one
+# at a time (see the end of this file); a bare `caddy reload` skips both.
 #
 # WHY THIS BLOCK EXISTS HERE. It was added by hand on 2026-09-02 with the
 # migration off the codeArc box, and lost on 2026-09-08 when that Caddyfile was
@@ -146,3 +148,14 @@ mizan.oryxenlabs.com {
 		X-Robots-Tag "noindex, nofollow"
 	}
 }
+
+# ---------------------------------------------------------------------------
+# Sites owned by other projects: one file each in /opt/edge/sites on the host
+# (mounted read-only at /etc/caddy-sites). Kept outside this repo so a deploy
+# of SEO Autopilot can't delete them. Currently: voca.caddy, nexhr.caddy.
+#
+# Not imported from /etc/caddy-sites directly: start.sh copies in only the
+# files that validate alongside everything else, so one broken file cannot stop
+# this proxy starting. Reload with `sh /etc/caddy/start.sh reload`, never a
+# bare `caddy reload`, or a new file is not picked up.
+import {$CADDY_SITES_DIR:/tmp/caddy-sites}/*.caddy

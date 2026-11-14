@@ -584,3 +584,16 @@ Local evidence, not launch approval. Each line says what was run.
   files are high risk. The dashboard cannot be framed. Model text is never rendered as HTML and
   the assistant only runs read-only skills. **Still owed:** an independent review; the API has no
   Python lockfile, so prod resolves whatever versions are newest at build time.
+
+#### Launch hardening (2026-11-07)
+
+Local evidence, not launch approval.
+
+- **CI.** `.github/workflows/check.yml` runs lint, types, tests, a real-Postgres integration suite,
+  `next build` and all four image builds. It must also be made a required check on `main`.
+- **Locked builds.** API and worker install hash-pinned `requirements.lock` files generated from the
+  versions production ran on 2026-11-07. Node images use `--frozen-lockfile`.
+- **Faster domain proof.** A file or a home-page meta tag, as well as DNS.
+- **Billing.** One Stripe plan with a 14-day trial (ADR-010). Dormant until keys are set and
+  `BILLING_ENFORCED` is on; existing workspaces are comped.
+- **Off-site backups.** Built, encrypted, off until credentials are added.

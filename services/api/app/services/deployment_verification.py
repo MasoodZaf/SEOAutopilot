@@ -215,7 +215,7 @@ async def resolve(host: str, port: int) -> list[str]:
     return [str(sockaddr[0]) for *_, sockaddr in resolved]
 
 
-async def _require_public(url: str) -> None:
+async def require_public(url: str) -> None:
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise UnsafeDestination(f"refused scheme or host: {parts.scheme}")
@@ -239,7 +239,7 @@ async def fetch_live(client: httpx.AsyncClient, url: str) -> tuple[str, int]:
     record, not in an exception.
     """
     for _ in range(MAX_REDIRECTS + 1):
-        await _require_public(url)
+        await require_public(url)
         response = await client.get(url, follow_redirects=False)
         location = response.headers.get("location")
         if response.is_redirect and location:

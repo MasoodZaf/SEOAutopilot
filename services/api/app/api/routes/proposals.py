@@ -27,6 +27,7 @@ from app.db.models import Page
 from app.db.session import TenantSession
 from app.domain.deployments import DeploymentAdapter, MockDeploymentAdapter
 from app.domain.github_adapter import GitHubDeploymentAdapter, GitHubDeploymentError
+from app.services.billing import RequireSubscription
 from app.services.github_connector import credential_for_proposal, credential_for_site
 from app.services.proposals import ProposalService
 
@@ -127,6 +128,7 @@ async def approve_proposal(
     "/v1/proposals/{proposal_id}/deploy",
     response_model=DeploymentReceiptEnvelope,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[RequireSubscription],
 )
 async def deploy_proposal(
     proposal_id: UUID,
@@ -215,6 +217,7 @@ async def _deploy(
     "/v1/sites/{site_id}/deployments",
     response_model=DeploymentReceiptCollection,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[RequireSubscription],
 )
 async def deploy_proposals(
     site_id: UUID,
@@ -258,6 +261,7 @@ async def deploy_proposals(
     "/v1/proposals/{proposal_id}/publish",
     response_model=DeploymentReceiptEnvelope,
     status_code=status.HTTP_200_OK,
+    dependencies=[RequireSubscription],
 )
 async def publish_proposal(
     proposal_id: UUID,

@@ -63,5 +63,9 @@ SITES="$($COMPOSE exec -T postgres psql -U "$DB_USER" -d "$VERIFY_DB" -tAc \
 # never removes the last backup that worked.
 find "$BACKUP_DIR" -name 'seo_autopilot_*.dump' -type f -mtime "+$KEEP_DAYS" -delete
 
+# After pruning, so a failed upload leaves the local copies correct. It still
+# fails the unit, because a backup that stopped leaving the server must be seen.
+"$(dirname "$0")/offsite-upload.sh" "$TARGET"
+
 SIZE="$(du -h "$TARGET" | cut -f1)"
 echo "backup ok: $TARGET ($SIZE), restored and verified: tenants=$TENANTS sites=$SITES"

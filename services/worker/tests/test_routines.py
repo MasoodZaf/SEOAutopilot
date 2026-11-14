@@ -13,7 +13,12 @@ from app.notifications.deliver import (
 )
 from app.routines.runner import process_run
 from app.routines.schedule import RoutineSchedule, advance_from_slot, next_occurrence
-from app.routines.scheduler import claim_due_routines, skip_reason_for
+from app.routines.scheduler import (
+    claim_due_routines,
+    due_routines_query,
+    skip_reason_for,
+    stripe_livemode,
+)
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 TENANT = UUID("019d0000-0000-7000-8000-000000000011")
@@ -461,3 +466,26 @@ async def test_a_claimable_ungated_run_lost_to_a_race_is_left_alone() -> None:
     connection = UnclaimableConnection()
     await process_run(connection, TENANT, RUN)
     assert connection.finished_as() == []
+
+
+def test_a_lapsed_workspace_skips_routines_only_when_billing_is_enforced() -> None:
+    lapsed = routine_row(billing_ok=False)
+    assert skip_reason_for(lapsed) is None
+    assert skip_reason_for(lapsed, enforce_billing=True) == "subscription_required"
+    assert skip_reason_for(routine_row(billing_ok=True), enforce_billing=True) is None
+
+
+def test_the_scheduler_reads_the_stripe_mode_from_the_key(monkeypatch) -> None:
+    for key, mode in (("rk_live_x", True), ("sk_live_x", True), ("rk_test_x", False), ("", None)):
+        monkeypatch.setenv("STRIPE_SECRET_KEY", key)
+        assert stripe_livemode() is mode
+    monkeypatch.delenv("STRIPE_SECRET_KEY")
+    assert stripe_livemode() is None
+
+
+def test_without_a_stripe_key_the_claim_query_does_not_need_migration_0060() -> None:
+    query, args = due_routines_query(None)
+    assert "stripe_livemode" not in query and args == ()
+    for live in (True, False):
+        query, args = due_routines_query(live)
+        assert "stripe_livemode" in query and args == (live,)

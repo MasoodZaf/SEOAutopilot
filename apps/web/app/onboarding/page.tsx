@@ -73,7 +73,7 @@ export default async function OnboardingPage({searchParams}: PageProps) {
         <ol className="mt-3 flex flex-col gap-2.5">
           {[
             "You add your own Google and GitHub credentials, so nothing runs through ours.",
-            "You add a site and prove you control the domain with a DNS record.",
+            "You add a site and prove you control the domain with a file, a meta tag or a DNS record.",
             "The crawler reads that site, and findings become proposals you approve.",
           ].map((step, index) => (
             <li key={step} className="flex gap-3 text-[13px] leading-6 text-ink-soft">

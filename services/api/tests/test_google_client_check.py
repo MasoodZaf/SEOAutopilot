@@ -273,7 +273,7 @@ def _settings():
     from app.core.config import Settings
 
     return Settings(  # pyright: ignore[reportCallIssue]
-        _env_file=None,
+        _env_file=None,  # pyright: ignore[reportCallIssue]
         app_env="test",
         cursor_signing_key="c" * 32,
         google_connectors_enabled=True,

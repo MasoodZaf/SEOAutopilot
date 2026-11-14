@@ -14,6 +14,7 @@ const TABS = [
   {href: "/settings/sites", label: "Sites"},
   {href: "/settings/connectors", label: "Connectors"},
   {href: "/settings/members", label: "Members"},
+  {href: "/settings/billing", label: "Billing"},
 ];
 
 export default function SettingsLayout({children}: {children: React.ReactNode}) {

@@ -2,7 +2,6 @@ import json
 
 import httpx
 import pytest
-
 from app.content_drafts.checks import DraftRejected, normalize, review_flags, slugify
 from app.content_drafts.model import (
     DraftModelError,

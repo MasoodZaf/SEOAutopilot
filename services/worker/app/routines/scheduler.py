@@ -8,6 +8,7 @@ blocked site still leaves a `skipped` record with a reason.
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -34,22 +35,65 @@ class Pool(Protocol):
     def acquire(self) -> Any: ...
 
 
-DUE_ROUTINES_SQL = """
+_DUE_ROUTINES_TEMPLATE = """
 SELECT r.id, r.tenant_id, r.site_id, r.kind, r.cadence,
        r.schedule_hour_utc, r.schedule_minute_utc, r.schedule_isodow, r.schedule_dom,
        r.next_run_at, r.consecutive_failures,
-       s.status AS site_status, s.verified_at, s.emergency_freeze
+       s.status AS site_status, s.verified_at, s.emergency_freeze,
+       COALESCE(
+         {billing_ok},
+         false
+       ) AS billing_ok
 FROM routine r
 JOIN site s ON s.id = r.site_id AND s.tenant_id = r.tenant_id
+LEFT JOIN tenant_billing b ON b.tenant_id = r.tenant_id
 WHERE r.enabled AND r.next_run_at <= $1
 ORDER BY r.next_run_at
 FOR UPDATE OF r SKIP LOCKED
 LIMIT $2
 """
 
+_STATUS_GRANTS_ACCESS = """b.status IN ('comped','active','past_due')
+           OR (b.status = 'trialing' AND b.trial_ends_at > $1)"""
 
-def skip_reason_for(row: Any) -> str | None:
+# With no Stripe key there is no mode to compare, and the query must not name
+# tenant_billing.stripe_livemode: routines then keep running for every tenant even
+# if this worker is deployed before migration 0060.
+DUE_ROUTINES_SQL_NO_STRIPE = _DUE_ROUTINES_TEMPLATE.format(billing_ok=_STATUS_GRANTS_ACCESS)
+
+DUE_ROUTINES_SQL = _DUE_ROUTINES_TEMPLATE.format(
+    billing_ok=f"""CASE
+           -- Stripe state from the other key mode counts for nothing; only the trial does.
+           WHEN b.stripe_livemode IS NOT NULL AND b.stripe_livemode <> $3::boolean
+             THEN b.trial_ends_at > $1
+           ELSE {_STATUS_GRANTS_ACCESS}
+         END"""
+)
+
+
+def due_routines_query(live: bool | None) -> tuple[str, tuple[Any, ...]]:
+    """The claim query and its extra arguments for the configured key's mode."""
+    if live is None:
+        return DUE_ROUTINES_SQL_NO_STRIPE, ()
+    return DUE_ROUTINES_SQL, (live,)
+
+
+def billing_enforced() -> bool:
+    return os.environ.get("BILLING_ENFORCED", "false").lower() == "true"
+
+
+def stripe_livemode() -> bool | None:
+    """The configured key's mode, read as the API reads it: True live, False sandbox."""
+    key = os.environ.get("STRIPE_SECRET_KEY", "")
+    if not key:
+        return None
+    return key.startswith(("sk_live_", "rk_live_"))
+
+
+def skip_reason_for(row: Any, enforce_billing: bool = False) -> str | None:
     """Fail closed: a routine must not become a path around site governance."""
+    if enforce_billing and not row["billing_ok"]:
+        return "subscription_required"
     if row["site_status"] != "active" or row["verified_at"] is None:
         return "site_not_verified"
     if row["emergency_freeze"]:
@@ -66,12 +110,13 @@ async def claim_due_routines(
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     claimed = 0
     async with connection.transaction():
-        rows = await connection.fetch(DUE_ROUTINES_SQL, moment, CLAIM_BATCH)
+        query, mode_args = due_routines_query(stripe_livemode())
+        rows = await connection.fetch(query, moment, CLAIM_BATCH, *mode_args)
         for row in rows:
             slot = row["next_run_at"]
             schedule = schedule_from_row(row)
             following = advance_from_slot(schedule, slot, moment)
-            reason = skip_reason_for(row)
+            reason = skip_reason_for(row, billing_enforced())
 
             run_id = await connection.fetchval(
                 """

@@ -2,10 +2,13 @@
 Description=Verified backup of the SEO Autopilot database
 After=docker.service
 Requires=docker.service
+OnFailure=seo-autopilot-alert@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/seo-autopilot
+# Optional: off-site copy settings. See infra/scripts/offsite-upload.sh.
+EnvironmentFile=-/etc/seo-autopilot/backup.env
 ExecStart=/opt/seo-autopilot/infra/scripts/backup.sh --keep-days 14
 # The unit fails loudly when verification fails, so `systemctl list-timers` and
 # the journal show a broken backup rather than a silent one.

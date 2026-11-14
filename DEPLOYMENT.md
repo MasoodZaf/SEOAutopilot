@@ -202,6 +202,38 @@ role's `statement_timeout` is per statement, and both the API and the crawler's
 end-of-crawl batch issue many small ones — a 500-page crawl is 500 upserts, not
 one long insert.
 
+### Billing (Stripe)
+
+Dormant until configured, and nothing is refused until `BILLING_ENFORCED=true`. See ADR-010.
+
+1. In Stripe, create one recurring price (launch price: USD 49 a month). Add a webhook endpoint at
+   `https://seo.oryxenlabs.com/api/v1/billing/webhooks/stripe` for
+   `checkout.session.completed` and `customer.subscription.created`, `.updated` and `.deleted`.
+   Turn on the customer portal.
+2. In `.env.local` on the host, set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and
+   `STRIPE_PRICE_ID`, then recreate `api`. Prefer a restricted key with write access to
+   Customers, Checkout Sessions and Customer portal only.
+3. Test one checkout before enforcing.
+4. Set `BILLING_ENFORCED=true`, then recreate `api` and `worker`. The API refuses to start if
+   enforcement is on without the Stripe values.
+
+Migration 0060 adds `tenant_billing.stripe_livemode`. Apply it with the deploy as usual. With no
+Stripe key set, neither `api` nor `worker` names the column, so sign-up, the billing page and
+scheduled routines keep working if the code lands first (integration tests drop the column to
+prove it). Once a key is set both read it: 0060 must be applied before the keys go in. Sandbox and live keys can be swapped without leaving a workspace
+stuck: Stripe state from the other mode is ignored and replaced at the next checkout (ADR-010).
+Test checkouts belong on a local stack all the same, so production only ever holds live ids.
+
+Workspaces that existed before migration 0059 are `comped`. To charge one, change its
+`tenant_billing.status` deliberately. Deleting a workspace does not cancel its Stripe
+subscription: cancel it in Stripe first.
+
+### Off-site backups
+
+`infra/scripts/offsite-upload.sh` encrypts each verified dump and copies it to S3-compatible
+storage. It does nothing until `/etc/seo-autopilot/backup.env` is set; the script lists the values.
+Keep a copy of the passphrase away from this server. A failed upload fails the backup unit.
+
 ### Backups
 
 `infra/scripts/backup.sh` dumps, **restores the dump into a scratch database**,

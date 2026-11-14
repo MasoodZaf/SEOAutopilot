@@ -27,8 +27,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.context import ActorContext, Role
 from app.db.models import AppUser, AuditEvent, Tenant, TenantMembership
+from app.services.billing import new_trial
 from app.services.sites import stable_hash
 
 # How many workspaces one person may own. High enough that nobody legitimate
@@ -103,6 +105,7 @@ class TenantProvisioningService:
             {"tenant_id": str(tenant.id)},
         )
 
+        self.session.add(new_trial(tenant.id, get_settings()))
         self.session.add(
             TenantMembership(
                 tenant_id=tenant.id,

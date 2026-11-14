@@ -96,7 +96,9 @@ def service(session, context: TenantContext, chat: FakeChat) -> RedditService:
 
 
 def test_thread_urls_are_canonical_and_everything_else_is_refused():
-    assert parse_thread("https://old.reddit.com/r/personalfinance/comments/ABC123/how_is_emi?x=1").url == (
+    thread = parse_thread("https://old.reddit.com/r/personalfinance/comments/ABC123/how_is_emi?x=1")
+    assert thread is not None
+    assert thread.url == (
         "https://www.reddit.com/r/personalfinance/comments/abc123/how_is_emi/"
     )
     assert parse_thread("https://reddit.com.evil.example/r/x/comments/abc123/") is None

@@ -340,7 +340,7 @@ class VisibilityService:
         return [
             CitationPoint(run_id, finished_at, answers, named, cited, competitor)
             for run_id, finished_at, answers, named, cited, competitor in result.all()
-            if answers
+            if answers and finished_at is not None
         ]
 
     async def set_brand_terms(self, site_id: UUID, terms: list[str]) -> list[str]:
